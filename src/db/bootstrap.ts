@@ -77,7 +77,16 @@ async function ensureDefaultAdmin(
 ): Promise<void> {
   const adminEmail = options.adminEmail || 'admin@calorie-tracker.local';
   const adminPassword = options.adminPassword || 'admin123456';
-  const adminApiKeyHash = hashSha256(options.adminApiKey);
+
+  // The default key is published in the README, so hashing it would install a
+  // known-value admin credential that anyone could use. Only provision an API
+  // key when a real one is configured; otherwise leave it null and let the user
+  // mint their own token from the app.
+  const DEFAULT_ADMIN_KEY = 'change-this-admin-key';
+  const configuredKeyHash =
+    options.adminApiKey && options.adminApiKey !== DEFAULT_ADMIN_KEY
+      ? hashSha256(options.adminApiKey)
+      : null;
 
   const existingAdmin = await db
     .prepare('SELECT id FROM users WHERE id = ?')
@@ -89,7 +98,7 @@ async function ensureDefaultAdmin(
       .prepare(
         'INSERT INTO users (id, name, email, role, api_key_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
       )
-      .bind('admin', 'Admin User', adminEmail, 'admin', adminApiKeyHash)
+      .bind('admin', 'Admin User', adminEmail, 'admin', configuredKeyHash)
       .run();
 
     await db
@@ -102,11 +111,13 @@ async function ensureDefaultAdmin(
     return;
   }
 
+  // Ensure the admin role, but NEVER touch api_key_hash on an existing user.
+  // The previous version overwrote it on every boot, which silently revoked the
+  // user's generated token on each deploy. The token is owned by the app's
+  // token endpoints, not by bootstrap.
   await db
-    .prepare(
-      'UPDATE users SET role = ?, api_key_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    )
-    .bind('admin', adminApiKeyHash, 'admin')
+    .prepare('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind('admin', 'admin')
     .run();
 }
 
