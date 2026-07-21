@@ -18,7 +18,8 @@
     "food:seed": "node --import tsx/esm src/scripts/seed-curated-foods.ts",
     "web:dev": "vite",
     "web:build": "vite build",
-    "web:type-check": "vue-tsc --noEmit -p web/tsconfig.json"
+    "web:type-check": "vue-tsc --noEmit -p web/tsconfig.json",
+    "owner:rename": "node --import tsx/esm src/scripts/rename-owner-account.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",
