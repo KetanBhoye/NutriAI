@@ -25,6 +25,7 @@ import { updateProfile, getProfileHistory } from '../tools/index.js';
 import { lookupFood } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
+import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
 import { buildDeficitSeries, buildGlidePath, weeklyDeficit } from '../services/goal-progress.js';
@@ -111,6 +112,14 @@ const activitySchema = z.object({
   // returned success — the metric would just never appear.
   .strict();
 
+const preferencesSchema = z.object({
+  display_name: z.string().min(1).max(100).optional(),
+  daily_calorie_goal: z.number().int().min(800).max(8000),
+  daily_protein_goal_g: z.number().min(0).max(500),
+  daily_carbs_goal_g: z.number().min(0).max(1000),
+  daily_fat_goal_g: z.number().min(0).max(500),
+});
+
 const suggestionsQuerySchema = z.object({
   meal: z.enum(['breakfast', 'lunch', 'dinner', 'snack']),
   limit: z.coerce.number().int().min(1).max(20).default(8),
@@ -194,10 +203,13 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
-      const { name, email, password } = parsed.data;
+      const { name, password } = parsed.data;
+      // Emails are matched case-insensitively, so store them lowercased —
+      // "Ketan@x.com" and "ketan@x.com" must be the same account.
+      const email = parsed.data.email.trim().toLowerCase();
 
       const existing = await env.DB
-        .prepare('SELECT id FROM users WHERE email = ?')
+        .prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE')
         .bind(email)
         .first<{ id: string }>();
 
@@ -242,10 +254,11 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
-      const { email, password, next } = parsed.data;
+      const { password, next } = parsed.data;
+      const email = parsed.data.email.trim().toLowerCase();
 
       const user = await env.DB
-        .prepare('SELECT id, name, email, role FROM users WHERE email = ?')
+        .prepare('SELECT id, name, email, role FROM users WHERE email = ? COLLATE NOCASE')
         .bind(email)
         .first<{ id: string; name: string; email: string; role: string }>();
 
@@ -316,6 +329,9 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       name: user.name,
       email: user.email,
       role: user.isAdmin ? 'admin' : 'user',
+      // A user is "onboarded" once they've set a calorie target. New signups
+      // have no preferences row, so this is false and the app shows onboarding.
+      onboarded: prefs?.daily_calorie_goal != null,
       goals: {
         calories: prefs?.daily_calorie_goal ?? null,
         protein_g: prefs?.daily_protein_goal_g ?? null,
@@ -648,30 +664,36 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         macros.daily_carbs_goal_g != null ||
         macros.daily_fat_goal_g != null
       ) {
-        await env.DB
-          .prepare(
-            `UPDATE user_tracking_preferences SET
-               daily_calorie_goal = COALESCE(?, daily_calorie_goal),
-               daily_protein_goal_g = COALESCE(?, daily_protein_goal_g),
-               daily_carbs_goal_g = COALESCE(?, daily_carbs_goal_g),
-               daily_fat_goal_g = COALESCE(?, daily_fat_goal_g),
-               updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ?`
-          )
-          .bind(
-            macros.daily_calorie_goal ?? null,
-            macros.daily_protein_goal_g ?? null,
-            macros.daily_carbs_goal_g ?? null,
-            macros.daily_fat_goal_g ?? null,
-            userId
-          )
-          .run();
+        // upsert so a user with no preferences row yet (a fresh signup) gets
+        // one created rather than a no-op UPDATE.
+        await new UserTrackingPreferencesRepository(env.DB).upsert(userId, {
+          daily_calorie_goal: macros.daily_calorie_goal ?? undefined,
+          daily_protein_goal_g: macros.daily_protein_goal_g ?? undefined,
+          daily_carbs_goal_g: macros.daily_carbs_goal_g ?? undefined,
+          daily_fat_goal_g: macros.daily_fat_goal_g ?? undefined,
+        });
       }
 
       res.json({ ok: true });
     } catch (error) {
       console.error('Goals save error:', error);
       res.status(500).json({ error: 'Failed to save goals' });
+    }
+  });
+
+  app.put('/api/preferences', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = preferencesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      await new UserTrackingPreferencesRepository(env.DB).upsert(req.sessionUser!.userId, parsed.data);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Preferences save error:', error);
+      res.status(500).json({ error: 'Failed to save preferences' });
     }
   });
 

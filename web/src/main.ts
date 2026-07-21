@@ -3,8 +3,10 @@ import { createRouter, createWebHistory } from 'vue-router';
 import App from './App.vue';
 import './style.css';
 import DashboardView from './views/DashboardView.vue';
+import AuthView from './views/AuthView.vue';
 import CoachView from './views/CoachView.vue';
 import GoalsView from './views/GoalsView.vue';
+import OnboardingView from './views/OnboardingView.vue';
 import TodayView from './views/TodayView.vue';
 
 const router = createRouter({
@@ -14,6 +16,8 @@ const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
     { path: '/goals', name: 'goals', component: GoalsView },
     { path: '/coach', name: 'coach', component: CoachView },
+    { path: '/login', name: 'login', component: AuthView, meta: { noChrome: true } },
+    { path: '/onboarding', name: 'onboarding', component: OnboardingView, meta: { noChrome: true } },
   ],
 });
 

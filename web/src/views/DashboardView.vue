@@ -33,7 +33,7 @@ async function load(): Promise<void> {
       cache: 'no-store',
     });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!response.ok) throw new Error('failed');

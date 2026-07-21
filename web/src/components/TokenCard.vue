@@ -22,7 +22,7 @@ async function loadStatus(): Promise<void> {
   try {
     const response = await fetch('/api/tokens/status', { credentials: 'same-origin' });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!response.ok) throw new Error('failed');
@@ -42,7 +42,7 @@ async function rotate(): Promise<void> {
       credentials: 'same-origin',
     });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (response.status === 409) {
@@ -76,7 +76,7 @@ async function revoke(): Promise<void> {
       credentials: 'same-origin',
     });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!response.ok) throw new Error('failed');

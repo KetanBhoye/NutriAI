@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { todayISO } from '../dates';
 import GlideChart from '../components/GlideChart.vue';
+import AccountCard from '../components/AccountCard.vue';
 import TokenCard from '../components/TokenCard.vue';
 
 interface GlideWeek {
@@ -65,7 +66,7 @@ async function load(): Promise<void> {
   try {
     const response = await fetch('/api/goals', { credentials: 'same-origin' });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!response.ok) throw new Error('failed');
@@ -364,6 +365,11 @@ onMounted(load);
           </div>
         </div>
       </template>
+
+      <!-- Account is always reachable on the Plan tab, whether or not a plan
+           exists yet — a new user with no plan still needs to sign out. -->
+      <h2>Account</h2>
+      <AccountCard />
     </template>
   </div>
 </template>

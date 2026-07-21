@@ -32,7 +32,7 @@ async function checkConfigured(): Promise<void> {
   try {
     const res = await fetch('/api/ai/status', { credentials: 'same-origin' });
     if (res.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     configured.value = (await res.json()).configured === true;
@@ -64,7 +64,7 @@ async function send(): Promise<void> {
     });
 
     if (res.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!res.ok) {

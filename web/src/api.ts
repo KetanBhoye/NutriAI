@@ -122,7 +122,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
 
     if (response.status === 401) {
-      window.location.href = '/login';
+      // Send the user to the in-app auth screen, not the old server page.
+      if (!window.location.pathname.startsWith('/app/login')) {
+        window.location.assign('/app/login');
+      }
       throw new ApiError('Session expired', 401);
     }
 
@@ -202,7 +205,60 @@ export const FALLBACK_GOALS: Goals = {
   fat_g: 63,
 };
 
+export interface Me {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  onboarded: boolean;
+  goals: Partial<Goals> | null;
+}
+
 export const api = {
+  async me(): Promise<Me> {
+    return request('/api/me');
+  },
+
+  async login(email: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Login failed', res.status);
+    }
+  },
+
+  async signup(name: string, email: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password }),
+    });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Signup failed', res.status);
+    }
+  },
+
+  async logout(): Promise<void> {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  },
+
+  async saveOnboarding(prefs: {
+    display_name: string;
+    daily_calorie_goal: number;
+    daily_protein_goal_g: number;
+    daily_carbs_goal_g: number;
+    daily_fat_goal_g: number;
+  }): Promise<void> {
+    await request('/api/preferences', { method: 'PUT', body: JSON.stringify(prefs) });
+  },
+
   async getGoals(): Promise<Goals> {
     const me = await request<{ goals: Partial<Goals> | null }>('/api/me');
     return {
