@@ -24,6 +24,7 @@ import { ProfileTrackingRepository } from '../repositories/profile-tracking.repo
 import { updateProfile, getProfileHistory } from '../tools/index.js';
 import { lookupFood } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
+import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
 import { buildDeficitSeries, buildGlidePath, weeklyDeficit } from '../services/goal-progress.js';
@@ -83,6 +84,10 @@ const goalPlanSchema = z.object({
   daily_fat_goal_g: z.number().min(0).max(500).nullish(),
 }).refine((v) => v.target_date > v.start_date, {
   message: 'Target date must be after the start date',
+});
+
+const aiParseSchema = z.object({
+  message: z.string().min(1).max(2000),
 });
 
 const activitySchema = z.object({
@@ -667,6 +672,69 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Goals save error:', error);
       res.status(500).json({ error: 'Failed to save goals' });
+    }
+  });
+
+  app.get('/api/ai/status', requireSession, (_req: AuthenticatedRequest, res) => {
+    // Whether the AI logger is usable is purely a deployment-config question
+    // (is an API key set), so the client can hide the feature when it isn't.
+    res.json({ configured: createProviderFromEnv() !== null });
+  });
+
+  app.post('/api/ai/parse', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = aiParseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      const provider = createProviderFromEnv();
+      if (!provider) {
+        res.status(503).json({ error: 'AI logging is not configured on this server.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+
+      // Give the model the user's most-logged foods so it reuses their verified
+      // macros rather than estimating from scratch.
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ?
+           GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{
+          canonical_name: string;
+          reference_unit: string;
+          calories_per_unit: number;
+          protein_g_per_unit: number | null;
+        }>();
+
+      const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local
+      const result = await parseFoodLog(provider, parsed.data.message, {
+        today,
+        knownFoods: (known.results ?? []).map((f) => ({
+          name: f.canonical_name,
+          unit: f.reference_unit,
+          calories_per_unit: f.calories_per_unit,
+          protein_per_unit: f.protein_g_per_unit,
+        })),
+      });
+
+      // Deliberately does NOT log anything. The parsed items go back to the
+      // client for confirmation, and only a subsequent POST /api/entries writes
+      // to the log — an LLM misread should never silently corrupt the diary.
+      res.json(result);
+    } catch (error) {
+      console.error('AI parse error:', error);
+      res.status(502).json({
+        error: 'The AI service could not be reached. Try again, or add the food manually.',
+      });
     }
   });
 

@@ -22,6 +22,7 @@ import { isOnline, pendingCount } from './api';
 
     <nav class="tabbar">
       <RouterLink to="/" class="tab">Today</RouterLink>
+      <RouterLink to="/coach" class="tab">Coach</RouterLink>
       <RouterLink to="/dashboard" class="tab">Trends</RouterLink>
       <RouterLink to="/goals" class="tab">Plan</RouterLink>
     </nav>

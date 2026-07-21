@@ -137,32 +137,46 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 }
 
+// Only one flush may run at a time. Without this guard, enqueuing several
+// writes in the same tick (e.g. confirming a multi-item AI parse) starts
+// several concurrent flushes that each read the same queue head and send it
+// before any of them removes it — silently double-logging the first item.
+let flushing = false;
+
 /** Sends queued writes oldest-first, stopping at the first failure so ordering holds. */
 export async function flushQueue(): Promise<void> {
-  let queue = readQueue();
+  if (flushing) return;
+  flushing = true;
+  try {
+    let queue = readQueue();
 
-  while (queue.length > 0) {
-    const [next] = queue;
-    if (!next) break;
+    while (queue.length > 0) {
+      const [next] = queue;
+      if (!next) break;
 
-    try {
-      await request(next.path, {
-        method: next.method,
-        body: next.body ? JSON.stringify(next.body) : undefined,
-      });
-    } catch (error) {
-      // A 4xx will never succeed on retry — drop it rather than blocking the
-      // queue forever behind a permanently invalid write.
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-        queue = queue.slice(1);
-        writeQueue(queue);
-        continue;
+      try {
+        await request(next.path, {
+          method: next.method,
+          body: next.body ? JSON.stringify(next.body) : undefined,
+        });
+      } catch (error) {
+        // A 4xx will never succeed on retry — drop it rather than blocking the
+        // queue forever behind a permanently invalid write.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+          queue = queue.slice(1);
+          writeQueue(queue);
+          continue;
+        }
+        return;
       }
-      return;
-    }
 
-    queue = queue.slice(1);
-    writeQueue(queue);
+      // Re-read: another enqueue may have appended while this request was in
+      // flight. Drop the head we just sent and keep anything new.
+      queue = readQueue().slice(1);
+      writeQueue(queue);
+    }
+  } finally {
+    flushing = false;
   }
 }
 
