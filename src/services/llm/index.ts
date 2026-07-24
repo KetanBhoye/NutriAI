@@ -1,6 +1,7 @@
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GeminiProvider } from './gemini-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
+import { VertexProvider } from './vertex-provider.js';
 import {
   parseResultSchema,
   type LlmProvider,
@@ -31,6 +32,18 @@ export function createProviderFromEnv(): LlmProvider | null {
   if (provider === 'gemini' || provider === 'google') {
     const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     return key ? new GeminiProvider(key, model) : null;
+  }
+
+  if (provider === 'vertex') {
+    const sa = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    return sa
+      ? new VertexProvider({
+          serviceAccountJson: sa,
+          project: process.env.GCP_PROJECT,
+          location: process.env.GCP_LOCATION,
+          model,
+        })
+      : null;
   }
 
   const key = process.env.ANTHROPIC_API_KEY;
