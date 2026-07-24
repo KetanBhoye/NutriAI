@@ -5,25 +5,36 @@ import { buildSystemPrompt, type LlmProvider, type ParseContext } from './types.
  * Google Gemini via **Vertex AI** (aiplatform.googleapis.com).
  *
  * Unlike the AI Studio Gemini API, Vertex bills to Google Cloud Billing — so
- * usage draws from a Cloud free-trial credit. Auth is a service-account access
- * token (minted from the SA's private key with the JWT-bearer grant), which is
- * why this needs a service account JSON rather than a simple API key.
+ * usage draws from a Cloud free-trial credit.
+ *
+ * Accepts either credential shape in GOOGLE_SERVICE_ACCOUNT_JSON:
+ *  - a service-account key (`type: service_account`) → JWT-bearer grant, or
+ *  - Application Default Credentials (`type: authorized_user`) → refresh-token
+ *    grant. The ADC form is what you get from `gcloud auth application-default
+ *    login`, and is the path to use when an org policy blocks SA key creation.
  *
  * Config:
  *   GCP_PROJECT                    the Cloud project id
  *   GCP_LOCATION                   region (default us-central1)
- *   GOOGLE_SERVICE_ACCOUNT_JSON    the full service-account key JSON
+ *   GOOGLE_SERVICE_ACCOUNT_JSON    SA key JSON or ADC user-credential JSON
  *   LLM_MODEL                      model (default gemini-2.5-flash)
  */
-interface ServiceAccount {
-  client_email: string;
-  private_key: string;
+interface Credential {
+  type?: string;
+  // service_account
+  client_email?: string;
+  private_key?: string;
   project_id?: string;
+  // authorized_user (ADC)
+  client_id?: string;
+  client_secret?: string;
+  refresh_token?: string;
+  quota_project_id?: string;
 }
 
 export class VertexProvider implements LlmProvider {
   readonly name = 'vertex';
-  private sa: ServiceAccount;
+  private cred: Credential;
   private project: string;
   private location: string;
   private model: string;
@@ -35,42 +46,36 @@ export class VertexProvider implements LlmProvider {
     location?: string;
     model?: string;
   }) {
-    this.sa = JSON.parse(config.serviceAccountJson) as ServiceAccount;
-    this.project = config.project || this.sa.project_id || '';
+    this.cred = JSON.parse(config.serviceAccountJson) as Credential;
+    this.project = config.project || this.cred.project_id || this.cred.quota_project_id || '';
     this.location = config.location || 'us-central1';
     this.model = config.model || 'gemini-2.5-flash';
     if (!this.project) {
-      throw new Error('Vertex provider needs GCP_PROJECT (or project_id in the service account).');
+      throw new Error('Vertex provider needs GCP_PROJECT.');
     }
   }
 
-  /** Mints (and caches) a cloud-platform access token from the service account. */
+  /** Mints (and caches) a cloud-platform access token from the credential. */
   private async accessToken(): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     if (this.cachedToken && this.cachedToken.expiresAt > now + 60) {
       return this.cachedToken.token;
     }
 
-    const b64 = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
-    const header = b64({ alg: 'RS256', typ: 'JWT' });
-    const claim = b64({
-      iss: this.sa.client_email,
-      scope: 'https://www.googleapis.com/auth/cloud-platform',
-      aud: 'https://oauth2.googleapis.com/token',
-      iat: now,
-      exp: now + 3600,
-    });
-    const signingInput = `${header}.${claim}`;
-    const signature = createSign('RSA-SHA256').update(signingInput).sign(this.sa.private_key, 'base64url');
-    const jwt = `${signingInput}.${signature}`;
+    const body =
+      this.cred.type === 'authorized_user'
+        ? new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: this.cred.client_id!,
+            client_secret: this.cred.client_secret!,
+            refresh_token: this.cred.refresh_token!,
+          })
+        : this.serviceAccountAssertion(now);
 
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-        assertion: jwt,
-      }),
+      body,
     });
     if (!res.ok) {
       throw new Error(`Vertex token exchange failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
@@ -78,6 +83,24 @@ export class VertexProvider implements LlmProvider {
     const data = (await res.json()) as { access_token: string; expires_in: number };
     this.cachedToken = { token: data.access_token, expiresAt: now + data.expires_in };
     return data.access_token;
+  }
+
+  private serviceAccountAssertion(now: number): URLSearchParams {
+    const b64 = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+    const header = b64({ alg: 'RS256', typ: 'JWT' });
+    const claim = b64({
+      iss: this.cred.client_email,
+      scope: 'https://www.googleapis.com/auth/cloud-platform',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    });
+    const signingInput = `${header}.${claim}`;
+    const signature = createSign('RSA-SHA256').update(signingInput).sign(this.cred.private_key!, 'base64url');
+    return new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: `${signingInput}.${signature}`,
+    });
   }
 
   async parseFoodLog(userMessage: string, context: ParseContext): Promise<unknown> {
