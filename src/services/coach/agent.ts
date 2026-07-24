@@ -5,8 +5,18 @@ import {
   updateEntryHandler,
   deleteEntryHandler,
   getUserPreferencesHandler,
+  setUserPreferencesHandler,
+  getProfile,
+  updateProfile,
+  getProfileHistory,
+  addBodyMeasurementHandler,
+  listBodyMeasurementsHandler,
+  listProgressPhotosHandler,
+  compareProgressHandler,
 } from '../../tools/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
+const DATE = { type: 'STRING', description: 'YYYY-MM-DD; omit for today' } as const;
 
 /**
  * The in-app Coach: a Gemini (Vertex AI) function-calling agent that acts on
@@ -78,11 +88,130 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
     },
   },
   get_user_preferences: {
-    run: (_a, u, e) => getUserPreferencesHandler({} as never, u, e),
+    run: (_a, u, e) => getUserPreferencesHandler({ include_full_text: false } as never, u, e),
     declaration: {
       name: 'get_user_preferences',
-      description: "Get the user's daily goals (calories, protein, carbs, fat) and profile — use to reason about how much is left for the day.",
+      description: "Get the user's daily goals (calories, protein, carbs, fat) — use to reason about how much is left for the day.",
       parameters: { type: 'OBJECT', properties: {} },
+    },
+  },
+  set_user_preferences: {
+    run: (a, u, e) => setUserPreferencesHandler(a as never, u, e),
+    declaration: {
+      name: 'set_user_preferences',
+      description: 'Change the daily goals. Only pass the fields the user wants to change.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          display_name: { type: 'STRING' },
+          daily_calorie_goal: { type: 'INTEGER' },
+          daily_protein_goal_g: { type: 'NUMBER' },
+          daily_carbs_goal_g: { type: 'NUMBER' },
+          daily_fat_goal_g: { type: 'NUMBER' },
+        },
+      },
+    },
+  },
+  get_profile: {
+    run: (_a, u, e) => getProfile({}, u, e),
+    declaration: {
+      name: 'get_profile',
+      description: 'Get the user profile with height, age, gender, activity level and calculated BMR/TDEE.',
+      parameters: { type: 'OBJECT', properties: {} },
+    },
+  },
+  update_profile: {
+    run: (a, u, e) => updateProfile(a as never, u, e),
+    declaration: {
+      name: 'update_profile',
+      description:
+        'Update profile and current body stats. Use for a quick weight update ("I weigh 71.2 now") or setting height/age/gender/activity. Only pass changed fields.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          height_cm: { type: 'NUMBER' },
+          age: { type: 'INTEGER' },
+          gender: { type: 'STRING', enum: ['male', 'female'] },
+          activity_level: {
+            type: 'STRING',
+            enum: ['sedentary', 'light', 'moderate', 'active', 'very_active'],
+          },
+          weight_kg: { type: 'NUMBER' },
+          muscle_mass_kg: { type: 'NUMBER' },
+          body_fat_percentage: { type: 'NUMBER' },
+        },
+      },
+    },
+  },
+  get_profile_history: {
+    run: (a, u, e) => getProfileHistory(a as never, u, e),
+    declaration: {
+      name: 'get_profile_history',
+      description: 'Get historical weight / body-composition tracking, optionally within a date range.',
+      parameters: {
+        type: 'OBJECT',
+        properties: { start_date: DATE, end_date: DATE, limit: { type: 'INTEGER' } },
+      },
+    },
+  },
+  add_body_measurement: {
+    run: (a, u, e) => addBodyMeasurementHandler(a as never, u, e),
+    declaration: {
+      name: 'add_body_measurement',
+      description:
+        'Record a body-composition measurement (e.g. from a smart-scale reading). Use for a full scale entry; for just weight, update_profile is simpler.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          recorded_date: DATE,
+          body_weight_kg: { type: 'NUMBER' },
+          body_fat_ratio_pct: { type: 'NUMBER' },
+          muscle_mass_kg: { type: 'NUMBER' },
+          body_mass_index: { type: 'NUMBER' },
+          basal_metabolic_rate_kcal: { type: 'NUMBER' },
+          visceral_fat_pct: { type: 'NUMBER' },
+          protein_mass_kg: { type: 'NUMBER' },
+          notes: { type: 'STRING' },
+        },
+      },
+    },
+  },
+  list_body_measurements: {
+    run: (a, u, e) => listBodyMeasurementsHandler(a as never, u, e),
+    declaration: {
+      name: 'list_body_measurements',
+      description: 'List past body-composition measurements for progress tracking.',
+      parameters: {
+        type: 'OBJECT',
+        properties: { start_date: DATE, end_date: DATE, limit: { type: 'INTEGER' } },
+      },
+    },
+  },
+  compare_progress: {
+    run: (a, u, e) => compareProgressHandler(a as never, u, e),
+    declaration: {
+      name: 'compare_progress',
+      description: 'Compare body measurements between two dates to summarise change.',
+      parameters: {
+        type: 'OBJECT',
+        properties: { from_date: DATE, to_date: DATE },
+        required: ['from_date', 'to_date'],
+      },
+    },
+  },
+  list_progress_photos: {
+    run: (a, u, e) => listProgressPhotosHandler(a as never, u, e),
+    declaration: {
+      name: 'list_progress_photos',
+      description: 'List stored progress-photo references by date/pose.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          start_date: DATE,
+          end_date: DATE,
+          pose_type: { type: 'STRING', enum: ['front', 'back', 'left_side', 'right_side', 'other'] },
+        },
+      },
     },
   },
 };
@@ -107,16 +236,18 @@ const MAX_STEPS = 6;
 const MAX_HISTORY = 24;
 
 function buildSystemPrompt(today: string, knownFoods: string): string {
-  return `You are the user's personal nutrition coach inside their food-tracking app. You can act on their log using tools — logging food, listing/correcting entries, and reading their goals.
+  return `You are the user's personal nutrition and fitness coach inside their tracking app. You act on their data with tools: log and correct food entries, read/change daily goals, update their profile and weight, record and review body-composition measurements, and compare progress.
 
 Today is ${today}.
 
 When the user describes food they ate, log it with add_entry (one call per item), working out realistic calories and macros. This user eats mostly Indian home-cooked food. Prefer their known foods and values when they match:
 ${knownFoods}
 
-For questions about their day ("how much protein left?", "what did I have?"), call list_entries and get_user_preferences, then answer from the results — don't guess.
+For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_user_preferences, get_profile, list_body_measurements, compare_progress) and answer from the results — never guess.
 
-Be brief and direct. After logging, confirm what you recorded and the running total in one or two sentences. Never invent an entry id — always get it from list_entries before update/delete.`;
+A quick weight mention ("I'm 71.2 today") → update_profile with weight_kg. A full scale reading → add_body_measurement. Changing a target ("bump protein to 160") → set_user_preferences with only that field.
+
+Be brief and direct. After acting, confirm what you did in one or two sentences. Never invent an id — always get it from list_entries before update/delete.`;
 }
 
 async function callVertex(config: {

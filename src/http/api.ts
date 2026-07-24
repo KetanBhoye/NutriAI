@@ -888,6 +888,12 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
 
       res.json(result);
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('429')) {
+        // Vertex rate limit — transient, the user just retries.
+        res.status(429).json({ error: "The AI is busy right now — give it a few seconds and try again." });
+        return;
+      }
       console.error('Coach chat error:', error);
       res.status(502).json({ error: 'The Coach could not be reached. Try again in a moment.' });
     }
