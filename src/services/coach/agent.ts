@@ -262,15 +262,23 @@ async function callVertex(config: {
     `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.project}` +
     `/locations/${config.location}/publishers/google/models/${encodeURIComponent(config.model)}:generateContent`;
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: config.systemPrompt }] },
-      contents: config.contents,
-      tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
-    }),
-  });
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 30_000);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: config.systemPrompt }] },
+        contents: config.contents,
+        tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
+      }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`Vertex chat failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
@@ -297,7 +305,9 @@ export async function runCoachTurn(opts: {
 }): Promise<CoachTurn> {
   const today = new Date().toLocaleDateString('en-CA');
   const systemPrompt = buildSystemPrompt(today, opts.knownFoods || '(none yet)');
+  console.log('[coach] minting token…');
   const token = await getGoogleAccessToken(opts.credentialJson);
+  console.log('[coach] token ok, starting loop');
 
   const contents: GeminiContent[] = [
     ...opts.history.slice(-MAX_HISTORY),
@@ -306,6 +316,7 @@ export async function runCoachTurn(opts: {
   const actions: string[] = [];
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
+    console.log(`[coach] step ${step}: calling vertex (${contents.length} turns)`);
     const modelTurn = await callVertex({
       token,
       project: opts.project,
@@ -319,6 +330,7 @@ export async function runCoachTurn(opts: {
     const calls = modelTurn.parts.filter((p): p is Required<Pick<GeminiPart, 'functionCall'>> =>
       Boolean(p.functionCall)
     );
+    console.log(`[coach] step ${step}: ${calls.length} tool call(s): ${calls.map((c) => c.functionCall.name).join(',') || '(final text)'}`);
     if (calls.length === 0) {
       const reply = modelTurn.parts
         .map((p) => p.text ?? '')
@@ -338,11 +350,14 @@ export async function runCoachTurn(opts: {
         text = `Unknown tool: ${name}`;
       } else {
         try {
+          console.log(`[coach] executing ${name}…`);
           const result = await tool.run(args, opts.userId, opts.env);
           text = result.content?.[0]?.type === 'text' ? (result.content[0] as { text: string }).text : 'ok';
           actions.push(name);
+          console.log(`[coach] ${name} done`);
         } catch (error) {
           text = `Tool ${name} failed: ${error instanceof Error ? error.message : 'error'}`;
+          console.log(`[coach] ${name} failed: ${text}`);
         }
       }
       responseParts.push({ functionResponse: { name, response: { output: text } } });
