@@ -6,6 +6,8 @@ import {
   type ListEntriesParams,
   addEntryHandler,
   type AddEntryParams,
+  logFoodHandler,
+  type LogFoodParams,
   updateEntryHandler,
   type UpdateEntryParams,
   deleteEntryHandler,
@@ -142,6 +144,18 @@ export function createCalorieTrackerMcpServer(env: AppEnv, user: AuthUser): McpS
         .describe('Date in YYYY-MM-DD format (defaults to today)'),
     },
     async (params) => addEntryHandler(params as AddEntryParams, user.userId, env)
+  );
+
+  server.tool(
+    'log_food',
+    'Log food from a natural-language description (e.g. "2 rotis, a bowl of dal and 3 boiled eggs for lunch"). The server uses AI (Google Gemini via Vertex) to work out the macros, reusing the user\'s known foods, then records each item. Use this instead of add_entry when the user describes food in plain language rather than giving exact macros.',
+    {
+      text: z
+        .string()
+        .min(1, 'Describe what was eaten')
+        .describe('Plain-language description of the food and amounts, optionally with a meal and date'),
+    },
+    async (params) => logFoodHandler(params as LogFoodParams, user.userId, env)
   );
 
   server.tool(

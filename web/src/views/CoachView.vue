@@ -1,32 +1,24 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
-import { api, type MealType } from '../api';
-
-interface ParsedItem {
-  food_name: string;
-  quantity: number;
-  unit: string;
-  meal_type: MealType;
-  calories: number;
-  protein_g: number;
-  carbs_g: number;
-  fat_g: number;
-}
 
 interface Bubble {
   id: string;
   from: 'user' | 'coach';
-  text?: string;
-  /** Parsed items awaiting confirmation, attached to a coach bubble. */
-  items?: ParsedItem[];
-  logged?: boolean;
+  text: string;
+  changedLog?: boolean;
 }
+
+/** Raw Gemini turn history, echoed back each request so the agent has context. */
+type HistoryTurn = { role: 'user' | 'model'; parts: unknown[] };
 
 const configured = ref<boolean | null>(null);
 const bubbles = ref<Bubble[]>([]);
+const history = ref<HistoryTurn[]>([]);
 const input = ref('');
 const sending = ref(false);
 const scroller = ref<HTMLElement | null>(null);
+
+const ACTIONS_THAT_CHANGE_LOG = new Set(['add_entry', 'update_entry', 'delete_entry']);
 
 async function checkConfigured(): Promise<void> {
   try {
@@ -56,11 +48,11 @@ async function send(): Promise<void> {
   await scrollDown();
 
   try {
-    const res = await fetch('/api/ai/parse', {
+    const res = await fetch('/api/coach/chat', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history: history.value }),
     });
 
     if (res.status === 401) {
@@ -78,64 +70,29 @@ async function send(): Promise<void> {
     }
 
     const result = (await res.json()) as {
-      understood: boolean;
-      clarification: string | null;
-      items: ParsedItem[];
+      reply: string;
+      actions: string[];
+      history: HistoryTurn[];
     };
-
-    if (!result.understood || result.items.length === 0) {
-      bubbles.value.push({
-        id: crypto.randomUUID(),
-        from: 'coach',
-        text: result.clarification ?? "I couldn't read that as food. Try naming the item and amount.",
-      });
-    } else {
-      const total = result.items.reduce((sum, i) => sum + i.calories, 0);
-      bubbles.value.push({
-        id: crypto.randomUUID(),
-        from: 'coach',
-        text: `Got it — ${result.items.length} item${result.items.length > 1 ? 's' : ''}, ${total} kcal. Log ${result.items.length > 1 ? 'them' : 'it'}?`,
-        items: result.items,
-      });
+    history.value = result.history;
+    bubbles.value.push({
+      id: crypto.randomUUID(),
+      from: 'coach',
+      text: result.reply,
+      changedLog: result.actions.some((a) => ACTIONS_THAT_CHANGE_LOG.has(a)),
+    });
+    if (result.actions.some((a) => ACTIONS_THAT_CHANGE_LOG.has(a)) && navigator.vibrate) {
+      navigator.vibrate(8);
     }
   } catch {
     bubbles.value.push({
       id: crypto.randomUUID(),
       from: 'coach',
-      text: 'Network error. Try again, or add the food manually.',
+      text: 'Network error. Try again in a moment.',
     });
   } finally {
     sending.value = false;
     await scrollDown();
-  }
-}
-
-/** Confirmation is where LLM output actually enters the log. */
-function confirm(bubble: Bubble): void {
-  if (!bubble.items) return;
-  for (const item of bubble.items) {
-    api.createEntry({
-      food_name: item.food_name,
-      calories: item.calories,
-      protein_g: item.protein_g,
-      carbs_g: item.carbs_g,
-      fat_g: item.fat_g,
-      meal_type: item.meal_type,
-      entry_date: new Date().toLocaleDateString('en-CA'),
-    });
-  }
-  bubble.logged = true;
-  if (navigator.vibrate) navigator.vibrate(8);
-}
-
-function editItem(bubble: Bubble, index: number, field: keyof ParsedItem, value: string): void {
-  if (!bubble.items) return;
-  const item = bubble.items[index]!;
-  if (field === 'food_name' || field === 'unit' || field === 'meal_type') {
-    (item[field] as string) = value;
-  } else {
-    const n = Number(value);
-    if (Number.isFinite(n) && n >= 0) (item[field] as number) = n;
   }
 }
 
@@ -146,57 +103,29 @@ onMounted(checkConfigured);
   <div class="page coach">
     <header>
       <h1>Coach</h1>
-      <p class="muted sub">Tell me what you ate and I'll work out the macros.</p>
+      <p class="muted sub">Log food, check your day, or ask anything — I can act on your log.</p>
     </header>
 
     <div v-if="configured === false" class="card notice">
       <p style="margin: 0">
-        AI logging isn't switched on for this server yet. It needs an API key in the server config
-        (<code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>). Until then, log foods from
-        the Today tab.
+        The Coach isn't switched on for this server yet — it needs the AI provider configured.
+        Until then, log foods from the Today tab.
       </p>
     </div>
 
     <template v-else>
       <div ref="scroller" class="thread">
         <div v-if="bubbles.length === 0" class="empty muted">
-          <p>Try: “2 rotis, a bowl of dal and 100g curd for lunch”</p>
+          <p>Try:</p>
+          <p class="eg">“2 rotis, a bowl of dal and 3 boiled eggs for lunch”</p>
+          <p class="eg">“how much protein do I have left today?”</p>
+          <p class="eg">“delete the diet coke I just added”</p>
         </div>
 
         <div v-for="b in bubbles" :key="b.id" class="bubble-row" :class="b.from">
           <div class="bubble" :class="b.from">
-            <p v-if="b.text" class="bubble-text">{{ b.text }}</p>
-
-            <div v-if="b.items && !b.logged" class="items">
-              <div v-for="(item, i) in b.items" :key="i" class="item">
-                <input
-                  class="item-name"
-                  :value="item.food_name"
-                  @input="editItem(b, i, 'food_name', ($event.target as HTMLInputElement).value)"
-                />
-                <div class="macros">
-                  <label>kcal<input type="number" inputmode="numeric" :value="item.calories" @input="editItem(b, i, 'calories', ($event.target as HTMLInputElement).value)" /></label>
-                  <label>P<input type="number" inputmode="decimal" :value="item.protein_g" @input="editItem(b, i, 'protein_g', ($event.target as HTMLInputElement).value)" /></label>
-                  <label>C<input type="number" inputmode="decimal" :value="item.carbs_g" @input="editItem(b, i, 'carbs_g', ($event.target as HTMLInputElement).value)" /></label>
-                  <label>F<input type="number" inputmode="decimal" :value="item.fat_g" @input="editItem(b, i, 'fat_g', ($event.target as HTMLInputElement).value)" /></label>
-                </div>
-                <select
-                  class="meal"
-                  :value="item.meal_type"
-                  @change="editItem(b, i, 'meal_type', ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="breakfast">Breakfast</option>
-                  <option value="lunch">Lunch</option>
-                  <option value="dinner">Dinner</option>
-                  <option value="snack">Snack</option>
-                </select>
-              </div>
-              <button class="btn confirm" @click="confirm(b)">
-                Log {{ b.items.length }} item{{ b.items.length > 1 ? 's' : '' }}
-              </button>
-            </div>
-
-            <p v-if="b.logged" class="logged-note">✓ Logged. Check the Today tab.</p>
+            <p class="bubble-text">{{ b.text }}</p>
+            <RouterLink v-if="b.changedLog" to="/" class="changed">✓ updated your log — view Today</RouterLink>
           </div>
         </div>
 
@@ -209,7 +138,7 @@ onMounted(checkConfigured);
         <input
           v-model="input"
           type="text"
-          placeholder="What did you eat?"
+          placeholder="Message your coach…"
           autocomplete="off"
           :disabled="sending"
         />
@@ -241,11 +170,6 @@ header {
   font-size: 14px;
 }
 
-.notice code {
-  font-family: var(--mono);
-  font-size: 12px;
-}
-
 .thread {
   flex: 1;
   overflow-y: auto;
@@ -255,8 +179,18 @@ header {
 
 .empty {
   text-align: center;
-  padding: 40px 16px;
+  padding: 32px 16px;
   font-size: 14px;
+}
+
+.empty .eg {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 8px auto;
+  max-width: 320px;
 }
 
 .bubble-row {
@@ -289,66 +223,16 @@ header {
 .bubble-text {
   margin: 0;
   font-size: 15px;
-  line-height: 1.4;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
-.items {
-  margin-top: 10px;
-}
-
-.item {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px;
-  margin-bottom: 8px;
-}
-
-.item-name {
-  width: 100%;
-  font-size: 14px;
-  padding: 6px 8px;
-  min-height: auto;
-  margin-bottom: 6px;
-}
-
-.macros {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-
-.macros label {
-  display: flex;
-  flex-direction: column;
-  font-size: 10px;
-  color: var(--text-dim);
-  gap: 2px;
-}
-
-.macros input {
-  font-size: 13px;
-  padding: 5px 4px;
-  text-align: center;
-  min-height: auto;
-}
-
-.meal {
-  margin-top: 6px;
-  font-size: 13px;
-  padding: 6px 8px;
-  min-height: auto;
-}
-
-.confirm {
-  width: 100%;
-  margin-top: 4px;
-}
-
-.logged-note {
-  margin: 8px 0 0;
+.changed {
+  display: inline-block;
+  margin-top: 8px;
   font-size: 13px;
   color: var(--accent);
+  text-decoration: none;
 }
 
 .composer {

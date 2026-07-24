@@ -25,6 +25,7 @@ import { updateProfile, getProfileHistory } from '../tools/index.js';
 import { lookupFood } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
+import { runCoachTurn } from '../services/coach/agent.js';
 import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
@@ -85,6 +86,14 @@ const goalPlanSchema = z.object({
   daily_fat_goal_g: z.number().min(0).max(500).nullish(),
 }).refine((v) => v.target_date > v.start_date, {
   message: 'Target date must be after the start date',
+});
+
+const coachChatSchema = z.object({
+  message: z.string().min(1).max(2000),
+  history: z
+    .array(z.object({ role: z.enum(['user', 'model']), parts: z.array(z.any()) }))
+    .max(30)
+    .optional(),
 });
 
 const aiParseSchema = z.object({
@@ -757,6 +766,62 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       res.status(502).json({
         error: 'The AI service could not be reached. Try again, or add the food manually.',
       });
+    }
+  });
+
+  app.post('/api/coach/chat', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = coachChatSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      // The agent drives Vertex directly (function calling), so it needs the
+      // Vertex credentials — not just any LLM provider.
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'The Coach assistant needs Vertex AI configured on the server.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ?
+           GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{ canonical_name: string; reference_unit: string; calories_per_unit: number; protein_g_per_unit: number | null }>();
+
+      const knownFoods = (known.results ?? [])
+        .map(
+          (f) =>
+            `- ${f.canonical_name}: ${f.calories_per_unit} kcal/${f.reference_unit}` +
+            (f.protein_g_per_unit !== null ? `, ${f.protein_g_per_unit}g protein/${f.reference_unit}` : '')
+        )
+        .join('\n');
+
+      const result = await runCoachTurn({
+        message: parsed.data.message,
+        history: (parsed.data.history ?? []) as never,
+        userId,
+        env,
+        knownFoods,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Coach chat error:', error);
+      res.status(502).json({ error: 'The Coach could not be reached. Try again in a moment.' });
     }
   });
 

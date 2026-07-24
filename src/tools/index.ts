@@ -1,5 +1,6 @@
 // Export all tool handlers
 export { addEntryHandler } from './add-entry.js';
+export { logFoodHandler, type LogFoodParams } from './log-food.js';
 export { listEntriesHandler } from './list-entries.js';
 export { updateEntryHandler } from './update-entry.js';
 export { deleteEntryHandler } from './delete-entry.js';
