@@ -1,4 +1,5 @@
 import { AnthropicProvider } from './anthropic-provider.js';
+import { GeminiProvider } from './gemini-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import {
   parseResultSchema,
@@ -11,8 +12,8 @@ export type { LlmProvider, ParseContext, ParseResult } from './types.js';
 
 /**
  * Selects a provider from environment configuration:
- *   LLM_PROVIDER   anthropic (default) | openai
- *   ANTHROPIC_API_KEY / OPENAI_API_KEY
+ *   LLM_PROVIDER   anthropic (default) | openai | gemini
+ *   ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
  *   LLM_MODEL      optional model override for the chosen provider
  *
  * Returns null when no key is configured, so the AI endpoint can report the
@@ -25,6 +26,11 @@ export function createProviderFromEnv(): LlmProvider | null {
   if (provider === 'openai') {
     const key = process.env.OPENAI_API_KEY;
     return key ? new OpenAiProvider(key, model) : null;
+  }
+
+  if (provider === 'gemini' || provider === 'google') {
+    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    return key ? new GeminiProvider(key, model) : null;
   }
 
   const key = process.env.ANTHROPIC_API_KEY;

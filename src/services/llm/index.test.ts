@@ -143,6 +143,12 @@ describe('createProviderFromEnv', () => {
     expect(createProviderFromEnv()?.name).toBe('openai');
   });
 
+  it('selects Gemini when LLM_PROVIDER=gemini and its key is present', () => {
+    process.env.LLM_PROVIDER = 'gemini';
+    process.env.GEMINI_API_KEY = 'gemini-test-key';
+    expect(createProviderFromEnv()?.name).toBe('gemini');
+  });
+
   it('returns null when the chosen provider has no key even if the other does', () => {
     process.env.LLM_PROVIDER = 'openai';
     delete process.env.OPENAI_API_KEY;
