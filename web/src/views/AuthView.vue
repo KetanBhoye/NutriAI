@@ -10,15 +10,67 @@ const email = ref('');
 const password = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
+const googleBtn = ref<HTMLElement | null>(null);
 
-// If already signed in, skip straight into the app.
+async function goInto(): Promise<void> {
+  const me = await api.me();
+  router.replace(me.onboarded ? '/' : '/onboarding');
+}
+
+/** Handles the Google ID token from the Sign in with Google button. */
+async function onGoogleCredential(response: { credential: string }): Promise<void> {
+  error.value = null;
+  busy.value = true;
+  try {
+    const res = await fetch('/api/auth/google', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Google sign-in failed');
+    await goInto();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Google sign-in failed.';
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** Loads Google Identity Services and renders the official button. */
+async function setupGoogle(): Promise<void> {
+  const cfg = (await fetch('/api/auth/config')
+    .then((r) => r.json())
+    .catch(() => ({}))) as { googleClientId?: string | null };
+  if (!cfg.googleClientId) return;
+
+  await new Promise<void>((resolve) => {
+    if ((window as { google?: unknown }).google) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+
+  const g = (window as { google?: { accounts?: { id?: unknown } } }).google;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const id = (g as any)?.accounts?.id;
+  if (!id || !googleBtn.value) return;
+  id.initialize({ client_id: cfg.googleClientId, callback: onGoogleCredential });
+  id.renderButton(googleBtn.value, { theme: 'filled_black', size: 'large', width: 320, text: 'continue_with' });
+}
+
+// If already signed in, skip straight into the app; otherwise wire up Google.
 onMounted(async () => {
   try {
-    const me = await api.me();
-    router.replace(me.onboarded ? '/' : '/onboarding');
+    await goInto();
+    return;
   } catch {
     // Not signed in — stay on the auth screen.
   }
+  void setupGoogle();
 });
 
 async function submit(): Promise<void> {
@@ -44,8 +96,7 @@ async function submit(): Promise<void> {
     } else {
       await api.signup(name.value.trim(), mail, password.value);
     }
-    const me = await api.me();
-    router.replace(me.onboarded ? '/' : '/onboarding');
+    await goInto();
   } catch (e) {
     error.value =
       e instanceof Error && e.message && !e.message.startsWith('{')
@@ -99,6 +150,11 @@ async function submit(): Promise<void> {
       <button class="btn wide" type="submit" :disabled="busy">
         {{ busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account' }}
       </button>
+
+      <!-- Rendered by Google Identity Services only when a client id is set. -->
+      <div class="google-wrap">
+        <div ref="googleBtn" class="google-btn"></div>
+      </div>
     </form>
 
     <p class="switch muted">
@@ -161,6 +217,17 @@ async function submit(): Promise<void> {
 .wide {
   width: 100%;
   margin-top: 6px;
+}
+
+.google-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.google-btn:not(:empty) {
+  /* Only take space once Google renders its button into it. */
+  padding-top: 4px;
 }
 
 .error {

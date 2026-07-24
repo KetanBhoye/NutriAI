@@ -203,6 +203,74 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     next();
   };
 
+  app.get('/api/auth/config', (_req, res) => {
+    // Public: lets the login screen decide whether to show the Google button.
+    res.json({ googleClientId: process.env.GOOGLE_OAUTH_CLIENT_ID || null });
+  });
+
+  app.post('/api/auth/google', async (req, res) => {
+    try {
+      const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+      if (!clientId) {
+        res.status(503).json({ error: 'Google sign-in is not configured on this server.' });
+        return;
+      }
+
+      const credential = typeof req.body?.credential === 'string' ? req.body.credential : '';
+      if (!credential) {
+        res.status(400).json({ error: 'Missing Google credential.' });
+        return;
+      }
+
+      // Verify the ID token with Google and confirm it was issued for our app.
+      const info = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+      ).then((r) => (r.ok ? r.json() : null)) as
+        | { aud?: string; email?: string; email_verified?: string | boolean; name?: string }
+        | null;
+
+      if (!info || info.aud !== clientId) {
+        res.status(401).json({ error: 'Invalid Google credential.' });
+        return;
+      }
+      if (info.email_verified !== 'true' && info.email_verified !== true) {
+        res.status(401).json({ error: 'Your Google email is not verified.' });
+        return;
+      }
+
+      const email = (info.email || '').trim().toLowerCase();
+      const name = info.name || email.split('@')[0] || 'You';
+      if (!email) {
+        res.status(401).json({ error: 'Google did not return an email.' });
+        return;
+      }
+
+      let user = await env.DB
+        .prepare('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE')
+        .bind(email)
+        .first<{ id: string; name: string; email: string }>();
+
+      if (!user) {
+        // New Google account — no password row (they sign in with Google).
+        const userId = randomUUID();
+        await env.DB
+          .prepare(
+            'INSERT INTO users (id, name, email, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          )
+          .bind(userId, name, email, 'user')
+          .run();
+        user = { id: userId, name, email };
+      }
+
+      const session = await createSession(env.DB, user.id, options.sessionTtlHours);
+      setSessionCookie(res, session.sessionId, session.expiresAt, options.secureCookies);
+      res.json({ user: { id: user.id, name: user.name, email: user.email } });
+    } catch (error) {
+      console.error('Google auth error:', error);
+      res.status(500).json({ error: 'Google sign-in failed. Try again.' });
+    }
+  });
+
   app.post('/api/auth/signup', async (req, res) => {
     try {
       const parsed = signupSchema.safeParse(req.body);
