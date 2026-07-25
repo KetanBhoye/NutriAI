@@ -26,39 +26,77 @@ export const ACTIVITY: Record<ActivityLevel, { label: string; hint: string; mult
   very_active: { label: 'Athlete', hint: 'Training twice a day / physical job', mult: 1.9 },
 };
 
+/** ~7700 kcal per kg of body fat — the basis for rate-based deficits/surpluses. */
+export const KCAL_PER_KG = 7700;
+
+export interface RateOption {
+  kg: number; // weekly rate
+  label: string;
+  tag: string;
+}
+
+/** Weekly weight-change rates offered per goal (MyFitnessPal-style). */
+export const RATE_OPTIONS: Record<Goal, RateOption[]> = {
+  cut: [
+    { kg: 0.5, label: '0.5 kg / week', tag: 'Gentle' },
+    { kg: 0.7, label: '0.7 kg / week', tag: 'Standard' },
+    { kg: 1.0, label: '1 kg / week', tag: 'Aggressive' },
+  ],
+  maintain: [],
+  lean_bulk: [
+    { kg: 0.2, label: '0.2 kg / week', tag: 'Lean' },
+    { kg: 0.35, label: '0.35 kg / week', tag: 'Standard' },
+  ],
+  bulk: [
+    { kg: 0.35, label: '0.35 kg / week', tag: 'Standard' },
+    { kg: 0.5, label: '0.5 kg / week', tag: 'Fast' },
+  ],
+};
+
+/** The default rate for a goal (the middle/standard option). */
+export function defaultRate(goal: Goal): number {
+  const opts = RATE_OPTIONS[goal];
+  return opts.length ? opts[Math.min(1, opts.length - 1)]!.kg : 0;
+}
+
 export const GOALS: Record<
   Goal,
-  { label: string; blurb: string; calorieFactor: number; proteinPerKg: number; fatPct: number }
+  { label: string; blurb: string; dir: -1 | 0 | 1; proteinPerKg: number; fatPct: number }
 > = {
   cut: {
     label: 'Cut',
     blurb: 'Lose fat while keeping muscle',
-    calorieFactor: 0.8, // ~20% deficit
+    dir: -1, // calorie deficit
     proteinPerKg: 2.2, // high protein protects muscle in a deficit
     fatPct: 0.25,
   },
   maintain: {
     label: 'Maintain',
     blurb: 'Hold your weight, recomp slowly',
-    calorieFactor: 1.0,
+    dir: 0,
     proteinPerKg: 1.8,
     fatPct: 0.28,
   },
   lean_bulk: {
     label: 'Lean bulk',
     blurb: 'Slow muscle gain, minimal fat',
-    calorieFactor: 1.08, // ~8% surplus
+    dir: 1, // small surplus
     proteinPerKg: 2.0,
     fatPct: 0.25,
   },
   bulk: {
     label: 'Bulk',
     blurb: 'Faster muscle & strength gain',
-    calorieFactor: 1.15, // ~15% surplus
+    dir: 1, // larger surplus
     proteinPerKg: 1.8,
     fatPct: 0.25,
   },
 };
+
+/** The daily calorie deficit/surplus a weekly rate implies. */
+export function dailyDelta(rateKgPerWeek: number): number {
+  return Math.round((rateKgPerWeek * KCAL_PER_KG) / 7);
+}
 
 /** Mifflin-St Jeor basal metabolic rate. */
 export function calcBMR(weightKg: number, heightCm: number, age: number, gender: Gender): number {
@@ -71,10 +109,20 @@ export function calcTDEE(bmr: number, activity: ActivityLevel): number {
   return Math.round(bmr * ACTIVITY[activity].mult);
 }
 
-/** Turns a maintenance figure + goal into daily calorie and macro targets. */
-export function computeMacros(tdee: number, weightKg: number, goal: Goal): Macros {
+/**
+ * Turns maintenance + goal + chosen weekly rate into daily targets.
+ * Calories = TDEE ∓ (rate × 7700 ÷ 7), floored at 1200 so a cut never goes
+ * unsafely low. Rate is ignored for "maintain".
+ */
+export function computeMacros(
+  tdee: number,
+  weightKg: number,
+  goal: Goal,
+  rateKgPerWeek: number = defaultRate(goal)
+): Macros {
   const g = GOALS[goal];
-  const calories = Math.max(1000, Math.round((tdee * g.calorieFactor) / 10) * 10);
+  const delta = g.dir === 0 ? 0 : dailyDelta(rateKgPerWeek) * g.dir;
+  const calories = Math.max(1200, Math.round((tdee + delta) / 10) * 10);
   const protein_g = Math.round(weightKg * g.proteinPerKg);
   const fat_g = Math.round((calories * g.fatPct) / 9);
   const carbs_g = Math.max(0, Math.round((calories - protein_g * 4 - fat_g * 9) / 4));

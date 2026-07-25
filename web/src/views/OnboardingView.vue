@@ -6,9 +6,12 @@ import { addDays, todayISO } from '../dates';
 import {
   ACTIVITY,
   GOALS,
+  RATE_OPTIONS,
   calcBMR,
   calcTDEE,
   computeMacros,
+  dailyDelta,
+  defaultRate,
   type ActivityLevel,
   type Gender,
   type Goal,
@@ -29,7 +32,18 @@ const height = ref<number | null>(null);
 const weight = ref<number | null>(null);
 const activity = ref<ActivityLevel>('light');
 const goal = ref<Goal>('cut');
+const rate = ref<number>(defaultRate('cut'));
 const targetWeight = ref<number | null>(null);
+
+/** Pick a goal and reset its weekly rate to that goal's default. */
+function pickGoal(g: Goal): void {
+  goal.value = g;
+  rate.value = defaultRate(g);
+}
+
+const rateOptions = computed(() => RATE_OPTIONS[goal.value]);
+/** The daily deficit (cut) or surplus (bulk) the chosen rate implies. */
+const deltaKcal = computed(() => (goal.value === 'maintain' ? 0 : dailyDelta(rate.value)));
 
 // ── Derived figures ───────────────────────────────────────
 const bmr = computed(() =>
@@ -39,14 +53,17 @@ const bmr = computed(() =>
 );
 const tdee = computed(() => (bmr.value ? calcTDEE(bmr.value, activity.value) : null));
 const baseline = computed(() =>
-  tdee.value && weight.value ? computeMacros(tdee.value, weight.value, goal.value) : null
+  tdee.value && weight.value
+    ? computeMacros(tdee.value, weight.value, goal.value, rate.value)
+    : null
 );
 
-/** A safe target date for the glide plan, derived from a healthy weekly rate. */
+/** Target date for the glide plan, derived from the chosen weekly rate. */
 const targetDate = computed(() => {
-  if (!weight.value || !targetWeight.value || goal.value === 'maintain') return null;
-  const perWeek = goal.value === 'cut' ? 0.55 : goal.value === 'lean_bulk' ? 0.2 : 0.35;
-  const weeks = Math.abs(targetWeight.value - weight.value) / perWeek;
+  if (!weight.value || !targetWeight.value || goal.value === 'maintain' || rate.value <= 0) {
+    return null;
+  }
+  const weeks = Math.abs(targetWeight.value - weight.value) / rate.value;
   if (weeks < 1) return null;
   return addDays(todayISO(), Math.round(weeks * 7));
 });
@@ -71,8 +88,12 @@ const plan = ref({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
 
 function fallbackSummary(): string {
   const g = GOALS[goal.value];
+  const pace =
+    goal.value === 'maintain'
+      ? ''
+      : ` aiming for about ${rate.value} kg/week (${deltaKcal.value} kcal/day ${goal.value === 'cut' ? 'deficit' : 'surplus'})`;
   return (
-    `${name.value.trim()} is focused on ${g.label.toLowerCase()} — ${g.blurb.toLowerCase()}. ` +
+    `${name.value.trim()} is focused on ${g.label.toLowerCase()}${pace} — ${g.blurb.toLowerCase()}. ` +
     `Maintenance is about ${tdee.value} kcal/day; the daily target is ${plan.value.calories} kcal ` +
     `with ${plan.value.protein_g}g protein, ${plan.value.carbs_g}g carbs and ${plan.value.fat_g}g fat. ` +
     `Prioritise hitting protein every day and staying near the calorie target. Eats mostly Indian home-cooked food.`
@@ -95,6 +116,7 @@ async function loadPlan(): Promise<void> {
       activity_level: activity.value,
       goal: goal.value,
       target_weight_kg: targetWeight.value,
+      target_rate_kg_per_week: rate.value || null,
       bmr: bmr.value,
       tdee: tdee.value,
       baseline: baseline.value,
@@ -284,7 +306,7 @@ onMounted(async () => {
           type="button"
           class="goal-card"
           :class="{ active: goal === key }"
-          @click="goal = key as Goal"
+          @click="pickGoal(key as Goal)"
         >
           <div class="goal-head">
             <span class="goal-name">{{ g.label }}</span>
@@ -296,6 +318,29 @@ onMounted(async () => {
           <span class="goal-blurb">{{ g.blurb }}</span>
         </button>
       </div>
+
+      <!-- Weekly rate → deficit/surplus, MyFitnessPal-style. -->
+      <template v-if="rateOptions.length">
+        <h2 class="ratehead">
+          How fast? <span class="mono deltahint">≈ {{ deltaKcal }} kcal/day {{ goal === 'cut' ? 'deficit' : 'surplus' }}</span>
+        </h2>
+        <div class="rates">
+          <button
+            v-for="r in rateOptions"
+            :key="r.kg"
+            type="button"
+            class="rate"
+            :class="{ active: rate === r.kg }"
+            @click="rate = r.kg"
+          >
+            <span class="rate-kg">{{ r.label }}</span>
+            <span class="rate-tag">{{ r.tag }}</span>
+            <span class="rate-cal mono">
+              {{ tdee ? computeMacros(tdee, weight ?? 70, goal, r.kg).calories.toLocaleString() : '—' }} kcal
+            </span>
+          </button>
+        </div>
+      </template>
 
       <div v-if="goal !== 'maintain'" class="field target-field">
         <label>Goal weight (kg) — optional, sets your Plan tab glide path</label>
@@ -594,6 +639,65 @@ h1 {
 .goal-blurb {
   font-size: 13px;
   color: var(--text-dim);
+}
+
+.ratehead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 22px 0 10px;
+}
+
+.deltahint {
+  font-size: 12px;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.rates {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.rate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 12px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.rate.active {
+  border-color: var(--accent);
+  background: rgba(74, 222, 128, 0.06);
+}
+
+.rate-kg {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rate-tag {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.rate-cal {
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 2px;
 }
 
 .target-field {

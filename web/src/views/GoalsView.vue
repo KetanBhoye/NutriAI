@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { todayISO } from '../dates';
+import { api } from '../api';
 import GlideChart from '../components/GlideChart.vue';
 
 interface GlideWeek {
@@ -183,6 +184,33 @@ const recentDeficit = computed(() => {
   return weeks.length ? weeks[weeks.length - 1]! : null;
 });
 
+// ── Manual weight + steps entry ───────────────────────────
+const logWeight = ref<number | null>(null);
+const logSteps = ref<number | null>(null);
+const logBusy = ref(false);
+const logMsg = ref<string | null>(null);
+
+async function saveLog(): Promise<void> {
+  if (logWeight.value == null && logSteps.value == null) return;
+  logBusy.value = true;
+  logMsg.value = null;
+  try {
+    await api.logActivity({
+      activity_date: todayISO(),
+      weight_kg: logWeight.value ?? null,
+      steps: logSteps.value ?? null,
+    });
+    logMsg.value = 'Saved for today.';
+    logWeight.value = null;
+    logSteps.value = null;
+    await load(); // refresh weigh-in chart + steps average
+  } catch {
+    logMsg.value = "Couldn't save. Check your connection.";
+  } finally {
+    logBusy.value = false;
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -233,6 +261,28 @@ onMounted(load);
             <div class="k">Steps avg</div>
             <div class="v mono">{{ stepAverage?.toLocaleString() ?? '—' }}</div>
           </div>
+        </div>
+
+        <!-- Manual daily log: weight + steps -->
+        <div class="logcard card">
+          <div class="log-fields">
+            <label class="lf">
+              <span>Today's weight (kg)</span>
+              <input v-model.number="logWeight" type="number" step="0.1" inputmode="decimal" placeholder="—" />
+            </label>
+            <label class="lf">
+              <span>Today's steps</span>
+              <input v-model.number="logSteps" type="number" inputmode="numeric" placeholder="—" />
+            </label>
+          </div>
+          <button
+            class="btn wide"
+            :disabled="logBusy || (logWeight == null && logSteps == null)"
+            @click="saveLog"
+          >
+            {{ logBusy ? 'Saving…' : 'Log for today' }}
+          </button>
+          <p v-if="logMsg" class="log-msg">{{ logMsg }}</p>
         </div>
 
         <GlideChart
@@ -401,6 +451,33 @@ h1 {
   color: var(--text-dim);
   font-size: 14px;
   margin: 10px 0 0;
+}
+
+.logcard {
+  margin: 4px 0 16px;
+  padding: 14px;
+}
+
+.log-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lf {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.log-msg {
+  font-size: 13px;
+  color: var(--accent);
+  margin: 10px 0 0;
+  text-align: center;
 }
 
 .readouts {

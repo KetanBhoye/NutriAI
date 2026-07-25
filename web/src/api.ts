@@ -289,6 +289,15 @@ export const api = {
     await request('/api/onboarding/complete', { method: 'POST', body: JSON.stringify(body) });
   },
 
+  /** Manually log steps and/or weight for a day (upserts into daily activity). */
+  async logActivity(body: {
+    activity_date: string;
+    steps?: number | null;
+    weight_kg?: number | null;
+  }): Promise<void> {
+    await request('/api/activity', { method: 'POST', body: JSON.stringify(body) });
+  },
+
   async getGoals(): Promise<Goals> {
     const me = await request<{ goals: Partial<Goals> | null }>('/api/me');
     return {

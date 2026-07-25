@@ -99,7 +99,8 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
     run: (a, u, e) => setUserPreferencesHandler(a as never, u, e),
     declaration: {
       name: 'set_user_preferences',
-      description: 'Change the daily goals. Only pass the fields the user wants to change.',
+      description:
+        'Change the daily goals, or remember free-form preferences about the user via behavior_instructions (e.g. "vegetarian", "no eggs", "prefers high-protein breakfasts", coaching style). Only pass the fields being changed.',
       parameters: {
         type: 'OBJECT',
         properties: {
@@ -108,6 +109,11 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
           daily_protein_goal_g: { type: 'NUMBER' },
           daily_carbs_goal_g: { type: 'NUMBER' },
           daily_fat_goal_g: { type: 'NUMBER' },
+          behavior_instructions: {
+            type: 'STRING',
+            description:
+              'Durable notes about the user that you (the coach) should remember on every future turn — diet (e.g. vegetarian), allergies, likes/dislikes, coaching preferences. This REPLACES the stored notes, so include the existing notes shown to you plus the new preference.',
+          },
         },
       },
     },
@@ -266,6 +272,8 @@ ${opts.knownFoods}
 For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_profile_history, list_body_measurements, compare_progress) and answer from the results — never guess numbers you haven't read.
 
 A quick weight mention ("I'm 71.2 today") → update_profile with weight_kg (and recorded_date if it's not the active date). A full scale reading → add_body_measurement. Changing a target ("bump protein to 160") → set_user_preferences with only that field.
+
+When the user tells you a lasting preference — a diet (e.g. "I'm vegetarian", "no eggs"), an allergy, foods they like/dislike, or how they want to be coached — SAVE it by calling set_user_preferences with behavior_instructions. That field replaces the stored notes, so write the existing notes shown to you above PLUS the new preference, then confirm you'll remember it. From then on, honour it (e.g. suggest only vegetarian foods).
 
 Be brief and direct. After acting, confirm what you did in one or two sentences. When you logged or read a day that is NOT today, name that date in your reply (e.g. "logged for Jul 20") rather than saying "today". Never invent an id — always get it from list_entries before update/delete.`;
 }

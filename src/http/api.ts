@@ -159,6 +159,7 @@ const onboardingProfileSchema = z.object({
 const aiPlanSchema = onboardingProfileSchema.extend({
   display_name: z.string().max(100).optional(),
   target_weight_kg: z.number().min(30).max(400).nullish(),
+  target_rate_kg_per_week: z.number().min(0).max(2).nullish(),
   bmr: z.number().min(500).max(5000),
   tdee: z.number().min(600).max(8000),
   baseline: z.object({
