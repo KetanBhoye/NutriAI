@@ -27,6 +27,7 @@ import { linkEntryToFood } from '../services/entry-linking.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
+import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
 import {
   isPushConfigured,
   pushPublicKey,
@@ -1347,6 +1348,187 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Dashboard error:', error);
       res.status(500).json({ error: 'Failed to load dashboard' });
+    }
+  });
+
+  // AI weekly report for the Trends tab. Computes the week's stats
+  // deterministically, then asks Vertex to write the analysis. Cached per
+  // (user, day) so it generates at most once a day unless ?refresh=1.
+  app.get('/api/insights/weekly', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.sessionUser!.userId;
+      const refresh = req.query.refresh === '1';
+      const periodKey = new Date().toISOString().slice(0, 10);
+
+      if (!refresh) {
+        const cached = await env.DB
+          .prepare('SELECT report_json FROM weekly_reports WHERE user_id = ? AND period_key = ?')
+          .bind(userId, periodKey)
+          .first<{ report_json: string }>();
+        if (cached) {
+          res.json(JSON.parse(cached.report_json));
+          return;
+        }
+      }
+
+      // ── Compute the last-7-day stats ──────────────────────────────────────
+      const intake = await env.DB
+        .prepare(
+          `SELECT entry_date, SUM(calories) AS cal, SUM(protein_g) AS pro
+           FROM food_entries WHERE user_id = ? AND entry_date >= date('now', '-6 days')
+           GROUP BY entry_date`
+        )
+        .bind(userId)
+        .all<{ entry_date: string; cal: number; pro: number }>();
+      const days = (intake.results ?? []).filter((d) => d.cal >= 200);
+      const daysLogged = days.length;
+      const avg = (xs: number[]) =>
+        xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+      const avgCalories = avg(days.map((d) => d.cal));
+      const avgProtein = avg(days.map((d) => Math.round(d.pro)));
+
+      const stepRows = await env.DB
+        .prepare(
+          `SELECT steps FROM daily_activity
+           WHERE user_id = ? AND activity_date >= date('now', '-6 days') AND steps IS NOT NULL`
+        )
+        .bind(userId)
+        .all<{ steps: number }>();
+      const avgSteps = avg((stepRows.results ?? []).map((r) => r.steps));
+
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g, behavior_instructions
+           FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{
+          daily_calorie_goal: number | null;
+          daily_protein_goal_g: number | null;
+          behavior_instructions: string | null;
+        }>();
+
+      const plan = await new GoalPlanRepository(env.DB).getActive(userId);
+      const weightGoalDir: WeeklyStats['weight_goal_direction'] = plan
+        ? plan.goal_weight_kg < plan.start_weight_kg
+          ? 'lose'
+          : plan.goal_weight_kg > plan.start_weight_kg
+            ? 'gain'
+            : 'maintain'
+        : null;
+
+      // Weight change across the window (first vs last weigh-in in ~14 days).
+      const weigh = await env.DB
+        .prepare(
+          `SELECT weight_kg, tdee_calories, recorded_date FROM profile_tracking
+           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date >= date('now', '-14 days')
+           ORDER BY recorded_date ASC`
+        )
+        .bind(userId)
+        .all<{ weight_kg: number; tdee_calories: number | null; recorded_date: string }>();
+      const weighIns = weigh.results ?? [];
+      const weightChange =
+        weighIns.length >= 2
+          ? Math.round((weighIns[weighIns.length - 1]!.weight_kg - weighIns[0]!.weight_kg) * 10) / 10
+          : null;
+
+      const latestTdee = [...weighIns].reverse().find((w) => w.tdee_calories !== null)?.tdee_calories ?? null;
+      const weeklyDeficit =
+        latestTdee && avgCalories !== null ? Math.round((latestTdee - avgCalories) * daysLogged) : null;
+
+      const stats: WeeklyStats = {
+        days_logged: daysLogged,
+        avg_calories: avgCalories,
+        calorie_goal: prefs?.daily_calorie_goal ?? null,
+        avg_protein_g: avgProtein,
+        protein_goal_g: prefs?.daily_protein_goal_g ?? null,
+        avg_steps: avgSteps,
+        step_goal: plan?.daily_step_goal ?? null,
+        weight_change_kg: weightChange,
+        weight_goal_direction: weightGoalDir,
+        estimated_weekly_deficit_kcal: weeklyDeficit,
+        diet_notes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
+      };
+
+      // Too little data to say anything useful.
+      if (daysLogged < 2) {
+        res.json({
+          report: {
+            headline: 'Not enough data yet',
+            summary: `Log at least a couple of days this week and I'll analyse your calories, protein, steps and weight trend here.`,
+            wins: [],
+            focus: ['Log your meals for a few days so this report has something to work with.'],
+          },
+          stats,
+          generated_at: new Date().toISOString(),
+          source: 'insufficient',
+        });
+        return;
+      }
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+
+      // Rule-based fallback used when Vertex is off or fails — the tab still works.
+      const fallback = () => {
+        const wins: string[] = [];
+        const focus: string[] = [];
+        if (daysLogged >= 5) wins.push(`Logged ${daysLogged} of the last 7 days — great consistency.`);
+        else focus.push(`Only ${daysLogged} days logged — aim for 6–7 for a clearer picture.`);
+        if (stats.calorie_goal && avgCalories !== null) {
+          if (avgCalories <= stats.calorie_goal) wins.push('Averaged at or under your calorie target.');
+          else focus.push(`Averaging ${avgCalories - stats.calorie_goal} kcal/day over target.`);
+        }
+        if (stats.protein_goal_g && avgProtein !== null && avgProtein >= stats.protein_goal_g * 0.9)
+          wins.push('Protein was on point.');
+        return {
+          report: {
+            headline: daysLogged >= 5 ? 'Consistent week' : 'A partial week',
+            summary: `You logged ${daysLogged} days, averaging ${avgCalories ?? '—'} kcal${
+              stats.calorie_goal ? ` against a ${stats.calorie_goal} goal` : ''
+            }${avgProtein !== null ? ` and ${avgProtein}g protein` : ''}${
+              avgSteps !== null ? `, with about ${avgSteps.toLocaleString()} steps/day` : ''
+            }${weightChange !== null ? `. Weight moved ${weightChange > 0 ? '+' : ''}${weightChange} kg` : ''}.`,
+            wins,
+            focus,
+          },
+          stats,
+          generated_at: new Date().toISOString(),
+          source: 'rule',
+        };
+      };
+
+      if (!credentialJson || !project) {
+        res.json(fallback());
+        return;
+      }
+
+      let payload: unknown;
+      try {
+        const report = await generateWeeklyInsights({
+          displayName: req.sessionUser!.name,
+          stats,
+          credentialJson,
+          project,
+          location: process.env.GCP_LOCATION || 'us-central1',
+          model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+        });
+        payload = { report, stats, generated_at: new Date().toISOString(), source: 'ai' };
+        await env.DB
+          .prepare(
+            'INSERT OR REPLACE INTO weekly_reports (user_id, period_key, report_json) VALUES (?, ?, ?)'
+          )
+          .bind(userId, periodKey, JSON.stringify(payload))
+          .run();
+      } catch (error) {
+        console.error('Weekly insights AI error:', error);
+        payload = fallback();
+      }
+
+      res.json(payload);
+    } catch (error) {
+      console.error('Weekly insights error:', error);
+      res.status(500).json({ error: 'Failed to build your weekly report.' });
     }
   });
 
