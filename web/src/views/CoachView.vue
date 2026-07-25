@@ -497,16 +497,21 @@ onUnmounted(() => {
   padding: 16px;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
 
-.spacer {
-  flex: 1 1 auto;
+/* Nothing in the thread may grow vertically — only the spacer does. This is the
+   guard against a bubble stretching to fill the column (an iOS Safari flexbox
+   quirk). */
+.thread > * {
+  flex: 0 0 auto;
 }
 
-.bubble-row {
-  flex: 0 0 auto;
+.spacer {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* ── Empty state ────────────────────────────────────────── */
@@ -579,6 +584,7 @@ onUnmounted(() => {
   align-items: flex-end;
   gap: 8px;
   margin-bottom: 12px;
+  width: 100%;
 }
 
 .bubble-row.user {
@@ -600,6 +606,9 @@ onUnmounted(() => {
 
 .bubble {
   max-width: 82%;
+  /* Hug content — never grow to fill the row's width or height (the stretch). */
+  flex: 0 1 auto;
+  align-self: flex-end;
   border-radius: 18px;
   padding: 10px 14px;
 }
