@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import {
   api,
   FALLBACK_GOALS,
@@ -26,8 +27,14 @@ const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 const goals = ref<Goals>({ ...FALLBACK_GOALS });
 
 const today = todayISO();
-/** The day being viewed. Defaults to today; the header arrows move it. */
-const viewDate = ref(today);
+/**
+ * The day being viewed. Defaults to today; the header arrows move it. A
+ * `?date=YYYY-MM-DD` query (e.g. from the Coach's "updated your log" link)
+ * opens straight to that day.
+ */
+const route = useRoute();
+const queryDate = typeof route.query.date === 'string' ? route.query.date : '';
+const viewDate = ref(/^\d{4}-\d{2}-\d{2}$/.test(queryDate) && queryDate <= today ? queryDate : today);
 const entries = ref<FoodEntry[]>([]);
 const totals = ref<Totals>({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
 const loading = ref(true);

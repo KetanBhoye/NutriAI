@@ -125,7 +125,7 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
     declaration: {
       name: 'update_profile',
       description:
-        'Update profile and current body stats. Use for a quick weight update ("I weigh 71.2 now") or setting height/age/gender/activity. Only pass changed fields.',
+        'Update profile and current body stats. Use for a quick weight update ("I weigh 71.2 now") or setting height/age/gender/activity. Only pass changed fields. A logged weight shows up on the user\'s Plan tab weigh-in chart.',
       parameters: {
         type: 'OBJECT',
         properties: {
@@ -139,6 +139,7 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
           weight_kg: { type: 'NUMBER' },
           muscle_mass_kg: { type: 'NUMBER' },
           body_fat_percentage: { type: 'NUMBER' },
+          recorded_date: { type: 'STRING', description: 'YYYY-MM-DD the weigh-in is for; omit for the active date' },
         },
       },
     },
@@ -235,19 +236,44 @@ export interface CoachTurn {
 const MAX_STEPS = 6;
 const MAX_HISTORY = 24;
 
-function buildSystemPrompt(today: string, knownFoods: string): string {
+function buildSystemPrompt(opts: {
+  today: string;
+  activeDate: string;
+  knownFoods: string;
+  profile: string;
+  preferences: string;
+}): string {
+  const dateLine =
+    opts.activeDate === opts.today
+      ? `Today is ${opts.today}, and that is the date the user is currently viewing.`
+      : `Today's real date is ${opts.today}, but the user is currently viewing ${opts.activeDate} in the app.`;
+
   return `You are the user's personal nutrition and fitness coach inside their tracking app. You act on their data with tools: log and correct food entries, read/change daily goals, update their profile and weight, record and review body-composition measurements, and compare progress.
 
-Today is ${today}.
+${dateLine}
+Default every dated action to the date the user is viewing (${opts.activeDate}) — pass it as entry_date / date / recorded_date — UNLESS they name another day ("yesterday", "today", "on the 3rd"), in which case resolve that against today's real date (${opts.today}).
+
+Here is who you're coaching (already fetched, so you don't need to look it up unless it may have changed):
+PROFILE:
+${opts.profile}
+DAILY GOALS & PREFERENCES:
+${opts.preferences}
+Use this context to make every reply specific to them — reference their goals and current stats instead of asking for things you already know.
 
 When the user describes food they ate, log it with add_entry (one call per item), working out realistic calories and macros. This user eats mostly Indian home-cooked food. Prefer their known foods and values when they match:
-${knownFoods}
+${opts.knownFoods}
 
-For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_user_preferences, get_profile, list_body_measurements, compare_progress) and answer from the results — never guess.
+For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_profile_history, list_body_measurements, compare_progress) and answer from the results — never guess numbers you haven't read.
 
-A quick weight mention ("I'm 71.2 today") → update_profile with weight_kg. A full scale reading → add_body_measurement. Changing a target ("bump protein to 160") → set_user_preferences with only that field.
+A quick weight mention ("I'm 71.2 today") → update_profile with weight_kg (and recorded_date if it's not the active date). A full scale reading → add_body_measurement. Changing a target ("bump protein to 160") → set_user_preferences with only that field.
 
-Be brief and direct. After acting, confirm what you did in one or two sentences. Never invent an id — always get it from list_entries before update/delete.`;
+Be brief and direct. After acting, confirm what you did in one or two sentences. When you logged or read a day that is NOT today, name that date in your reply (e.g. "logged for Jul 20") rather than saying "today". Never invent an id — always get it from list_entries before update/delete.`;
+}
+
+/** Pulls the text payload out of a tool result, for grounding the prompt. */
+function toolText(result: CallToolResult | null): string {
+  const first = result?.content?.[0];
+  return first && first.type === 'text' ? (first as { text: string }).text.slice(0, 1500) : '(unavailable)';
 }
 
 async function callVertex(config: {
@@ -298,13 +324,31 @@ export async function runCoachTurn(opts: {
   userId: string;
   env: unknown;
   knownFoods: string;
+  activeDate?: string;
   credentialJson: string;
   project: string;
   location: string;
   model: string;
 }): Promise<CoachTurn> {
   const today = new Date().toLocaleDateString('en-CA');
-  const systemPrompt = buildSystemPrompt(today, opts.knownFoods || '(none yet)');
+  const activeDate = opts.activeDate || today;
+
+  // Ground every reply in who we're coaching: pull the profile and daily goals
+  // up front so the agent doesn't have to spend a tool round-trip on them and
+  // the first message is already specific to the user. Cheap local DB reads;
+  // failures degrade to "(unavailable)" rather than blocking the chat.
+  const [profileRes, prefsRes] = await Promise.all([
+    getProfile({}, opts.userId, opts.env).catch(() => null),
+    getUserPreferencesHandler({ include_full_text: false } as never, opts.userId, opts.env).catch(() => null),
+  ]);
+
+  const systemPrompt = buildSystemPrompt({
+    today,
+    activeDate,
+    knownFoods: opts.knownFoods || '(none yet)',
+    profile: toolText(profileRes),
+    preferences: toolText(prefsRes),
+  });
   console.log('[coach] minting token…');
   const token = await getGoogleAccessToken(opts.credentialJson);
   console.log('[coach] token ok, starting loop');

@@ -2,8 +2,6 @@
 import { computed, onMounted, ref } from 'vue';
 import { todayISO } from '../dates';
 import GlideChart from '../components/GlideChart.vue';
-import AccountCard from '../components/AccountCard.vue';
-import TokenCard from '../components/TokenCard.vue';
 
 interface GlideWeek {
   week: number;
@@ -286,9 +284,6 @@ onMounted(load);
         </div>
 
         <button class="btn btn-ghost wide" @click="editing = true">Edit plan</button>
-
-        <h2>Connections</h2>
-        <TokenCard />
       </template>
 
       <template v-else>
@@ -366,10 +361,6 @@ onMounted(load);
         </div>
       </template>
 
-      <!-- Account is always reachable on the Plan tab, whether or not a plan
-           exists yet — a new user with no plan still needs to sign out. -->
-      <h2>Account</h2>
-      <AccountCard />
     </template>
   </div>
 </template>

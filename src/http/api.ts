@@ -26,6 +26,15 @@ import { lookupFood } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
+import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
+import {
+  isPushConfigured,
+  pushPublicKey,
+  saveSubscription,
+  removeSubscription,
+  sendPushToUser,
+} from '../services/push.js';
+import { sendReminderNow } from '../services/reminders.js';
 import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
@@ -94,6 +103,12 @@ const coachChatSchema = z.object({
     .array(z.object({ role: z.enum(['user', 'model']), parts: z.array(z.any()) }))
     .max(30)
     .optional(),
+  // The date the user is viewing in the app; the agent defaults dated actions
+  // (logging food, weigh-ins, "what did I eat") to it unless told otherwise.
+  active_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 const aiParseSchema = z.object({
@@ -127,6 +142,52 @@ const preferencesSchema = z.object({
   daily_protein_goal_g: z.number().min(0).max(500),
   daily_carbs_goal_g: z.number().min(0).max(1000),
   daily_fat_goal_g: z.number().min(0).max(500),
+});
+
+/** Shared shape for the profile inputs collected during onboarding. */
+const onboardingProfileSchema = z.object({
+  gender: z.enum(['male', 'female']),
+  age: z.number().int().min(13).max(100),
+  height_cm: z.number().min(120).max(230),
+  weight_kg: z.number().min(30).max(400),
+  activity_level: z.enum(['sedentary', 'light', 'moderate', 'active', 'very_active']),
+  goal: z.enum(['cut', 'maintain', 'lean_bulk', 'bulk']),
+});
+
+// The Vertex plan step: profile + the app's computed baseline, returns refined
+// targets + a coaching note. Baseline is echoed so the model can anchor to it.
+const aiPlanSchema = onboardingProfileSchema.extend({
+  display_name: z.string().max(100).optional(),
+  target_weight_kg: z.number().min(30).max(400).nullish(),
+  bmr: z.number().min(500).max(5000),
+  tdee: z.number().min(600).max(8000),
+  baseline: z.object({
+    calories: z.number(),
+    protein_g: z.number(),
+    carbs_g: z.number(),
+    fat_g: z.number(),
+  }),
+});
+
+// The final commit: saves profile, preferences (with the AI note) and, if a
+// target weight is given, a glide-path plan for the Plan tab.
+const onboardingCompleteSchema = onboardingProfileSchema.extend({
+  display_name: z.string().min(1).max(100),
+  daily_calorie_goal: z.number().int().min(800).max(8000),
+  daily_protein_goal_g: z.number().min(0).max(500),
+  daily_carbs_goal_g: z.number().min(0).max(1000),
+  daily_fat_goal_g: z.number().min(0).max(500),
+  behavior_instructions: z.string().max(4000).optional(),
+  target_weight_kg: z.number().min(30).max(400).nullish(),
+  target_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+});
+
+const pushSubscribeSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
 });
 
 const suggestionsQuerySchema = z.object({
@@ -774,6 +835,169 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     }
   });
 
+  // Onboarding step: refine the app's computed baseline into a personalised
+  // plan via Vertex AI. 503 when Vertex isn't configured so the client silently
+  // falls back to its own baseline; 502 on a transient AI failure (same).
+  app.post('/api/onboarding/ai-plan', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = aiPlanSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'AI planning is not configured on this server.' });
+        return;
+      }
+
+      const plan = await generateOnboardingPlan({
+        ...parsed.data,
+        target_weight_kg: parsed.data.target_weight_kg ?? null,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json({ plan });
+    } catch (error) {
+      console.error('Onboarding AI plan error:', error);
+      res.status(502).json({ error: 'Could not generate an AI plan. Using the standard targets.' });
+    }
+  });
+
+  // Onboarding commit: create the profile (with a first weigh-in), save the
+  // daily targets + coaching note, and — if a target weight was given — a
+  // glide-path plan so the Plan tab is ready. One call, so a new user is set up
+  // atomically from the client's perspective.
+  app.post('/api/onboarding/complete', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = onboardingCompleteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const userId = req.sessionUser!.userId;
+      const d = parsed.data;
+
+      // Profile + first weigh-in (this also records BMR/TDEE from the weight).
+      const profileResult = await updateProfile(
+        {
+          height_cm: d.height_cm,
+          age: d.age,
+          gender: d.gender,
+          activity_level: d.activity_level,
+          weight_kg: d.weight_kg,
+        },
+        userId,
+        env
+      );
+      if (profileResult.isError) {
+        const text = profileResult.content?.[0];
+        res.status(400).json({
+          error: text && text.type === 'text' ? (text as { text: string }).text : 'Could not save profile.',
+        });
+        return;
+      }
+
+      // Daily targets + the AI coaching note (behavior_instructions is what the
+      // Coach reads on every turn).
+      await new UserTrackingPreferencesRepository(env.DB).upsert(userId, {
+        display_name: d.display_name,
+        daily_calorie_goal: d.daily_calorie_goal,
+        daily_protein_goal_g: d.daily_protein_goal_g,
+        daily_carbs_goal_g: d.daily_carbs_goal_g,
+        daily_fat_goal_g: d.daily_fat_goal_g,
+        behavior_instructions: d.behavior_instructions || undefined,
+      });
+
+      // Optional glide-path plan for the Plan tab.
+      if (d.target_weight_kg && d.target_date) {
+        const today = new Date().toLocaleDateString('en-CA');
+        await new GoalPlanRepository(env.DB).replaceActive(userId, {
+          start_weight_kg: d.weight_kg,
+          start_date: today,
+          goal_weight_kg: d.target_weight_kg,
+          target_date: d.target_date,
+        });
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Onboarding complete error:', error);
+      res.status(500).json({ error: 'Could not finish setting up your account.' });
+    }
+  });
+
+  // ── Web Push ────────────────────────────────────────────────────────────
+  // The client needs the VAPID public key to subscribe; null means the feature
+  // is off on this server and the UI hides the toggle.
+  app.get('/api/push/config', requireSession, (_req: AuthenticatedRequest, res) => {
+    res.json({ publicKey: pushPublicKey() });
+  });
+
+  app.post('/api/push/subscribe', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!isPushConfigured()) {
+        res.status(503).json({ error: 'Push notifications are not configured on this server.' });
+        return;
+      }
+      const parsed = pushSubscribeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      await saveSubscription(env.DB, req.sessionUser!.userId, parsed.data);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Push subscribe error:', error);
+      res.status(500).json({ error: 'Could not save the subscription.' });
+    }
+  });
+
+  app.post('/api/push/unsubscribe', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+      if (endpoint) await removeSubscription(env.DB, endpoint);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Push unsubscribe error:', error);
+      res.status(500).json({ error: 'Could not remove the subscription.' });
+    }
+  });
+
+  // Fires a notification to the user's own devices — used right after they
+  // enable notifications so they see it working immediately.
+  app.post('/api/push/test', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const delivered = await sendPushToUser(env.DB, req.sessionUser!.userId, {
+        title: 'NutriAI',
+        body: "Notifications are on 🎉 I'll nudge you to log your meals.",
+        url: '/app/',
+        tag: 'nutriai-test',
+      });
+      res.json({ ok: true, delivered });
+    } catch (error) {
+      console.error('Push test error:', error);
+      res.status(500).json({ error: 'Could not send a test notification.' });
+    }
+  });
+
+  // Sends the user the exact daily reminder they'd get tonight, computed from
+  // today's log — lets them preview the personalised content on demand.
+  app.post('/api/push/preview-reminder', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const delivered = await sendReminderNow(env, req.sessionUser!.userId);
+      res.json({ ok: true, delivered });
+    } catch (error) {
+      console.error('Push preview error:', error);
+      res.status(500).json({ error: 'Could not send a sample reminder.' });
+    }
+  });
+
   app.get('/api/ai/status', requireSession, (_req: AuthenticatedRequest, res) => {
     // Whether the AI logger is usable is purely a deployment-config question
     // (is an API key set), so the client can hide the feature when it isn't.
@@ -880,6 +1104,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         userId,
         env,
         knownFoods,
+        activeDate: parsed.data.active_date,
         credentialJson,
         project,
         location: process.env.GCP_LOCATION || 'us-central1',

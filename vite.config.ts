@@ -33,6 +33,10 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         navigateFallback: '/app/index.html',
+        // Pull our Web Push handlers into the generated service worker. Path is
+        // resolved relative to the SW's scope (/app/), and push-sw.js ships as a
+        // static asset from web/public.
+        importScripts: ['push-sw.js'],
         // Never serve a cached API response as if it were fresh: reads go to
         // the network first and only fall back to cache when offline, so the
         // app can open without a connection but won't show stale totals when

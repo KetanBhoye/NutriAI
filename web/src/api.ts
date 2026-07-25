@@ -259,6 +259,36 @@ export const api = {
     await request('/api/preferences', { method: 'PUT', body: JSON.stringify(prefs) });
   },
 
+  /**
+   * Asks the server (Vertex AI) to refine the wizard's baseline into a
+   * personalised plan. Resolves null when the server has no AI configured or
+   * the call fails — the caller then keeps its own computed baseline.
+   */
+  async aiPlan(body: Record<string, unknown>): Promise<{
+    daily_calorie_goal: number;
+    daily_protein_goal_g: number;
+    daily_carbs_goal_g: number;
+    daily_fat_goal_g: number;
+    summary: string;
+  } | null> {
+    try {
+      const res = await fetch('/api/onboarding/ai-plan', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).plan ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async completeOnboarding(body: Record<string, unknown>): Promise<void> {
+    await request('/api/onboarding/complete', { method: 'POST', body: JSON.stringify(body) });
+  },
+
   async getGoals(): Promise<Goals> {
     const me = await request<{ goals: Partial<Goals> | null }>('/api/me');
     return {

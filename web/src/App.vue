@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { isOnline, pendingCount } from './api';
+import InstallBanner from './components/InstallBanner.vue';
 
 const route = useRoute();
 const chrome = computed(() => !route.meta.noChrome);
@@ -9,6 +10,8 @@ const chrome = computed(() => !route.meta.noChrome);
 
 <template>
   <div>
+    <InstallBanner v-if="chrome" />
+
     <Transition name="fade">
       <div v-if="chrome && (!isOnline || pendingCount > 0)" class="banner">
         <span v-if="!isOnline">
@@ -30,6 +33,7 @@ const chrome = computed(() => !route.meta.noChrome);
       <RouterLink to="/coach" class="tab">Coach</RouterLink>
       <RouterLink to="/dashboard" class="tab">Trends</RouterLink>
       <RouterLink to="/goals" class="tab">Plan</RouterLink>
+      <RouterLink to="/profile" class="tab">You</RouterLink>
     </nav>
   </div>
 </template>
