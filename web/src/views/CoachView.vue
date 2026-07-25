@@ -579,36 +579,37 @@ onUnmounted(() => {
 }
 
 /* ── Bubbles ────────────────────────────────────────────── */
+/* Deliberately NOT flexbox. Flex items were stretching vertically / collapsing
+   horizontally on some browsers (the tall dotted pill). Block rows with
+   inline-block bubbles size strictly to content and cannot stretch. */
 .bubble-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
   margin-bottom: 12px;
-  width: 100%;
+  text-align: left;
 }
 
 .bubble-row.user {
-  justify-content: flex-end;
+  text-align: right;
 }
 
 .mini-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: bottom;
   width: 26px;
   height: 26px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
+  margin-right: 8px;
   font-size: 14px;
   border-radius: 9px;
   background: var(--surface);
   border: 1px solid var(--border);
-  margin-bottom: 2px;
 }
 
 .bubble {
+  display: inline-block;
   max-width: 82%;
-  /* Hug content — never grow to fill the row's width or height (the stretch). */
-  flex: 0 1 auto;
-  align-self: flex-end;
+  vertical-align: bottom;
+  text-align: left;
   border-radius: 18px;
   padding: 10px 14px;
 }
@@ -753,9 +754,11 @@ onUnmounted(() => {
 
 /* ── Typing indicator ───────────────────────────────────── */
 .typing {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
   padding: 14px;
+  vertical-align: bottom;
 }
 
 .typing span {
