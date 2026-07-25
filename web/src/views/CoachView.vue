@@ -250,7 +250,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="coach" :style="coachStyle">
+  <div class="coach-view" :style="coachStyle">
     <header class="chat-head">
       <div class="head-title">
         <div class="avatar">🥗</div>
@@ -372,7 +372,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.coach {
+/* NB: named .coach-view, NOT .coach — coach message bubbles carry class="coach"
+   (from :class="b.from"), and a `.coach { height: ... }` rule would match those
+   bubbles too and stretch each one to the full container height. That collision
+   was the "giant bubble" bug. */
+.coach-view {
   display: flex;
   flex-direction: column;
   /* #app already reserves 72px + safe-area below for the fixed tab bar, so the
@@ -579,26 +583,24 @@ onUnmounted(() => {
 }
 
 /* ── Bubbles ────────────────────────────────────────────── */
-/* Deliberately NOT flexbox. Flex items were stretching vertically / collapsing
-   horizontally on some browsers (the tall dotted pill). Block rows with
-   inline-block bubbles size strictly to content and cannot stretch. */
 .bubble-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   margin-bottom: 12px;
-  text-align: left;
 }
 
+/* User messages sit on the right; row-reverse keeps the bubble flush right. */
 .bubble-row.user {
-  text-align: right;
+  flex-direction: row-reverse;
 }
 
 .mini-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  vertical-align: bottom;
+  flex: none;
+  display: grid;
+  place-items: center;
   width: 26px;
   height: 26px;
-  margin-right: 8px;
   font-size: 14px;
   border-radius: 9px;
   background: var(--surface);
@@ -606,10 +608,9 @@ onUnmounted(() => {
 }
 
 .bubble {
-  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 82%;
-  vertical-align: bottom;
-  text-align: left;
   border-radius: 18px;
   padding: 10px 14px;
 }
@@ -754,11 +755,10 @@ onUnmounted(() => {
 
 /* ── Typing indicator ───────────────────────────────────── */
 .typing {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 4px;
   padding: 14px;
-  vertical-align: bottom;
 }
 
 .typing span {
