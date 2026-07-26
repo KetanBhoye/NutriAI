@@ -17,6 +17,7 @@ import MacroBar from '../components/MacroBar.vue';
 import NewFoodSheet from '../components/NewFoodSheet.vue';
 import PortionSheet from '../components/PortionSheet.vue';
 import QuickLogSheet from '../components/QuickLogSheet.vue';
+import ShareStory from '../components/ShareStory.vue';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -43,6 +44,7 @@ const loadError = ref<string | null>(null);
 const activeMeal = ref<MealType | null>(null);
 const suggestions = ref<Suggestion[]>([]);
 const suggestionsLoading = ref(false);
+const showShare = ref(false);
 
 /** Set while adjusting a portion; null when the quick list is showing. */
 const adjusting = ref<Suggestion | null>(null);
@@ -255,9 +257,17 @@ onMounted(async () => {
           </button>
         </div>
       </div>
-      <div style="text-align: right">
-        <div style="font-size: 26px; font-weight: 700">{{ totals.calories }}</div>
-        <div class="muted" style="font-size: 13px">{{ remaining }} left</div>
+      <div class="head-right">
+        <button class="share-btn" aria-label="Share my day" @click="showShare = true">
+          <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <div style="text-align: right">
+          <div style="font-size: 26px; font-weight: 700">{{ totals.calories }}</div>
+          <div class="muted" style="font-size: 13px">{{ remaining }} left</div>
+        </div>
       </div>
     </header>
 
@@ -346,6 +356,8 @@ onMounted(async () => {
       @created="onFoodCreated"
       @cancel="addingNew = null"
     />
+
+    <ShareStory v-if="showShare" :date="viewDate" @close="showShare = false" />
   </div>
 </template>
 
@@ -361,6 +373,30 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.share-btn {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: transform 0.12s ease;
+}
+
+.share-btn:active {
+  transform: scale(0.92);
 }
 
 .nav-btn {

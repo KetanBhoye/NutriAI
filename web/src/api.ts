@@ -333,6 +333,10 @@ export const api = {
     return request('/api/dashboard');
   },
 
+  async shareStats(date: string): Promise<import('./share').ShareStats> {
+    return request<import('./share').ShareStats>(`/api/share/today?date=${encodeURIComponent(date)}`);
+  },
+
   /** External food databases, for foods with no logging history. */
   async lookupFood(query: string): Promise<{ results: LookupResult[] }> {
     return request(`/api/foods/lookup?q=${encodeURIComponent(query)}`);

@@ -1576,6 +1576,97 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     }
   });
 
+  // Compact stats bundle for the shareable "daily story" card.
+  app.get('/api/share/today', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.sessionUser!.userId;
+      const date =
+        typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+          ? req.query.date
+          : new Date().toISOString().slice(0, 10);
+
+      const totals = await env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) pro,
+                  COALESCE(SUM(carbs_g),0) carb, COALESCE(SUM(fat_g),0) fat
+           FROM food_entries WHERE user_id = ? AND entry_date = ?`
+        )
+        .bind(userId, date)
+        .first<{ cal: number; pro: number; carb: number; fat: number }>();
+
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{ daily_calorie_goal: number | null; daily_protein_goal_g: number | null }>();
+
+      // Steps for the day, else the most recent day with steps.
+      const stepRow = await env.DB
+        .prepare(
+          `SELECT steps FROM daily_activity WHERE user_id = ? AND steps IS NOT NULL
+             AND activity_date <= ? ORDER BY activity_date DESC LIMIT 1`
+        )
+        .bind(userId, date)
+        .first<{ steps: number }>();
+
+      // Logging streak ending on `date` (or the day before).
+      const dateRows = await env.DB
+        .prepare(
+          `SELECT DISTINCT entry_date FROM food_entries WHERE user_id = ? AND entry_date <= ?
+           ORDER BY entry_date DESC LIMIT 120`
+        )
+        .bind(userId, date)
+        .all<{ entry_date: string }>();
+      const logged = new Set((dateRows.results ?? []).map((r) => r.entry_date));
+      const shift = (d: string, n: number) => {
+        const dt = new Date(`${d}T00:00:00Z`);
+        dt.setUTCDate(dt.getUTCDate() + n);
+        return dt.toISOString().slice(0, 10);
+      };
+      let streak = 0;
+      let cursor = logged.has(date) ? date : logged.has(shift(date, -1)) ? shift(date, -1) : null;
+      while (cursor && logged.has(cursor)) {
+        streak += 1;
+        cursor = shift(cursor, -1);
+      }
+
+      // Weight: latest + change over ~2 weeks.
+      const weigh = await env.DB
+        .prepare(
+          `SELECT weight_kg, recorded_date FROM profile_tracking
+           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date <= ?
+           ORDER BY recorded_date DESC LIMIT 30`
+        )
+        .bind(userId, date)
+        .all<{ weight_kg: number; recorded_date: string }>();
+      const weighIns = weigh.results ?? [];
+      const latestWeight = weighIns[0]?.weight_kg ?? null;
+      const twoWeeksAgo = shift(date, -14);
+      const past = weighIns.find((w) => w.recorded_date <= twoWeeksAgo) ?? weighIns[weighIns.length - 1];
+      const weightChange =
+        latestWeight !== null && past && past.recorded_date !== weighIns[0]?.recorded_date
+          ? Math.round((latestWeight - past.weight_kg) * 10) / 10
+          : null;
+
+      res.json({
+        date,
+        name: req.sessionUser!.name,
+        calories: { consumed: Math.round(totals?.cal ?? 0), goal: prefs?.daily_calorie_goal ?? null },
+        protein: { consumed: Math.round(totals?.pro ?? 0), goal: prefs?.daily_protein_goal_g ?? null },
+        carbs_g: Math.round(totals?.carb ?? 0),
+        fat_g: Math.round(totals?.fat ?? 0),
+        steps: stepRow?.steps ?? null,
+        streak,
+        weight_kg: latestWeight,
+        weight_change_kg: weightChange,
+      });
+    } catch (error) {
+      console.error('Share stats error:', error);
+      res.status(500).json({ error: 'Failed to build share stats.' });
+    }
+  });
+
   app.post('/api/tokens/rotate', requireSession, async (req: AuthenticatedRequest, res) => {
     try {
       const existingToken = await env.DB
