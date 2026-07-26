@@ -10,6 +10,7 @@ import CoachView from './views/CoachView.vue';
 import GoalsView from './views/GoalsView.vue';
 import OnboardingView from './views/OnboardingView.vue';
 import ProfileView from './views/ProfileView.vue';
+import AdminView from './views/AdminView.vue';
 import TodayView from './views/TodayView.vue';
 
 const router = createRouter({
@@ -20,6 +21,7 @@ const router = createRouter({
     { path: '/goals', name: 'goals', component: GoalsView },
     { path: '/coach', name: 'coach', component: CoachView },
     { path: '/profile', name: 'profile', component: ProfileView },
+    { path: '/admin', name: 'admin', component: AdminView },
     { path: '/login', name: 'login', component: AuthView, meta: { noChrome: true } },
     { path: '/onboarding', name: 'onboarding', component: OnboardingView, meta: { noChrome: true } },
   ],

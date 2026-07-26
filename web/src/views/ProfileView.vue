@@ -16,6 +16,7 @@ import {
 const name = ref<string | null>(null);
 const email = ref<string | null>(null);
 const goals = ref<{ calories?: number | null; protein_g?: number | null } | null>(null);
+const isAdmin = ref(false);
 const signingOut = ref(false);
 
 // ── Notifications state ───────────────────────────────────
@@ -63,6 +64,7 @@ onMounted(async () => {
     name.value = me.name;
     email.value = me.email;
     goals.value = me.goals;
+    isAdmin.value = me.role === 'admin';
   } catch {
     /* 401 handler redirects */
   }
@@ -146,6 +148,15 @@ async function deleteAccount(): Promise<void> {
         <div class="em muted">{{ email ?? '' }}</div>
       </div>
     </div>
+
+    <!-- Admin (owner only) -->
+    <RouterLink v-if="isAdmin" to="/admin" class="card link-card admin-card">
+      <div>
+        <div class="setting-title">📊 Admin dashboard</div>
+        <div class="setting-sub muted">Users, adoption & AI cost</div>
+      </div>
+      <span class="chev">›</span>
+    </RouterLink>
 
     <!-- Install app -->
     <template v-if="!installed">
@@ -418,6 +429,11 @@ async function deleteAccount(): Promise<void> {
   gap: 12px;
   text-decoration: none;
   color: inherit;
+}
+
+.admin-card {
+  margin-top: 14px;
+  border-color: rgba(74, 222, 128, 0.3);
 }
 
 .chev {

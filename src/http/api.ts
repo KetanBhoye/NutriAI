@@ -29,6 +29,7 @@ import { runCoachTurn } from '../services/coach/agent.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
 import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
 import { parseMealPhoto } from '../services/coach/photo-parse.js';
+import { getVertexUsage } from '../services/admin/usage.js';
 import {
   isPushConfigured,
   pushPublicKey,
@@ -1630,6 +1631,76 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Weekly insights error:', error);
       res.status(500).json({ error: 'Failed to build your weekly report.' });
+    }
+  });
+
+  // Admin-only overview: adoption + AI cost. Gated on the admin role.
+  app.get('/api/admin/overview', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+
+      const users = await env.DB
+        .prepare('SELECT id, email, name, role, created_at FROM users ORDER BY created_at DESC')
+        .all<{ id: string; email: string; name: string; role: string; created_at: string }>();
+      const logs = await env.DB
+        .prepare(
+          `SELECT user_id, COUNT(*) n, MAX(entry_date) last, COUNT(DISTINCT entry_date) days
+           FROM food_entries GROUP BY user_id`
+        )
+        .all<{ user_id: string; n: number; last: string; days: number }>();
+      const byUser = new Map((logs.results ?? []).map((l) => [l.user_id, l]));
+      const cutoff7 = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+      const userRows = (users.results ?? []).map((u) => {
+        const l = byUser.get(u.id);
+        return {
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          signed_up: (u.created_at ?? '').slice(0, 10),
+          entries: l?.n ?? 0,
+          days_logged: l?.days ?? 0,
+          last_log: l?.last ?? null,
+          active_7d: !!l?.last && l.last >= cutoff7,
+        };
+      });
+
+      const totalEntriesRow = await env.DB.prepare('SELECT COUNT(*) c FROM food_entries').first<{ c: number }>();
+      const entries7dRow = await env.DB
+        .prepare("SELECT COUNT(*) c FROM food_entries WHERE entry_date >= date('now','-7 days')")
+        .first<{ c: number }>();
+      const foodsRow = await env.DB.prepare('SELECT COUNT(*) c FROM foods').first<{ c: number }>();
+      const weighRow = await env.DB
+        .prepare('SELECT COUNT(*) c FROM profile_tracking WHERE weight_kg IS NOT NULL')
+        .first<{ c: number }>();
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      const ai = credentialJson && project ? await getVertexUsage(credentialJson, project) : null;
+
+      res.json({
+        users: {
+          total: userRows.length,
+          logged_food: userRows.filter((u) => u.entries > 0).length,
+          active_7d: userRows.filter((u) => u.active_7d).length,
+          list: userRows,
+        },
+        content: {
+          total_entries: totalEntriesRow?.c ?? 0,
+          entries_7d: entries7dRow?.c ?? 0,
+          foods: foodsRow?.c ?? 0,
+          weigh_ins: weighRow?.c ?? 0,
+        },
+        ai,
+        railway_estimate_usd: 5,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Admin overview error:', error);
+      res.status(500).json({ error: 'Failed to load admin overview.' });
     }
   });
 
