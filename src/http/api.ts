@@ -22,13 +22,14 @@ import { FoodLibraryRepository, type MealType } from '../repositories/food-libra
 import { UserProfileRepository } from '../repositories/user-profile.repository.js';
 import { ProfileTrackingRepository } from '../repositories/profile-tracking.repository.js';
 import { updateProfile, getProfileHistory } from '../tools/index.js';
-import { lookupFood } from '../services/food-lookup.js';
+import { lookupFood, lookupBarcode } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
 import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
 import { parseMealPhoto } from '../services/coach/photo-parse.js';
+import { generateMealSuggestions } from '../services/coach/suggest-meal.js';
 import { getVertexUsage } from '../services/admin/usage.js';
 import {
   isPushConfigured,
@@ -1225,6 +1226,89 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       }
       console.error('Coach chat error:', error);
       res.status(502).json({ error: 'The Coach could not be reached. Try again in a moment.' });
+    }
+  });
+
+  // "What should I eat?" — 3 simple Indian meal ideas that fit the calories left
+  // today and the user's diet notes.
+  app.post('/api/ai/suggest-meal', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'Meal suggestions need Vertex AI configured on the server.' });
+        return;
+      }
+      const userId = req.sessionUser!.userId;
+      const mealType = ['breakfast', 'lunch', 'dinner', 'snack'].includes(req.body?.meal_type)
+        ? (req.body.meal_type as string)
+        : 'meal';
+      const date = new Date().toISOString().slice(0, 10);
+
+      const consumed = await env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) pro
+           FROM food_entries WHERE user_id = ? AND entry_date = ?`
+        )
+        .bind(userId, date)
+        .first<{ cal: number; pro: number }>();
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g, behavior_instructions
+           FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{
+          daily_calorie_goal: number | null;
+          daily_protein_goal_g: number | null;
+          behavior_instructions: string | null;
+        }>();
+
+      const remainingCalories =
+        prefs?.daily_calorie_goal != null
+          ? Math.max(150, prefs.daily_calorie_goal - Math.round(consumed?.cal ?? 0))
+          : null;
+      const remainingProtein =
+        prefs?.daily_protein_goal_g != null
+          ? Math.max(0, prefs.daily_protein_goal_g - Math.round(consumed?.pro ?? 0))
+          : null;
+
+      const suggestions = await generateMealSuggestions({
+        remainingCalories,
+        remainingProtein,
+        mealType,
+        dietNotes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json({
+        meal_type: mealType,
+        remaining_calories: remainingCalories,
+        remaining_protein: remainingProtein,
+        suggestions,
+      });
+    } catch (error) {
+      console.error('Suggest meal error:', error);
+      res.status(502).json({ error: 'Could not get suggestions right now. Try again.' });
+    }
+  });
+
+  // Barcode → packaged product macros via Open Food Facts.
+  app.get('/api/foods/barcode', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const code = typeof req.query.code === 'string' ? req.query.code.replace(/\D/g, '') : '';
+      if (code.length < 6 || code.length > 14) {
+        res.status(400).json({ error: 'Invalid barcode.' });
+        return;
+      }
+      const product = await lookupBarcode(code);
+      res.json(product);
+    } catch (error) {
+      console.error('Barcode lookup error:', error);
+      res.status(502).json({ error: 'Could not look up that barcode.' });
     }
   });
 

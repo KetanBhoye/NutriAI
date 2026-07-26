@@ -19,6 +19,8 @@ import PortionSheet from '../components/PortionSheet.vue';
 import QuickLogSheet from '../components/QuickLogSheet.vue';
 import ShareStory from '../components/ShareStory.vue';
 import PhotoMealSheet from '../components/PhotoMealSheet.vue';
+import SuggestMealSheet from '../components/SuggestMealSheet.vue';
+import BarcodeScanner from '../components/BarcodeScanner.vue';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -46,6 +48,8 @@ const activeMeal = ref<MealType | null>(null);
 const suggestions = ref<Suggestion[]>([]);
 const suggestionsLoading = ref(false);
 const showShare = ref(false);
+const showSuggest = ref(false);
+const showBarcode = ref(false);
 
 // ── Photo meal logging ────────────────────────────────────
 const photoInput = ref<HTMLInputElement | null>(null);
@@ -313,6 +317,11 @@ onMounted(async () => {
       @change="onPhotoPicked"
     />
 
+    <div class="action-row">
+      <button class="mini-cta" @click="showSuggest = true">🍽️ What to eat?</button>
+      <button class="mini-cta" @click="showBarcode = true">📷 Scan barcode</button>
+    </div>
+
     <!-- Primary path: opens straight onto the meal slot the clock implies,
          so a repeat log is two taps from launch. -->
     <button class="btn quick" @click="openMeal(currentMeal())">
@@ -404,6 +413,22 @@ onMounted(async () => {
       @close="photoFile = null"
       @logged="onPhotoLogged"
     />
+
+    <SuggestMealSheet
+      v-if="showSuggest"
+      :meal-type="currentMeal()"
+      :date="viewDate"
+      @close="showSuggest = false"
+      @logged="load"
+    />
+
+    <BarcodeScanner
+      v-if="showBarcode"
+      :meal-type="currentMeal()"
+      :date="viewDate"
+      @close="showBarcode = false"
+      @logged="load"
+    />
   </div>
 </template>
 
@@ -473,6 +498,28 @@ onMounted(async () => {
 
 .hidden-input {
   display: none;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.mini-cta {
+  padding: 12px 8px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.12s ease;
+}
+
+.mini-cta:active {
+  border-color: var(--accent-dim);
 }
 
 .snap-cta {

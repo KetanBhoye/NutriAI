@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { toLocalISODate } from '../dates';
+import ShareStory from '../components/ShareStory.vue';
 
 interface DailyTotal {
   entry_date: string;
@@ -33,6 +34,7 @@ interface WeeklyReport {
 const report = ref<WeeklyReport | null>(null);
 const reportLoading = ref(true);
 const reportRefreshing = ref(false);
+const showShareWeek = ref(false);
 
 async function loadReport(refresh = false): Promise<void> {
   if (refresh) reportRefreshing.value = true;
@@ -170,8 +172,18 @@ onMounted(() => {
         <p v-if="report.source === 'rule'" class="report-note muted">
           Based on your numbers (AI coach unavailable right now).
         </p>
+
+        <button v-if="report.source !== 'insufficient'" class="share-week" @click="showShareWeek = true">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Share this week
+        </button>
       </template>
     </div>
+
+    <ShareStory v-if="showShareWeek" type="week" date="" @close="showShareWeek = false" />
 
     <div v-if="loading" class="card" style="margin-top: 16px">
       <div class="skeleton" style="height: 14px; width: 40%; margin-bottom: 16px"></div>
