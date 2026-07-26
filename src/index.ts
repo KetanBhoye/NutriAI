@@ -138,7 +138,24 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
     res.sendFile(resolve(publicDir, 'index.html'));
   });
 
-  app.use(express.static(publicDir));
+  // Cache policy so PWA updates land fast without a reinstall:
+  //  - the service worker, app shell and manifest must NEVER be stale, so the
+  //    browser always revalidates them and detects a new version immediately;
+  //  - hashed build assets (/app/assets/index-<hash>.js) are immutable, so they
+  //    cache forever for instant loads (a new build = a new filename).
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        if (/(?:sw\.js|workbox-[^/]+\.js|registerSW\.js|\.webmanifest)$/.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (/[\\/]assets[\\/]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    })
+  );
 
   app.get('/login', (_req, res) => {
     res.sendFile(resolve(publicDir, 'login.html'));
@@ -160,6 +177,8 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
       next();
       return;
     }
+    // The SPA shell must always revalidate so a new deploy is picked up.
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(resolve(publicDir, 'app', 'index.html'));
   });
 

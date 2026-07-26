@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import App from './App.vue';
 import './style.css';
 import { initInstall } from './install';
+import { setupPwaAutoUpdate } from './pwa-updates';
 import DashboardView from './views/DashboardView.vue';
 import AuthView from './views/AuthView.vue';
 import CoachView from './views/CoachView.vue';
@@ -25,4 +26,5 @@ const router = createRouter({
 });
 
 initInstall();
+setupPwaAutoUpdate();
 createApp(App).use(router).mount('#app');
