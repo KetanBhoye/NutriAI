@@ -337,6 +337,23 @@ export const api = {
     return request<import('./share').ShareStats>(`/api/share/today?date=${encodeURIComponent(date)}`);
   },
 
+  /** Sends a meal photo to Gemini vision; returns detected items to confirm. */
+  async photoParse(imageDataUrl: string): Promise<{
+    understood: boolean;
+    note: string;
+    items: Array<{
+      food_name: string;
+      quantity: number;
+      unit: string;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+    }>;
+  }> {
+    return request('/api/ai/photo', { method: 'POST', body: JSON.stringify({ image: imageDataUrl }) });
+  },
+
   /** External food databases, for foods with no logging history. */
   async lookupFood(query: string): Promise<{ results: LookupResult[] }> {
     return request(`/api/foods/lookup?q=${encodeURIComponent(query)}`);

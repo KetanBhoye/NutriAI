@@ -18,6 +18,7 @@ import NewFoodSheet from '../components/NewFoodSheet.vue';
 import PortionSheet from '../components/PortionSheet.vue';
 import QuickLogSheet from '../components/QuickLogSheet.vue';
 import ShareStory from '../components/ShareStory.vue';
+import PhotoMealSheet from '../components/PhotoMealSheet.vue';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -45,6 +46,26 @@ const activeMeal = ref<MealType | null>(null);
 const suggestions = ref<Suggestion[]>([]);
 const suggestionsLoading = ref(false);
 const showShare = ref(false);
+
+// ── Photo meal logging ────────────────────────────────────
+const photoInput = ref<HTMLInputElement | null>(null);
+const photoFile = ref<File | null>(null);
+
+function openPhoto(): void {
+  photoInput.value?.click();
+}
+
+function onPhotoPicked(e: Event): void {
+  const file = (e.target as HTMLInputElement).files?.[0] ?? null;
+  if (file) photoFile.value = file;
+  // reset so picking the same file again re-fires change
+  (e.target as HTMLInputElement).value = '';
+}
+
+async function onPhotoLogged(): Promise<void> {
+  photoFile.value = null;
+  await load();
+}
 
 /** Set while adjusting a portion; null when the quick list is showing. */
 const adjusting = ref<Suggestion | null>(null);
@@ -275,6 +296,23 @@ onMounted(async () => {
       Jump to today
     </button>
 
+    <!-- Snap a meal: AI reads the photo and logs it. -->
+    <button class="snap-cta" @click="openPhoto">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5L15.5 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      </svg>
+      <span>Snap a meal <em>— AI logs it</em></span>
+    </button>
+    <input
+      ref="photoInput"
+      type="file"
+      accept="image/*"
+      capture="environment"
+      class="hidden-input"
+      @change="onPhotoPicked"
+    />
+
     <!-- Primary path: opens straight onto the meal slot the clock implies,
          so a repeat log is two taps from launch. -->
     <button class="btn quick" @click="openMeal(currentMeal())">
@@ -358,6 +396,14 @@ onMounted(async () => {
     />
 
     <ShareStory v-if="showShare" :date="viewDate" @close="showShare = false" />
+
+    <PhotoMealSheet
+      v-if="photoFile"
+      :file="photoFile"
+      :date="viewDate"
+      @close="photoFile = null"
+      @logged="onPhotoLogged"
+    />
   </div>
 </template>
 
@@ -423,6 +469,37 @@ onMounted(async () => {
 .date-sub {
   margin: 0;
   font-size: 12px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.snap-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+  padding: 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.14), rgba(90, 209, 255, 0.1));
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 0.12s ease;
+}
+
+.snap-cta em {
+  color: var(--text-dim);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.snap-cta:active {
+  transform: scale(0.985);
 }
 
 .jump-today {

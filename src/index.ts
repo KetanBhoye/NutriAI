@@ -34,7 +34,8 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
+  // 4mb headroom for meal-photo uploads (resized client-side to well under this).
+  app.use(express.json({ limit: '4mb' }));
   app.use(express.urlencoded({ extended: false }));
 
   // Compatibility aliases for OAuth clients that fall back to root auth paths.

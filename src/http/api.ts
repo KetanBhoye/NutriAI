@@ -28,6 +28,7 @@ import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
 import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
+import { parseMealPhoto } from '../services/coach/photo-parse.js';
 import {
   isPushConfigured,
   pushPublicKey,
@@ -1104,6 +1105,62 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       res.status(502).json({
         error: 'The AI service could not be reached. Try again, or add the food manually.',
       });
+    }
+  });
+
+  // Photo meal logging: Gemini vision identifies foods + macros from a photo.
+  // Returns items for confirmation only (never logs) — same safety rule as parse.
+  app.post('/api/ai/photo', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'Photo logging needs Vertex AI configured on the server.' });
+        return;
+      }
+
+      const raw = typeof req.body?.image === 'string' ? req.body.image : '';
+      // Accept a data URL ("data:image/jpeg;base64,....") or bare base64.
+      const match = raw.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+      const mimeType = match ? match[1] : 'image/jpeg';
+      const imageBase64 = match ? match[2] : raw;
+      if (!imageBase64 || imageBase64.length < 100) {
+        res.status(400).json({ error: 'No image provided.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ? GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{ canonical_name: string; reference_unit: string; calories_per_unit: number; protein_g_per_unit: number | null }>();
+      const knownFoods = (known.results ?? [])
+        .map(
+          (f) =>
+            `- ${f.canonical_name}: ${f.calories_per_unit} kcal/${f.reference_unit}` +
+            (f.protein_g_per_unit !== null ? `, ${f.protein_g_per_unit}g protein/${f.reference_unit}` : '')
+        )
+        .join('\n');
+
+      const result = await parseMealPhoto({
+        imageBase64,
+        mimeType,
+        knownFoods,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('AI photo error:', error);
+      res.status(502).json({ error: 'Could not read the photo. Try again or add the food manually.' });
     }
   });
 
