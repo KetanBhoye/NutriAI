@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
+import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 
 /**
  * Suggests what to eat next: a few SIMPLE Indian home-style meals/snacks that
@@ -53,9 +54,7 @@ export async function generateMealSuggestions(opts: {
   model: string;
 }): Promise<MealSuggestion[]> {
   const token = await getGoogleAccessToken(opts.credentialJson);
-  const url =
-    `https://${opts.location}-aiplatform.googleapis.com/v1/projects/${opts.project}` +
-    `/locations/${opts.location}/publishers/google/models/${encodeURIComponent(opts.model)}:generateContent`;
+  const url = vertexUrl(opts.project, opts.location, opts.model);
 
   const budget =
     opts.remainingCalories != null
@@ -76,27 +75,15 @@ export async function generateMealSuggestions(opts: {
 ${opts.dietNotes ? opts.dietNotes : '(none)'}
 - Prefer high-protein, simple, affordable Indian choices.`;
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: `What are 3 simple things I can eat for ${opts.mealType}?` }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.6,
-        },
-      }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await vertexFetch(url, token, {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: 'user', parts: [{ text: `What are 3 simple things I can eat for ${opts.mealType}?` }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      temperature: 0.6,
+    },
+  });
 
   if (!res.ok) {
     throw new Error(`Vertex suggest failed (${res.status}): ${(await res.text()).slice(0, 200)}`);

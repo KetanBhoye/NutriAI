@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
+import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 
 /**
  * Identifies the foods in a meal photo and estimates their portions and macros
@@ -62,9 +63,7 @@ export async function parseMealPhoto(opts: {
   model: string;
 }): Promise<PhotoResult> {
   const token = await getGoogleAccessToken(opts.credentialJson);
-  const url =
-    `https://${opts.location}-aiplatform.googleapis.com/v1/projects/${opts.project}` +
-    `/locations/${opts.location}/publishers/google/models/${encodeURIComponent(opts.model)}:generateContent`;
+  const url = vertexUrl(opts.project, opts.location, opts.model);
 
   const system = `You are a nutrition expert reading a photo of a meal to log it in a food tracker.
 
@@ -77,35 +76,29 @@ ${opts.knownFoods || '(none yet)'}
 - If the image is NOT food, set understood=false and items=[].
 - Be decisive; give your best estimate rather than refusing. Portions are approximate and the user will confirm them.`;
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 40_000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: opts.mimeType, data: opts.imageBase64 } },
-              { text: 'Identify every food in this meal and estimate portions and macros to log it.' },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.2,
+  // Images are larger; give each attempt more time but keep the retry.
+  const res = await vertexFetch(
+    url,
+    token,
+    {
+      system_instruction: { parts: [{ text: system }] },
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: opts.mimeType, data: opts.imageBase64 } },
+            { text: 'Identify every food in this meal and estimate portions and macros to log it.' },
+          ],
         },
-      }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0.2,
+      },
+    },
+    { timeoutMs: 35_000, retries: 1 }
+  );
 
   if (!res.ok) {
     throw new Error(`Vertex photo request failed (${res.status}): ${(await res.text()).slice(0, 200)}`);

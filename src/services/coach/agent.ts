@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
+import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 import {
   addEntryHandler,
   listEntriesHandler,
@@ -292,27 +293,13 @@ async function callVertex(config: {
   systemPrompt: string;
   contents: GeminiContent[];
 }): Promise<GeminiContent> {
-  const url =
-    `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.project}` +
-    `/locations/${config.location}/publishers/google/models/${encodeURIComponent(config.model)}:generateContent`;
+  const url = vertexUrl(config.project, config.location, config.model);
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: config.systemPrompt }] },
-        contents: config.contents,
-        tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
-      }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await vertexFetch(url, config.token, {
+    system_instruction: { parts: [{ text: config.systemPrompt }] },
+    contents: config.contents,
+    tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
+  });
   if (!res.ok) {
     throw new Error(`Vertex chat failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }

@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
+import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 
 /**
  * Generates a personalised nutrition plan for a new user via Vertex AI, using
@@ -66,9 +67,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, M
 
 export async function generateOnboardingPlan(input: OnboardingPlanInput): Promise<OnboardingPlan> {
   const token = await getGoogleAccessToken(input.credentialJson);
-  const url =
-    `https://${input.location}-aiplatform.googleapis.com/v1/projects/${input.project}` +
-    `/locations/${input.location}/publishers/google/models/${encodeURIComponent(input.model)}:generateContent`;
+  const url = vertexUrl(input.project, input.location, input.model);
 
   const system = `You are a certified nutrition and strength coach setting up a new client in a calorie-tracking app. Given their stats and goal, produce daily targets and a short, durable coaching note.
 
@@ -95,27 +94,15 @@ Write "summary" in 2–4 sentences as notes ABOUT this user that the coach shoul
     app_computed_baseline: input.baseline,
   });
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.4,
-        },
-      }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await vertexFetch(url, token, {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      temperature: 0.4,
+    },
+  });
 
   if (!res.ok) {
     throw new Error(`Vertex plan request failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
