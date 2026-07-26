@@ -1,22 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { addDays, parseISODate, todayISO } from '../dates';
-
-interface Bubble {
-  id: string;
-  from: 'user' | 'coach';
-  text: string;
-  changedLog?: boolean;
-  /** Date the coach acted on, so the "view log" link lands on the right day. */
-  logDate?: string;
-}
-
-/** Raw Gemini turn history, echoed back each request so the agent has context. */
-type HistoryTurn = { role: 'user' | 'model'; parts: unknown[] };
+import {
+  coachActiveDate,
+  coachBubbles,
+  coachHistory,
+  type CoachHistoryTurn as HistoryTurn,
+} from '../coach-state';
 
 const configured = ref<boolean | null>(null);
-const bubbles = ref<Bubble[]>([]);
-const history = ref<HistoryTurn[]>([]);
+// Held in a module store so the conversation survives tab switches (this view
+// unmounts on navigation).
+const bubbles = coachBubbles;
+const history = coachHistory;
 const input = ref('');
 const sending = ref(false);
 const scroller = ref<HTMLElement | null>(null);
@@ -88,7 +84,8 @@ const SUGGESTIONS = [
 // The day the coach acts on: logging, weigh-ins and "what did I eat" default
 // here unless the user names another day in their message.
 const today = todayISO();
-const activeDate = ref(today);
+// From the module store so the chosen day persists across tab switches too.
+const activeDate = coachActiveDate;
 
 function shiftDate(days: number): void {
   const next = addDays(activeDate.value, days);
@@ -239,6 +236,8 @@ const coachStyle = computed(() =>
 
 onMounted(() => {
   checkConfigured();
+  // Returning to the tab: restore scroll to the latest message.
+  if (bubbles.value.length) void scrollDown();
   window.visualViewport?.addEventListener('resize', onViewport);
   window.visualViewport?.addEventListener('scroll', onViewport);
 });
