@@ -114,6 +114,24 @@ async function signOut(): Promise<void> {
   await api.logout();
   window.location.assign('/app/login');
 }
+
+// ── Delete account ────────────────────────────────────────
+const confirmingDelete = ref(false);
+const deleting = ref(false);
+const deleteError = ref<string | null>(null);
+
+async function deleteAccount(): Promise<void> {
+  deleting.value = true;
+  deleteError.value = null;
+  try {
+    await api.deleteAccount();
+    window.location.assign('/app/login');
+  } catch (e) {
+    deleteError.value =
+      e instanceof Error && e.message ? e.message : 'Could not delete the account.';
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -223,6 +241,27 @@ async function signOut(): Promise<void> {
     <button class="btn btn-ghost wide danger" :disabled="signingOut" @click="signOut">
       {{ signingOut ? 'Signing out…' : 'Sign out' }}
     </button>
+
+    <!-- Delete account -->
+    <div v-if="!confirmingDelete" class="delete-row">
+      <button class="delete-link" @click="confirmingDelete = true">Delete account</button>
+    </div>
+    <div v-else class="card danger-zone">
+      <div class="dz-title">Delete your account?</div>
+      <p class="dz-body muted">
+        This permanently deletes your profile, food log, weigh-ins, goals and all your
+        data. This can't be undone.
+      </p>
+      <p v-if="deleteError" class="dz-error">{{ deleteError }}</p>
+      <div class="dz-actions">
+        <button class="btn btn-ghost" :disabled="deleting" @click="confirmingDelete = false">
+          Cancel
+        </button>
+        <button class="btn dz-delete" :disabled="deleting" @click="deleteAccount">
+          {{ deleting ? 'Deleting…' : 'Delete everything' }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -393,5 +432,58 @@ async function signOut(): Promise<void> {
 
 .danger {
   color: var(--danger);
+}
+
+.delete-row {
+  text-align: center;
+  margin-top: 18px;
+}
+
+.delete-link {
+  font-size: 13px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  min-height: auto;
+  padding: 6px;
+}
+
+.danger-zone {
+  margin-top: 16px;
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.dz-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--danger);
+  margin-bottom: 6px;
+}
+
+.dz-body {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+.dz-error {
+  font-size: 13px;
+  color: var(--danger);
+  margin: 0 0 10px;
+}
+
+.dz-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.dz-actions .btn {
+  flex: 1;
+}
+
+.dz-delete {
+  background: var(--danger);
+  color: #2a0808;
 }
 </style>

@@ -249,6 +249,15 @@ export const api = {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
   },
 
+  /** Permanently deletes the account and all its data. */
+  async deleteAccount(): Promise<void> {
+    const res = await fetch('/api/account', { method: 'DELETE', credentials: 'same-origin' });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Failed to delete account', res.status);
+    }
+  },
+
   async saveOnboarding(prefs: {
     display_name: string;
     daily_calorie_goal: number;

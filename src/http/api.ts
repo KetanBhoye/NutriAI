@@ -445,6 +445,50 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     }
   });
 
+  // Permanently delete the signed-in user's account and ALL their data. The
+  // owner/admin account is protected here (delete it via the DB if ever needed)
+  // so it can't be wiped by accident. Table list is a fixed allowlist — no user
+  // input reaches the SQL.
+  app.delete('/api/account', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.sessionUser!;
+      if (user.isAdmin) {
+        res.status(403).json({ error: 'The owner account cannot be deleted from the app.' });
+        return;
+      }
+      const userId = user.userId;
+      const USER_TABLES = [
+        'user_passwords',
+        'web_sessions',
+        'food_entries',
+        'user_profiles',
+        'profile_tracking',
+        'oauth_clients',
+        'oauth_authorization_codes',
+        'oauth_tokens',
+        'body_measurements',
+        'progress_photos',
+        'user_tracking_preferences',
+        'food_aliases',
+        'foods',
+        'daily_activity',
+        'goal_plans',
+        'push_subscriptions',
+        'weekly_reports',
+      ];
+      for (const table of USER_TABLES) {
+        await env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
+      }
+      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+
+      clearSessionCookie(res, options.secureCookies);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Delete account error:', error);
+      res.status(500).json({ error: 'Failed to delete the account.' });
+    }
+  });
+
   app.get('/api/me', requireSession, async (req: AuthenticatedRequest, res) => {
     const user = req.sessionUser!;
 
