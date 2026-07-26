@@ -337,6 +337,35 @@ export const api = {
     return request<import('./share').ShareStats>(`/api/share/today?date=${encodeURIComponent(date)}`);
   },
 
+  /** "What should I eat?" — simple Indian meal ideas fitting today's remaining macros. */
+  async suggestMeal(mealType: string): Promise<{
+    meal_type: string;
+    remaining_calories: number | null;
+    remaining_protein: number | null;
+    suggestions: Array<{
+      name: string;
+      description: string;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+    }>;
+  }> {
+    return request('/api/ai/suggest-meal', { method: 'POST', body: JSON.stringify({ meal_type: mealType }) });
+  },
+
+  /** Look up a packaged product by barcode (Open Food Facts). */
+  async lookupBarcode(code: string): Promise<{
+    found: boolean;
+    code: string;
+    name: string;
+    brand: string | null;
+    serving_g: number | null;
+    per_100g: { calories: number; protein_g: number; carbs_g: number; fat_g: number } | null;
+  }> {
+    return request(`/api/foods/barcode?code=${encodeURIComponent(code)}`);
+  },
+
   /** Sends a meal photo to Gemini vision; returns detected items to confirm. */
   async photoParse(imageDataUrl: string): Promise<{
     understood: boolean;

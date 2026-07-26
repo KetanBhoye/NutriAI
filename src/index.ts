@@ -8,6 +8,7 @@ import { registerApiRoutes } from './http/api.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/routes.js';
 import { startDailyReminders } from './services/reminders.js';
+import { warmUpVertex } from './services/llm/vertex.js';
 import type { AppEnv } from './db/types.js';
 
 export interface RunningApp {
@@ -211,6 +212,19 @@ if (process.env.NODE_ENV !== 'test') {
 
       // Daily push reminders (no-op unless push + subscribers exist).
       startDailyReminders(running.env);
+
+      // Spend the cold-connection Vertex stall at startup so the first user's AI
+      // action after a deploy doesn't time out. Fire-and-forget.
+      const gcpCred = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const gcpProject = process.env.GCP_PROJECT;
+      if (gcpCred && gcpProject) {
+        void warmUpVertex(
+          gcpCred,
+          gcpProject,
+          process.env.GCP_LOCATION || 'us-central1',
+          process.env.LLM_MODEL || 'gemini-2.5-flash'
+        );
+      }
 
       const shutdown = async () => {
         if (running.server) {

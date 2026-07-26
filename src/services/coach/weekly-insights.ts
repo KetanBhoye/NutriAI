@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
+import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 
 /**
  * Generates a weekly insight report from the user's computed stats via Vertex
@@ -48,9 +49,7 @@ export async function generateWeeklyInsights(input: {
   model: string;
 }): Promise<WeeklyReport> {
   const token = await getGoogleAccessToken(input.credentialJson);
-  const url =
-    `https://${input.location}-aiplatform.googleapis.com/v1/projects/${input.project}` +
-    `/locations/${input.location}/publishers/google/models/${encodeURIComponent(input.model)}:generateContent`;
+  const url = vertexUrl(input.project, input.location, input.model);
 
   const system = `You are a supportive but honest nutrition and fitness coach writing a short weekly check-in for your client based on their logged data.
 
@@ -64,27 +63,15 @@ Rules:
 
   const userMsg = JSON.stringify({ name: input.displayName, ...input.stats });
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.5,
-        },
-      }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await vertexFetch(url, token, {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      temperature: 0.5,
+    },
+  });
 
   if (!res.ok) {
     throw new Error(`Vertex insights failed (${res.status}): ${(await res.text()).slice(0, 200)}`);

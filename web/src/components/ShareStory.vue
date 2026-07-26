@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
-import { buildStoryCard, shareCard } from '../share';
+import { buildStoryCard, buildWeekCard, shareCard, type WeekCardStats } from '../share';
 
-const props = defineProps<{ date: string }>();
+const props = defineProps<{ date: string; type?: 'day' | 'week' }>();
 const emit = defineEmits<{ close: [] }>();
+
+const isWeek = props.type === 'week';
 
 const previewUrl = ref<string | null>(null);
 const loading = ref(true);
@@ -17,8 +19,32 @@ async function build(): Promise<void> {
   loading.value = true;
   errored.value = false;
   try {
-    const stats = await api.shareStats(props.date);
-    blob = await buildStoryCard(stats);
+    if (isWeek) {
+      const res = await fetch('/api/insights/weekly', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('failed');
+      const data = (await res.json()) as {
+        report: { headline: string };
+        stats: {
+          days_logged: number;
+          avg_calories: number | null;
+          avg_protein_g: number | null;
+          avg_steps: number | null;
+          weight_change_kg: number | null;
+        };
+      };
+      const s: WeekCardStats = {
+        headline: data.report.headline,
+        days_logged: data.stats.days_logged,
+        avg_calories: data.stats.avg_calories,
+        avg_protein_g: data.stats.avg_protein_g,
+        avg_steps: data.stats.avg_steps,
+        weight_change_kg: data.stats.weight_change_kg,
+      };
+      blob = await buildWeekCard(s);
+    } else {
+      const stats = await api.shareStats(props.date);
+      blob = await buildStoryCard(stats);
+    }
     previewUrl.value = URL.createObjectURL(blob);
   } catch {
     errored.value = true;
@@ -57,7 +83,7 @@ onUnmounted(() => {
   <div class="overlay" @click.self="emit('close')">
     <div class="sheet">
       <div class="sheet-head">
-        <span class="sheet-title">Share your day</span>
+        <span class="sheet-title">{{ isWeek ? 'Share your week' : 'Share your day' }}</span>
         <button class="x" aria-label="Close" @click="emit('close')">✕</button>
       </div>
 

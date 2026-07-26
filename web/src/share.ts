@@ -215,6 +215,159 @@ export function drawCard(ctx: CanvasRenderingContext2D, s: ShareStats): void {
   ctx.fillText('your AI nutrition coach', cx, H - 54);
 }
 
+// ── Weekly card ─────────────────────────────────────────────────────────────
+export interface WeekCardStats {
+  headline: string;
+  days_logged: number;
+  avg_calories: number | null;
+  avg_protein_g: number | null;
+  avg_steps: number | null;
+  weight_change_kg: number | null;
+}
+
+export function drawWeekCard(ctx: CanvasRenderingContext2D, s: WeekCardStats): void {
+  const sans = '-apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif';
+  const mono = '"SF Mono", ui-monospace, Menlo, monospace';
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0f1318');
+  bg.addColorStop(1, '#080a0d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W / 2, 620, 60, W / 2, 620, 760);
+  glow.addColorStop(0, 'rgba(90,209,255,0.14)');
+  glow.addColorStop(1, 'rgba(90,209,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  const PAD = 96;
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = `600 30px ${mono}`;
+  ctx.fillStyle = GREEN;
+  ctx.textAlign = 'left';
+  ctx.fillText('🥗 NUTRIAI', PAD, 120);
+  ctx.fillStyle = DIM;
+  ctx.textAlign = 'right';
+  ctx.fillText('THIS WEEK', W - PAD, 120);
+
+  // headline
+  ctx.textAlign = 'left';
+  ctx.fillStyle = TEXT;
+  ctx.font = `800 86px ${sans}`;
+  let hy = 240;
+  for (const line of wrap(ctx, s.headline.toUpperCase(), W - PAD * 2)) {
+    ctx.fillText(line, PAD, hy);
+    hy += 96;
+  }
+
+  // hero: days logged out of 7 (arc)
+  const cx = W / 2;
+  const cy = 940;
+  const radius = 250;
+  ctx.lineWidth = 40;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  const grad = ctx.createLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius);
+  grad.addColorStop(0, GREEN);
+  grad.addColorStop(1, CYAN);
+  ctx.strokeStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (Math.min(7, s.days_logged) / 7));
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = TEXT;
+  ctx.font = `800 160px ${sans}`;
+  ctx.fillText(`${s.days_logged}`, cx, cy + 16);
+  ctx.font = `600 42px ${mono}`;
+  ctx.fillStyle = GREEN;
+  ctx.fillText('/ 7 DAYS', cx, cy + 88);
+  ctx.font = `500 34px ${sans}`;
+  ctx.fillStyle = DIM;
+  ctx.fillText('logged this week', cx, cy - 120);
+
+  // tiles
+  const tileY = 1340;
+  const tileH = 210;
+  const gap = 24;
+  const tileW = (W - PAD * 2 - gap) / 2;
+  const tiles = [
+    { label: 'AVG CALORIES', value: s.avg_calories != null ? s.avg_calories.toLocaleString() : '—', hint: 'kcal / day', accent: '#5ad1ff' },
+    { label: 'AVG PROTEIN', value: s.avg_protein_g != null ? `${s.avg_protein_g}g` : '—', hint: 'per day', accent: GREEN },
+    { label: 'AVG STEPS', value: s.avg_steps != null ? s.avg_steps.toLocaleString() : '—', hint: '👟 per day', accent: '#fbbf24' },
+    {
+      label: 'WEIGHT',
+      value:
+        s.weight_change_kg != null
+          ? `${s.weight_change_kg < 0 ? '↓' : s.weight_change_kg > 0 ? '↑' : ''}${Math.abs(s.weight_change_kg).toFixed(1)}`
+          : '—',
+      hint: s.weight_change_kg != null ? 'kg change' : 'no data',
+      accent: '#a98bff',
+    },
+  ];
+  tiles.forEach((t, i) => {
+    const x = PAD + (i % 2) * (tileW + gap);
+    const y = tileY + Math.floor(i / 2) * (tileH + gap);
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    roundRect(ctx, x, y, tileW, tileH, 28);
+    ctx.fill();
+    ctx.fillStyle = t.accent;
+    roundRect(ctx, x, y, 8, tileH, 4);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.font = `600 24px ${mono}`;
+    ctx.fillStyle = DIM;
+    ctx.fillText(t.label, x + 34, y + 56);
+    ctx.font = `800 66px ${sans}`;
+    ctx.fillStyle = TEXT;
+    ctx.fillText(t.value, x + 32, y + 132);
+    ctx.font = `500 26px ${sans}`;
+    ctx.fillStyle = DIM;
+    ctx.fillText(t.hint, x + 34, y + 176);
+  });
+
+  ctx.textAlign = 'center';
+  ctx.font = `600 28px ${mono}`;
+  ctx.fillStyle = DIM;
+  ctx.fillText('TRACKED WITH', cx, H - 150);
+  ctx.font = `800 52px ${sans}`;
+  ctx.fillStyle = GREEN;
+  ctx.fillText('NutriAI', cx, H - 96);
+  ctx.font = `500 28px ${sans}`;
+  ctx.fillStyle = DIM;
+  ctx.fillText('your AI nutrition coach', cx, H - 54);
+}
+
+function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 3);
+}
+
+export function buildWeekCard(s: WeekCardStats): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  drawWeekCard(ctx, s);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('render failed'))), 'image/png');
+  });
+}
+
 /** Renders the card and returns a PNG blob. */
 export function buildStoryCard(s: ShareStats): Promise<Blob> {
   const canvas = document.createElement('canvas');
