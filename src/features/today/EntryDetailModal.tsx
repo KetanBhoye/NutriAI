@@ -19,6 +19,8 @@ interface EntryDetailModalProps {
     carbs_g: number | null;
     fat_g: number | null;
     meal_type: MealType;
+    quantity: number;
+    unit: string;
   }) => void;
   onDelete: () => void;
 }
@@ -86,6 +88,10 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
       carbs_g: form.carbs ? Number(form.carbs) : null,
       fat_g: form.fat ? Number(form.fat) : null,
       meal_type: form.meal,
+      // Saving the weight too, so the next edit scales from the real portion
+      // rather than re-estimating it.
+      quantity: grams,
+      unit: 'g',
     });
   };
 

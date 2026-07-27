@@ -29,7 +29,7 @@ export function createEntry(input: CreateEntryInput): Promise<{ entry_id: string
 }
 
 type EntryPatch = Partial<
-  Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type'>
+  Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type' | 'quantity' | 'unit'>
 >;
 
 export function updateEntry(id: string, changes: EntryPatch): Promise<{ success: true }> {

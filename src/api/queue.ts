@@ -20,7 +20,7 @@ import type { FoodEntry, MealType } from '../types';
 const QUEUE_KEY = 'nutriai.pending.v2';
 
 export type EntryPatch = Partial<
-  Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type'>
+  Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type' | 'quantity' | 'unit'>
 >;
 
 type QueuedOp =
