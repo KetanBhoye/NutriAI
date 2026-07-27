@@ -1,22 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { entriesApi, goalsApi } from '@/api';
+import {
+  enqueueCreate,
+  enqueueDelete,
+  enqueueUpdate,
+  flush as flushQueue,
+  isPendingId,
+  newPendingId,
+  refreshPendingCount,
+  subscribePending,
+} from '@/api/queue';
 import type { EntriesResponse } from '@/api/entries';
 import { cached, readCache } from '@/cache';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { capitalize } from '@/format';
 import { colors, fonts, radius } from '@/theme';
-import { Button, EmptyState, Loading, Screen } from '@/components/ui';
+import { Button, EmptyState, Loading, Screen, StaleNotice } from '@/components/ui';
 import { FoodEntry, Goals, MealType, Suggestion, Totals } from '@/types';
 import { MacroBar } from '@/features/today/MacroBar';
 import { AddFoodModal } from '@/features/today/AddFoodModal';
 import { EntryDetailModal } from '@/features/today/EntryDetailModal';
 import { SuggestMealModal } from '@/features/today/SuggestMealModal';
 import { PhotoMealModal } from '@/features/today/PhotoMealModal';
+import { PortionSheet } from '@/features/today/PortionSheet';
 import { BarcodeModal } from '@/features/today/BarcodeModal';
 import { ShareStoryModal } from '@/features/today/ShareStoryModal';
 
@@ -91,6 +102,10 @@ export default function Today() {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [showBarcode, setShowBarcode] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [pendingWrites, setPendingWrites] = useState(0);
+  /** Suggestion whose portion is being adjusted before logging. */
+  const [portionFood, setPortionFood] = useState<Suggestion | null>(null);
+  const [portionMeal, setPortionMeal] = useState<MealType>('snack');
 
   /** Offers camera or library, then hands the local URI to PhotoMealModal. */
   const pickPhoto = () => {
@@ -179,8 +194,36 @@ export default function Today() {
       .catch(() => {});
   }, []);
 
+  /**
+   * Drains the queue and, if anything actually synced, re-reads the day so the
+   * optimistic rows are replaced by the server's canonical ones (real ids,
+   * server-resolved food links).
+   */
+  const reconcile = useCallback(async () => {
+    const synced = await flushQueue();
+    if (synced > 0) await load(viewDate);
+  }, [viewDate, load]);
+
+  // Track how many writes are still waiting, so the UI can say so. Seed from
+  // storage too — the queue may hold writes from a previous session.
+  useEffect(() => {
+    const unsub = subscribePending(setPendingWrites);
+    void refreshPendingCount().then(() => reconcile());
+    return unsub;
+  }, []);
+
+  // Retry whenever the app comes back to the foreground — that's the most
+  // likely moment for connectivity to have returned.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void reconcile();
+    });
+    return () => sub.remove();
+  }, [reconcile]);
+
   const onRefresh = async () => {
     setRefreshing(true);
+    await reconcile();
     await load(viewDate);
     setRefreshing(false);
   };
@@ -224,7 +267,7 @@ export default function Today() {
     const quantity = portion ?? suggestion.default_quantity;
     const scale = (v: number | null) => (v === null ? null : Math.round(v * quantity * 10) / 10);
     const optimistic: FoodEntry = {
-      id: `tmp-${Date.now()}`,
+      id: newPendingId(),
       user_id: '',
       food_name: suggestion.canonical_name,
       calories: Math.round(suggestion.calories_per_unit * quantity),
@@ -244,32 +287,23 @@ export default function Today() {
     // The row appears instantly, so a tap confirms it landed rather than
     // leaving the user unsure whether the press registered.
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    entriesApi
-      .createEntry({
-        food_name: optimistic.food_name,
-        calories: optimistic.calories,
-        protein_g: optimistic.protein_g ?? undefined,
-        carbs_g: optimistic.carbs_g ?? undefined,
-        fat_g: optimistic.fat_g ?? undefined,
-        meal_type: meal,
-        entry_date: viewDate,
-        food_id: suggestion.id,
-        quantity,
-        unit: suggestion.reference_unit,
-      })
-      .then((res) => {
-        setEntries((prev) => prev.map((e) => (e.id === optimistic.id ? { ...e, id: res.entry_id } : e)));
-      })
-      .catch(() => {
-        setEntries((prev) => prev.filter((e) => e.id !== optimistic.id));
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert("Couldn't log", 'Check your connection and try again.');
-      });
+    void enqueueCreate(optimistic.id, {
+      food_name: optimistic.food_name,
+      calories: optimistic.calories,
+      protein_g: optimistic.protein_g ?? undefined,
+      carbs_g: optimistic.carbs_g ?? undefined,
+      fat_g: optimistic.fat_g ?? undefined,
+      meal_type: meal,
+      entry_date: viewDate,
+      food_id: suggestion.id,
+      quantity,
+      unit: suggestion.reference_unit,
+    }).then(() => reconcile());
   };
 
   const logManual = (meal: MealType, input: { food_name: string; calories: number; protein_g?: number; carbs_g?: number; fat_g?: number }) => {
     const optimistic: FoodEntry = {
-      id: `tmp-${Date.now()}`,
+      id: newPendingId(),
       user_id: '',
       food_name: input.food_name,
       calories: input.calories,
@@ -287,32 +321,21 @@ export default function Today() {
     setEntries((prev) => [optimistic, ...prev]);
     setActiveMeal(null);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    entriesApi
-      .createEntry({ ...input, meal_type: meal, entry_date: viewDate })
-      .then((res) => {
-        setEntries((prev) => prev.map((e) => (e.id === optimistic.id ? { ...e, id: res.entry_id } : e)));
-      })
-      .catch(() => {
-        setEntries((prev) => prev.filter((e) => e.id !== optimistic.id));
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert("Couldn't log", 'Check your connection and try again.');
-      });
+    void enqueueCreate(optimistic.id, { ...input, meal_type: meal, entry_date: viewDate }).then(() =>
+      reconcile()
+    );
   };
 
   const removeEntry = (entry: FoodEntry) => {
     setEntries((prev) => prev.filter((e) => e.id !== entry.id));
     setViewingEntry(null);
-    if (!entry.id.startsWith('tmp-')) {
-      entriesApi.deleteEntry(entry.id).catch(() => Alert.alert("Couldn't delete", 'Check your connection.'));
-    }
+    void enqueueDelete(entry.id).then(() => reconcile());
   };
 
   const saveEntry = (entry: FoodEntry, changes: Partial<FoodEntry>) => {
     setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, ...changes } : e)));
     setViewingEntry(null);
-    if (!entry.id.startsWith('tmp-')) {
-      entriesApi.updateEntry(entry.id, changes).catch(() => Alert.alert("Couldn't save", 'Check your connection.'));
-    }
+    void enqueueUpdate(entry.id, changes).then(() => reconcile());
   };
 
   return (
@@ -343,6 +366,12 @@ export default function Today() {
 
       {!isToday ? (
         <Button title="Jump to today" variant="ghost" onPress={() => setViewDate(today)} style={styles.jumpToday} />
+      ) : null}
+
+      {pendingWrites > 0 ? (
+        <StaleNotice
+          label={`${pendingWrites} change${pendingWrites === 1 ? '' : 's'} waiting to sync — they're saved on this device.`}
+        />
       ) : null}
 
       {/* Three secondary ways in, as compact tiles — stacking them as
@@ -384,7 +413,7 @@ export default function Today() {
                     </Text>
                     <Text style={styles.entrySub}>
                       {entry.calories} kcal{entry.protein_g ? ` · ${entry.protein_g}g protein` : ''}
-                      {entry.id.startsWith('tmp-') ? '  queued' : ''}
+                      {isPendingId(entry.id) ? '  queued' : ''}
                     </Text>
                   </Pressable>
                   <Pressable onPress={() => removeEntry(entry)} hitSlop={10} style={styles.removeBtn}>
@@ -405,6 +434,11 @@ export default function Today() {
         meal={activeMeal ?? 'snack'}
         onClose={() => setActiveMeal(null)}
         onSelect={(s) => logSuggestion(s, activeMeal ?? 'snack')}
+        onAdjust={(s) => {
+          setPortionMeal(activeMeal ?? 'snack');
+          setPortionFood(s);
+          setActiveMeal(null);
+        }}
         onManual={(input) => logManual(activeMeal ?? 'snack', input)}
       />
 
@@ -421,6 +455,16 @@ export default function Today() {
         date={viewDate}
         onClose={() => setShowSuggest(false)}
         onLogged={() => load(viewDate)}
+      />
+
+      <PortionSheet
+        food={portionFood}
+        onCancel={() => setPortionFood(null)}
+        onConfirm={(quantity) => {
+          const food = portionFood;
+          setPortionFood(null);
+          if (food) logSuggestion(food, portionMeal, quantity);
+        }}
       />
 
       <ShareStoryModal visible={showShare} date={viewDate} onClose={() => setShowShare(false)} />

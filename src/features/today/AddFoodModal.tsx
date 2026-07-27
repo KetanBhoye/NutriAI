@@ -13,6 +13,8 @@ interface AddFoodModalProps {
   onClose: () => void;
   /** Log a suggestion at its default quantity. */
   onSelect: (suggestion: Suggestion) => void;
+  /** Open the portion stepper for a suggestion instead of logging it. */
+  onAdjust: (suggestion: Suggestion) => void;
   /** Log a free-form manual entry. */
   onManual: (input: { food_name: string; calories: number; protein_g?: number; carbs_g?: number; fat_g?: number }) => void;
 }
@@ -49,7 +51,7 @@ function macroLine(food: Suggestion): string {
   return [`${portion}${calories} kcal`, protein].filter(Boolean).join(' · ');
 }
 
-export function AddFoodModal({ visible, meal, onClose, onSelect, onManual }: AddFoodModalProps) {
+export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onManual }: AddFoodModalProps) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -181,6 +183,15 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onManual }: Add
                     {!searching2Plus ? ` · ${food.times_logged}× · ${relativeDay(food.last_logged)}` : ''}
                   </Text>
                 </Pressable>
+                {/* A separate target, so logging the usual amount stays one tap
+                    while changing the portion is still reachable. */}
+                <Pressable style={styles.portion} onPress={() => onAdjust(food)}>
+                  <Text style={styles.portionQty}>
+                    {food.default_quantity}
+                    {food.reference_unit === 'serving' ? '' : food.reference_unit}
+                  </Text>
+                  <Text style={styles.portionEdit}>EDIT</Text>
+                </Pressable>
               </View>
             ))
           )}
@@ -197,8 +208,10 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onManual }: Add
 
 const styles = StyleSheet.create({
   hint: { color: colors.textDim, fontSize: 14, textAlign: 'center', paddingVertical: 20 },
-  itemRow: { marginBottom: 8 },
+  itemRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   item: {
+    flex: 1,
+    minWidth: 0,
     backgroundColor: colors.surface2,
     borderWidth: 1,
     borderColor: colors.border,
@@ -206,6 +219,19 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   itemName: { color: colors.text, fontSize: 15 },
+  portion: {
+    minWidth: 66,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+    paddingHorizontal: 8,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius - 2,
+  },
+  portionQty: { color: colors.text, fontSize: 13 },
+  portionEdit: { color: colors.textDim, fontSize: 9, letterSpacing: 0.6 },
   itemSub: { color: colors.textDim, fontSize: 12.5, marginTop: 2 },
   grid2: { flexDirection: 'row', gap: 12 },
   half: { flex: 1 },
