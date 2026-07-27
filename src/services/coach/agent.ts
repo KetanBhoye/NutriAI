@@ -16,6 +16,7 @@ import {
   compareProgressHandler,
 } from '../../tools/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { lookupMacrosGrounded } from './grounded-macros.js';
 
 const DATE = { type: 'STRING', description: 'YYYY-MM-DD; omit for today' } as const;
 
@@ -222,6 +223,35 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
       },
     },
   },
+  lookup_nutrition: {
+    run: async (a) => {
+      const foods = typeof a.foods === 'string' ? a.foods : JSON.stringify(a.foods ?? '');
+      try {
+        const { items, sources } = await lookupMacrosGrounded(foods);
+        return { content: [{ type: 'text', text: JSON.stringify({ items, sources }) }] };
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `lookup failed: ${(err as Error).message}` }],
+        };
+      }
+    },
+    declaration: {
+      name: 'lookup_nutrition',
+      description:
+        'Look up ACCURATE, web-sourced calories and macros for foods before logging them, instead of estimating from memory. Searches the internet for real nutrition data. Pass ALL the items the user mentioned in one call, with their portions.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          foods: {
+            type: 'STRING',
+            description:
+              'The foods and their portions to look up, e.g. "2 chapati, 1 bowl toor dal, 3 boiled eggs, 1 cup rice"',
+          },
+        },
+        required: ['foods'],
+      },
+    },
+  },
 };
 
 interface GeminiPart {
@@ -267,7 +297,10 @@ DAILY GOALS & PREFERENCES:
 ${opts.preferences}
 Use this context to make every reply specific to them — reference their goals and current stats instead of asking for things you already know.
 
-When the user describes food they ate, log it with add_entry (one call per item), working out realistic calories and macros. This user eats mostly Indian home-cooked food. Prefer their known foods and values when they match:
+When the user describes food they ate:
+1. FIRST call lookup_nutrition ONCE with ALL the items and their portions in the "foods" string — it searches the web for real, accurate calories and macros so you don't rely on memory.
+2. THEN call add_entry for each item, using the calories and macros returned by lookup_nutrition (matched by name). Give add_entry a food_name that includes the quantity (e.g. "Chapati (2)").
+Two exceptions where you may skip lookup_nutrition and use your own values: (a) the item clearly matches one of the user's known foods below, or (b) lookup_nutrition already failed this turn. This user eats mostly Indian home-cooked food. Known foods and values:
 ${opts.knownFoods}
 
 For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_profile_history, list_body_measurements, compare_progress) and answer from the results — never guess numbers you haven't read.
