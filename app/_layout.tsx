@@ -1,5 +1,5 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { useCallback, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -70,19 +70,30 @@ export default function RootLayout() {
     Inter_800ExtraBold,
   });
 
-  // Render even if the fonts fail rather than hanging on the splash forever —
-  // RN falls back to the system font, which is a degraded look, not a break.
-  const ready = fontsLoaded || !!fontError;
+  // Font loading can hang rather than fail — on a device build the assets
+  // resolve differently than through Metro, and `useFonts` then neither
+  // resolves nor errors. Rendering `null` in that state leaves a permanently
+  // black screen, so give up waiting after a moment and render in the system
+  // font: a degraded look beats a dead app.
+  const [waitedTooLong, setWaitedTooLong] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setWaitedTooLong(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
 
-  const onLayout = useCallback(() => {
-    if (ready) void SplashScreen.hideAsync();
+  const ready = fontsLoaded || !!fontError || waitedTooLong;
+
+  // Hide the splash as soon as we're ready, even if the first layout pass
+  // hasn't fired — otherwise a missed onLayout keeps the splash up forever.
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync().catch(() => {});
   }, [ready]);
 
   if (!ready) return null;
 
   return (
     <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: colors.bg }} onLayout={onLayout}>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
         <AuthProvider>
           <StatusBar style="light" />
           <AuthGate />

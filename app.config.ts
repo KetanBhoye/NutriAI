@@ -36,6 +36,12 @@ const config: ExpoConfig = {
   scheme: 'nutriai',
   userInterfaceStyle: 'dark',
   newArchEnabled: false,
+  icon: './assets/icon.png',
+  splash: {
+    image: './assets/splash.png',
+    resizeMode: 'contain',
+    backgroundColor: '#0f1115',
+  },
   ios: {
     bundleIdentifier: 'app.nutriai.mobile',
     supportsTablet: true,
@@ -51,6 +57,11 @@ const config: ExpoConfig = {
   android: {
     package: 'app.nutriai.mobile',
     permissions: HEALTH_CONNECT_PERMISSIONS,
+    // Foreground art sits inside the ~66% safe zone; Android masks the rest.
+    adaptiveIcon: {
+      foregroundImage: './assets/adaptive-icon.png',
+      backgroundColor: '#4ade80',
+    },
   },
   plugins: [
     'expo-router',
