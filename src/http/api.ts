@@ -221,6 +221,8 @@ const entryUpdateSchema = z
     carbs_g: z.number().min(0).optional(),
     fat_g: z.number().min(0).optional(),
     meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+    quantity: z.number().positive().max(10000).optional(),
+    unit: z.string().min(1).max(20).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field must be provided',

@@ -146,6 +146,9 @@ export interface UpdateEntryParams {
   carbs_g?: number;
   fat_g?: number;
   meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  /** Portion size. The mobile app records this in grams (`unit: 'g'`). */
+  quantity?: number;
+  unit?: string;
 }
 
 export interface DeleteEntryParams {
