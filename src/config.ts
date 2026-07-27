@@ -16,3 +16,8 @@ export const API_URL: string = (
  * `'health_connect'` value, switch the Android branch in health/sync.ts.
  */
 export const HEALTH_SOURCE = 'apple_health' as const;
+
+/** iOS OAuth client ID for Google Sign-In (see app.config.ts). */
+export const GOOGLE_IOS_CLIENT_ID: string | undefined = Constants.expoConfig?.extra?.googleIosClientId as
+  | string
+  | undefined;
