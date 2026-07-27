@@ -54,3 +54,6 @@ deploy/windows/
 
 # Other
 .editorconfig
+
+# Native app source — not part of the server image
+mobile/
