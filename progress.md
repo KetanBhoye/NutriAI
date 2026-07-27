@@ -45,15 +45,24 @@ both apps talk to; nothing server-side changed as part of this pass.
 
 | Feature | Where it was in the web app | Blocking dependency | Notes |
 |---|---|---|---|
-| Barcode scanning | Today "Scan barcode" | `expo-camera` | `GET /api/foods/barcode` endpoint already exists server-side |
-| `ShareStory` canvas (daily + weekly cards) | Today + Trends share buttons | `react-native-view-shot` or Skia | omitted entirely, no stand-in button |
+| Weekly share card | Trends "Share this week" | — | the daily card ships; the weekly variant was not ported |
 | Offline durable **write** queue | app-wide | — (AsyncStorage now installed) | reads are cached via `src/cache.ts`; writes are still optimistic-in-memory, and `entries.ts` call sites are shaped so a queue can drop in without changing them |
 | Coach voice input | Coach composer mic button | new native STT module | |
 | Bottom-sheet gesture polish | all modals | maybe `@gorhom/bottom-sheet` | `Sheet.tsx` is a plain `Modal` for now |
 
 ## Out of scope (not tracked as planned — revisit only if requirements change)
 
-- **Web Push notifications** — VAPID/Web Push doesn't work on native; would need APNs/FCM via `expo-notifications`, a separate backend + client project.
+- **Remote push notifications** — **blocked, not deferred.** APNs requires an Auth
+  Key that only exists inside the Apple Developer portal, and `aps-environment`
+  requires a provisioning profile with the Push capability; a free/personal team
+  can create neither. No backend or GCP work changes this. The server's existing
+  push is Web Push (VAPID), which native iOS ignores regardless. Daily reminders
+  ship as **local** notifications instead (`src/notifications/reminders.ts`),
+  which need no account — the trade-off is the text is fixed when scheduled, so
+  it reflects the log as of the last app open.
+  **`plugins/withoutPushEntitlement.js` strips `aps-environment`**, which
+  `expo-notifications` adds automatically and which otherwise fails every device
+  build on a personal team. Delete that plugin if a paid account is ever added.
 - **Admin dashboard** — ops-only KPI/user table for the owner account; can stay web-only.
 
 ## Session cookie on React Native (read before editing `src/api/client.ts`)
@@ -121,7 +130,16 @@ mismatch fails loudly rather than as a connection error.
 - Use `OptionRow` (not `Button`) for stacked choices that carry a hint or a
   figure — activity levels, goals. `PillGroup` is for short labels only; four
   full-size `Button`s in a row clip their text.
-- Use `Loading` rather than a bare "Loading…" `Text`.
+- Use `Loading` rather than a bare "Loading…" `Text`, and `Skeleton`/`SkeletonCard`
+  where the content has a known shape — a centred spinner collapses the layout,
+  so everything jumps when data lands.
+- Read screens go through `useCachedResource` (or `cached()` directly): paint the
+  last payload, refresh behind it, and render `StaleNotice` when the network
+  failed and the numbers on screen came from cache. Never present stale figures
+  as current.
+- Presenting a `Modal` while another modal (image picker, Alert) is still
+  dismissing leaves it invisible but touch-capturing — the screen looks frozen.
+  Defer with `InteractionManager` + a short delay.
 - **Type comes from `type.*` in `src/theme.ts`.** Inter is loaded as separate
   weight files, so `fontWeight` does nothing — you must set `fontFamily`
   (`fonts.semibold` etc). `applyDefaultFont()` makes Inter the default family
