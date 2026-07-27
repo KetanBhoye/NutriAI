@@ -20,3 +20,6 @@ expo-env.d.ts
 
 # misc
 *.log
+
+# Android signing (keep these off git — back them up somewhere safe)
+/credentials
