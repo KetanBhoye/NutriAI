@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { health } from './index';
 import { syncToday } from './sync';
+import { wasHealthConnected } from './permission';
 
 /**
  * Background health sync.
@@ -43,10 +44,10 @@ export async function autoSyncHealth(force = false): Promise<AutoSyncResult> {
   try {
     if (!(await health.isAvailable())) return { synced: false, reason: 'unavailable' };
 
-    // Only sync once the user has already granted access — requesting here
-    // would pop a permission sheet over an unrelated screen.
-    const granted = await health.requestPermissions().catch(() => false);
-    if (!granted) return { synced: false, reason: 'no-permission' };
+    // Only sync once the user has connected via the You tab. Calling
+    // requestPermissions() here would pop a permission sheet over whatever
+    // screen they happen to be on.
+    if (!(await wasHealthConnected())) return { synced: false, reason: 'no-permission' };
 
     const { posted } = await syncToday();
     await AsyncStorage.setItem(LAST_SYNC_KEY, String(now));

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { health, DailyHealth } from '@/health';
 import { syncToday } from '@/health/sync';
+import { clearHealthConnected, markHealthConnected, wasHealthConnected } from '@/health/permission';
 import { Button, Card, StatTile } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 
@@ -17,8 +18,24 @@ export function HealthSyncSection() {
 
   useEffect(() => {
     (async () => {
-      const available = await health.isAvailable();
-      setStatus(available ? 'needs-permission' : 'unavailable');
+      if (!(await health.isAvailable())) {
+        setStatus('unavailable');
+        return;
+      }
+      // Already connected on a previous launch: go straight to the readings
+      // instead of asking again. A read that throws means access was revoked
+      // in Settings, so fall back to the connect prompt.
+      if (await wasHealthConnected()) {
+        try {
+          const r = await health.getDailyHealth(new Date());
+          setReading(r);
+          setStatus('ready');
+          return;
+        } catch {
+          await clearHealthConnected();
+        }
+      }
+      setStatus('needs-permission');
     })();
   }, []);
 
@@ -31,6 +48,7 @@ export function HealthSyncSection() {
         setMessage('Permission was not granted. Enable NutriAI in your health app settings.');
         return;
       }
+      await markHealthConnected();
       setStatus('ready');
       const r = await health.getDailyHealth(new Date());
       setReading(r);
