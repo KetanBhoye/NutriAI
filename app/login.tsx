@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link } from 'expo-router';
 import { useAuth } from '@/auth';
@@ -31,8 +31,14 @@ export default function Login() {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.container}
+        style={styles.flex}
       >
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          showsVerticalScrollIndicator={false}
+        >
         <Text style={styles.logo}>NutriAI</Text>
         <Text style={styles.subtitle}>Sign in to keep tracking</Text>
 
@@ -62,6 +68,7 @@ export default function Login() {
         <Link href="/signup" style={styles.link}>
           <Text style={styles.linkText}>New here? Create an account</Text>
         </Link>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -69,7 +76,8 @@ export default function Login() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  container: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
+  flex: { flex: 1 },
+  container: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 32 },
   logo: { color: colors.accent, fontSize: 40, fontFamily: fonts.extrabold, textAlign: 'center' },
   subtitle: { color: colors.textDim, fontSize: 15, textAlign: 'center', marginTop: 6, marginBottom: 32 },
   error: { color: colors.danger, marginBottom: 12, textAlign: 'center' },

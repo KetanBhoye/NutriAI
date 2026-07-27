@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, fonts, radius, type } from '@/theme';
 
 interface SheetProps {
@@ -15,7 +15,7 @@ export function Sheet({ visible, onClose, title, children }: SheetProps) {
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.wrap}
         pointerEvents="box-none"
       >
@@ -29,7 +29,17 @@ export function Sheet({ visible, onClose, title, children }: SheetProps) {
               </Pressable>
             </View>
           ) : null}
-          {children}
+          {/* Scrollable so the keyboard can shrink the sheet without clipping
+              the form. `handled` keeps a single tap working on buttons while
+              the keyboard is up, instead of the first tap only dismissing it. */}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.body}
+          >
+            {children}
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -46,7 +56,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderBottomWidth: 0,
-    maxHeight: '88%',
+    maxHeight: '92%',
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 28,
@@ -65,6 +75,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 14,
   },
+  body: { paddingBottom: 8 },
   title: { ...type.heading, color: colors.text },
   close: { ...type.caption, fontFamily: fonts.semibold, color: colors.textDim },
 });

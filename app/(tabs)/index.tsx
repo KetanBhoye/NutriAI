@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import Feather from '@expo/vector-icons/Feather';
 import { entriesApi, goalsApi } from '@/api';
 import type { EntriesResponse } from '@/api/entries';
 import { cached, readCache } from '@/cache';
@@ -15,6 +16,8 @@ import { AddFoodModal } from '@/features/today/AddFoodModal';
 import { EntryDetailModal } from '@/features/today/EntryDetailModal';
 import { SuggestMealModal } from '@/features/today/SuggestMealModal';
 import { PhotoMealModal } from '@/features/today/PhotoMealModal';
+import { BarcodeModal } from '@/features/today/BarcodeModal';
+import { ShareStoryModal } from '@/features/today/ShareStoryModal';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 const FALLBACK_GOALS = { daily_calorie_goal: 2000, daily_protein_goal_g: 150, daily_carbs_goal_g: 200, daily_fat_goal_g: 65 };
@@ -49,6 +52,8 @@ export default function Today() {
   const [viewingEntry, setViewingEntry] = useState<FoodEntry | null>(null);
   const [showSuggest, setShowSuggest] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [showBarcode, setShowBarcode] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   /** Offers camera or library, then hands the local URI to PhotoMealModal. */
   const pickPhoto = () => {
@@ -62,18 +67,29 @@ export default function Today() {
             return;
           }
           const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-          if (!res.canceled && res.assets[0]) setPhotoUri(res.assets[0].uri);
+          if (!res.canceled && res.assets[0]) presentSheet(res.assets[0].uri);
         },
       },
       {
         text: 'Choose from library',
         onPress: async () => {
           const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 });
-          if (!res.canceled && res.assets[0]) setPhotoUri(res.assets[0].uri);
+          if (!res.canceled && res.assets[0]) presentSheet(res.assets[0].uri);
         },
       },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  };
+
+  /**
+   * The picker's promise resolves while iOS is still dismissing its own modal.
+   * Presenting ours during that window leaves it invisible but still capturing
+   * touches — the screen looks frozen. Wait for the dismissal to finish first.
+   */
+  const presentSheet = (uri: string) => {
+    InteractionManager.runAfterInteractions(() => {
+      setTimeout(() => setPhotoUri(uri), 350);
+    });
   };
 
   const load = useCallback(async (date: string) => {
@@ -266,9 +282,14 @@ export default function Today() {
             <Text style={[styles.navBtnText, isToday && styles.navBtnDisabled]}>›</Text>
           </Pressable>
         </View>
-        <View style={styles.headRight}>
-          <Text style={styles.bigNumber}>{Math.round(totals.calories)}</Text>
-          <Text style={styles.remaining}>{Math.round(remaining)} left</Text>
+        <View style={styles.headRightRow}>
+          <Pressable onPress={() => setShowShare(true)} hitSlop={10} style={styles.shareBtn}>
+            <Feather name="share" size={17} color={colors.accent} />
+          </Pressable>
+          <View style={styles.headRight}>
+            <Text style={styles.bigNumber}>{Math.round(totals.calories)}</Text>
+            <Text style={styles.remaining}>{Math.round(remaining)} left</Text>
+          </View>
         </View>
       </View>
 
@@ -284,6 +305,7 @@ export default function Today() {
 
       <View style={styles.actionRow}>
         <Button title="🍽️ What to eat?" variant="ghost" onPress={() => setShowSuggest(true)} style={styles.actionBtn} />
+        <Button title="📷 Scan barcode" variant="ghost" onPress={() => setShowBarcode(true)} style={styles.actionBtn} />
       </View>
 
       <Button
@@ -356,6 +378,16 @@ export default function Today() {
         onLogged={() => load(viewDate)}
       />
 
+      <ShareStoryModal visible={showShare} date={viewDate} onClose={() => setShowShare(false)} />
+
+      <BarcodeModal
+        visible={showBarcode}
+        date={viewDate}
+        defaultMeal={currentMeal()}
+        onClose={() => setShowBarcode(false)}
+        onLogged={() => load(viewDate)}
+      />
+
       <PhotoMealModal
         uri={photoUri}
         date={viewDate}
@@ -375,7 +407,18 @@ const styles = StyleSheet.create({
   navBtnDisabled: { opacity: 0.25 },
   dateLabel: { color: colors.text, fontSize: 22, fontFamily: fonts.extrabold },
   dateSub: { color: colors.textDim, fontSize: 12, marginTop: 1 },
+  headRightRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headRight: { alignItems: 'flex-end' },
+  shareBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   bigNumber: { color: colors.text, fontSize: 26, fontFamily: fonts.bold },
   remaining: { color: colors.textDim, fontSize: 13 },
   jumpToday: { marginTop: 12, paddingVertical: 8 },
@@ -390,8 +433,8 @@ const styles = StyleSheet.create({
   },
   snapText: { color: colors.accent, fontFamily: fonts.semibold, fontSize: 15 },
   snapHint: { color: colors.textDim, fontFamily: fonts.regular },
-  actionRow: { marginTop: 10 },
-  actionBtn: {},
+  actionRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  actionBtn: { flex: 1, paddingHorizontal: 6 },
   quickBtn: { marginTop: 10 },
   mealSection: { marginTop: 22 },
   mealTitle: { color: colors.text, fontSize: 16, fontFamily: fonts.bold, marginBottom: 10, textTransform: 'capitalize' },

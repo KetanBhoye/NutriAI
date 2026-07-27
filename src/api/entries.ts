@@ -47,3 +47,22 @@ export function getSuggestions(meal: MealType, limit = 8): Promise<{ meal_type: 
 export function searchFoods(query: string): Promise<{ query: string; foods: Suggestion[] }> {
   return api(`/api/foods/search?q=${encodeURIComponent(query)}`);
 }
+
+export interface BarcodeProduct {
+  found: boolean;
+  code: string;
+  name: string | null;
+  brand: string | null;
+  /** Manufacturer's serving size, when the product declares one. */
+  serving_g: number | null;
+  per_100g: {
+    calories: number;
+    protein_g: number | null;
+    carbs_g: number | null;
+    fat_g: number | null;
+  } | null;
+}
+
+export function lookupBarcode(code: string): Promise<BarcodeProduct> {
+  return api(`/api/foods/barcode?code=${encodeURIComponent(code)}`);
+}

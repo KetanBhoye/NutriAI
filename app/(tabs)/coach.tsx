@@ -132,7 +132,9 @@ export default function Coach() {
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={90}
+          // 0 because the SafeAreaView already accounts for the top inset and
+          // there is no navigator header to offset against.
+          keyboardVerticalOffset={0}
         >
           {bubbles.length === 0 ? (
             <View style={styles.empty}>
@@ -157,6 +159,8 @@ export default function Coach() {
               data={bubbles}
               keyExtractor={(b) => b.id}
               contentContainerStyle={styles.thread}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
               renderItem={({ item }) => (
                 <View style={[styles.bubbleRow, item.from === 'user' && styles.bubbleRowUser]}>
                   {item.from === 'coach' ? (
