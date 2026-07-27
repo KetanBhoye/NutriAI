@@ -95,6 +95,7 @@ ${opts.knownFoods || '(none yet)'}
         responseMimeType: 'application/json',
         responseSchema: RESPONSE_SCHEMA,
         temperature: 0.2,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     },
     { timeoutMs: 35_000, retries: 1 }

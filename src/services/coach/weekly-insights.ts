@@ -70,6 +70,7 @@ Rules:
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
       temperature: 0.5,
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 

@@ -101,6 +101,7 @@ Write "summary" in 2–4 sentences as notes ABOUT this user that the coach shoul
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
       temperature: 0.4,
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 

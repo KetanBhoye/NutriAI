@@ -82,6 +82,9 @@ ${opts.dietNotes ? opts.dietNotes : '(none)'}
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
       temperature: 0.6,
+      // No deep reasoning needed for a structured list; thinking occasionally
+      // runs away (30s+) and times the request out. Disabling it is fast + cheap.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 

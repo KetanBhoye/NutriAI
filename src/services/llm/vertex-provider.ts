@@ -118,6 +118,7 @@ export class VertexProvider implements LlmProvider {
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: VERTEX_RESPONSE_SCHEMA,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     });
