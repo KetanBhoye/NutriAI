@@ -75,6 +75,9 @@ const config: ExpoConfig = {
     // Wires up the Health Connect SDK, the permissions-rationale activity and
     // the AndroidManifest <queries> entry for the Health Connect app.
     'react-native-health-connect',
+    // Registers the Health Connect permission delegate in MainActivity.onCreate
+    // (the library's plugin doesn't) — without this, requesting permissions crashes.
+    './plugins/withHealthConnectPermissionDelegate',
   ],
   extra: {
     apiUrl: API_URL,
