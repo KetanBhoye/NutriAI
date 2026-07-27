@@ -4,7 +4,9 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,9 +14,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import Feather from '@expo/vector-icons/Feather';
 import { aiApi } from '@/api';
 import { addDays, parseISODate, todayISO } from '@/dates';
-import { colors, fonts, radius } from '@/theme';
+import { colors, fonts, radius, type } from '@/theme';
 import { CoachHistoryTurn } from '@/types';
 
 const SUGGESTIONS = [
@@ -49,6 +52,16 @@ export default function Coach() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const [keyboardUp, setKeyboardUp] = useState(false);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardUp(true));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardUp(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   useEffect(() => {
     aiApi.getAiStatus().then((s) => setConfigured(s.configured));
@@ -137,7 +150,14 @@ export default function Coach() {
           keyboardVerticalOffset={0}
         >
           {bubbles.length === 0 ? (
-            <View style={styles.empty}>
+            // Scrollable: with the keyboard up the available height shrinks,
+            // and a fixed View just clips the starter chips out of reach.
+            <ScrollView
+              contentContainerStyle={styles.empty}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              showsVerticalScrollIndicator={false}
+            >
               <View style={styles.emptyAvatar}>
                 <Text style={styles.avatarText}>🥗</Text>
               </View>
@@ -152,7 +172,7 @@ export default function Coach() {
                   </Pressable>
                 ))}
               </View>
-            </View>
+            </ScrollView>
           ) : (
             <FlatList
               ref={listRef}
@@ -196,6 +216,14 @@ export default function Coach() {
           )}
 
           <View style={styles.composerWrap}>
+            {/* The composer is multiline, so Return inserts a newline and
+                there is otherwise no way to put the keyboard away. */}
+            {keyboardUp ? (
+              <Pressable onPress={() => Keyboard.dismiss()} hitSlop={8} style={styles.dismissRow}>
+                <Feather name="chevron-down" size={16} color={colors.textDim} />
+                <Text style={styles.dismissText}>Hide keyboard</Text>
+              </Pressable>
+            ) : null}
             <View style={styles.composerPill}>
               <TextInput
                 style={styles.composerInput}
@@ -257,7 +285,7 @@ const styles = StyleSheet.create({
   dateLabel: { color: colors.text, fontSize: 13, fontFamily: fonts.semibold },
   notice: { margin: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius, padding: 16 },
   noticeText: { color: colors.text, fontSize: 14, lineHeight: 20 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  empty: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 24 },
   emptyAvatar: {
     width: 60,
     height: 60,
@@ -295,6 +323,8 @@ const styles = StyleSheet.create({
   bubbleTextUser: { color: colors.onAccent },
   changed: { color: colors.accent, fontSize: 13, fontFamily: fonts.bold, marginTop: 8 },
   composerWrap: { paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
+  dismissRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingBottom: 8 },
+  dismissText: { ...type.caption, fontSize: 12, color: colors.textDim },
   composerPill: {
     flexDirection: 'row',
     alignItems: 'flex-end',
