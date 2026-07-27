@@ -2,11 +2,29 @@ import { Tabs } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 import { colors } from '@/theme';
 import { useHealthAutoSync } from '@/health/useHealthAutoSync';
+import { useEffect } from 'react';
+import * as Notifications from 'expo-notifications';
+import { scheduleDailyReminder } from '@/notifications/reminders';
+
+// Show reminders even while the app is open, rather than silently dropping them.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 /** 5 tabs matching the web app: Today, Trends, Coach, Plan, You. */
 export default function TabsLayout() {
   // Only reached once signed in, so there's always a session to sync against.
   useHealthAutoSync(true);
+
+  // The OS fixes the notification text when it's scheduled, so refresh it on
+  // each launch to reflect the current day's log.
+  useEffect(() => {
+    void scheduleDailyReminder();
+  }, []);
 
   return (
     <Tabs

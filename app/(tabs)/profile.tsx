@@ -7,6 +7,7 @@ import { Button, Card, Screen } from '@/components/ui';
 import { colors, fonts, radius, type } from '@/theme';
 import { HealthSyncSection } from '@/features/health/HealthSyncSection';
 import { TokenCard } from '@/components/TokenCard';
+import { RemindersCard } from '@/features/profile/RemindersCard';
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -58,6 +59,9 @@ export default function Profile() {
         </View>
         <Text style={styles.chev}>›</Text>
       </Pressable>
+
+      <Text style={styles.h2}>Reminders</Text>
+      <RemindersCard />
 
       <Text style={styles.h2}>Health sync</Text>
       <Card>
