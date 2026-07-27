@@ -5,6 +5,7 @@ import { MealSuggestion } from '@/api/ai';
 import { Button, Sheet } from '@/components/ui';
 import { colors, fonts, radius, type } from '@/theme';
 import { MealType } from '@/types';
+import { estimateGrams } from '@/portion';
 
 interface SuggestMealModalProps {
   visible: boolean;
@@ -49,6 +50,9 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
         fat_g: s.fat_g || 0,
         meal_type: meal,
         entry_date: date,
+        // Weighed from the macros so the entry stays re-portionable.
+        quantity: estimateGrams(s),
+        unit: 'g',
       });
       setLogged((prev) => new Set([...prev, i]));
       onLogged();

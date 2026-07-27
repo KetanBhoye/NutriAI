@@ -1,64 +1,74 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts, type } from '@/theme';
-
-/**
- * Step size per unit. Nudging grams by 1 would take forever, and nudging
- * "1 scoop" by 25 is nonsense — so the step follows what the unit measures.
- */
-export function stepFor(unit: string | null | undefined): number {
-  const u = (unit ?? '').toLowerCase();
-  if (u === 'g' || u === 'ml') return 25;
-  if (u === 'kg' || u === 'l') return 0.1;
-  return 1; // scoop, piece, slice, can, serving…
-}
-
-/** Grams read oddly as "150.0"; scoops read oddly as "1.0". */
-export function formatQty(q: number, step: number): string {
-  return step < 1 ? q.toFixed(1) : String(Math.round(q));
-}
-
-/** Units that are quantities rather than counts, so the label reads naturally. */
-export function unitLabel(unit: string | null | undefined): string {
-  const u = (unit ?? 'serving').toLowerCase();
-  return u === 'serving' ? '' : u;
-}
+import { gramStep } from '@/portion';
 
 interface AmountStepperProps {
-  quantity: number;
-  unit: string | null | undefined;
-  onChange: (quantity: number) => void;
+  grams: number;
+  onChange: (grams: number) => void;
+  /** Shown under the control, e.g. to flag an estimated weight. */
+  hint?: string;
 }
 
-/** −/+ control with the amount and its unit, shared by the add and edit sheets. */
-export function AmountStepper({ quantity, unit, onChange }: AmountStepperProps) {
-  const step = stepFor(unit);
-  const label = unitLabel(unit);
+/**
+ * Gram stepper shared by every logging surface. The number itself is typable,
+ * because thumbing from 150g to 400g one step at a time is nobody's idea of a
+ * good time.
+ */
+export function AmountStepper({ grams, onChange, hint }: AmountStepperProps) {
+  const [text, setText] = useState(String(Math.round(grams)));
 
-  const nudge = (delta: number) => {
+  // Follow the value when the buttons (or the parent) move it.
+  useEffect(() => {
+    setText(String(Math.round(grams)));
+  }, [grams]);
+
+  const nudge = (dir: 1 | -1) => {
+    const step = gramStep(grams);
     void Haptics.selectionAsync();
-    // Snap to the step grid so repeated taps don't drift to 137.5g.
-    onChange(Math.max(step, Math.round((quantity + delta) / step) * step));
+    // Snap to the step grid so repeated taps don't drift to 137g.
+    onChange(Math.max(step, Math.round((grams + dir * step) / step) * step));
   };
 
+  const type_ = (v: string) => {
+    const digits = v.replace(/[^0-9]/g, '').slice(0, 4);
+    setText(digits);
+    const n = Number(digits);
+    if (Number.isFinite(n) && n > 0) onChange(n);
+  };
+
+  const step = gramStep(grams);
+
   return (
-    <View style={styles.row}>
-      <Pressable
-        onPress={() => nudge(-step)}
-        disabled={quantity <= step}
-        style={({ pressed }) => [styles.btn, pressed && styles.pressed, quantity <= step && styles.disabled]}
-      >
-        <Text style={styles.btnText}>−</Text>
-      </Pressable>
+    <View>
+      <View style={styles.row}>
+        <Pressable
+          onPress={() => nudge(-1)}
+          disabled={grams <= step}
+          hitSlop={6}
+          style={({ pressed }) => [styles.btn, pressed && styles.pressed, grams <= step && styles.disabled]}
+        >
+          <Text style={styles.btnText}>−</Text>
+        </Pressable>
 
-      <View style={styles.value}>
-        <Text style={styles.qty}>{formatQty(quantity, step)}</Text>
-        {label ? <Text style={styles.unit}>{label}</Text> : null}
+        <View style={styles.value}>
+          <TextInput
+            value={text}
+            onChangeText={type_}
+            onBlur={() => setText(String(Math.round(grams)))}
+            keyboardType="number-pad"
+            selectTextOnFocus
+            style={styles.qty}
+          />
+          <Text style={styles.unit}>g</Text>
+        </View>
+
+        <Pressable onPress={() => nudge(1)} hitSlop={6} style={({ pressed }) => [styles.btn, pressed && styles.pressed]}>
+          <Text style={styles.btnText}>+</Text>
+        </Pressable>
       </View>
-
-      <Pressable onPress={() => nudge(step)} style={({ pressed }) => [styles.btn, pressed && styles.pressed]}>
-        <Text style={styles.btnText}>+</Text>
-      </Pressable>
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -78,13 +88,17 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7, borderColor: colors.accentDim },
   disabled: { opacity: 0.35 },
   btnText: { color: colors.text, fontFamily: fonts.semibold, fontSize: 24, lineHeight: 28 },
-  value: { flex: 1, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', gap: 4 },
+  value: { flex: 1, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', gap: 3 },
   qty: {
+    minWidth: 60,
+    textAlign: 'right',
     color: colors.text,
     fontFamily: fonts.extrabold,
-    fontSize: 36,
+    fontSize: 34,
+    padding: 0,
     letterSpacing: -1,
     fontVariant: ['tabular-nums'],
   },
   unit: { ...type.body, color: colors.textDim },
+  hint: { ...type.caption, fontSize: 11.5, color: colors.textDim, textAlign: 'center', marginTop: 8 },
 });

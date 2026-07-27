@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Button, PillGroup, Sheet, TextField } from '@/components/ui';
 import { capitalize } from '@/format';
 import { AmountStepper } from './AmountStepper';
+import { formatGrams, portionBasis, toGrams } from '@/portion';
 import { colors, fonts, radius } from '@/theme';
 import { FoodEntry, MealType } from '@/types';
 
@@ -26,14 +27,14 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [form, setForm] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', meal: 'snack' as MealType });
-  const [qty, setQty] = useState(1);
+  const [grams, setGrams] = useState(100);
+  const [estimated, setEstimated] = useState(false);
   /**
-   * Macros per single unit, derived when the sheet opens. Entries store totals,
-   * not per-unit figures, so this is the only way to rescale them. Entries with
-   * no recorded quantity (manual and AI-logged rows) are treated as one
-   * serving, which still lets you double or halve them.
+   * Macros per gram, derived when the sheet opens. Entries store totals, not
+   * per-unit figures, so this is the only way to rescale them. Rows logged
+   * before grams were recorded get a weight estimated from their macros.
    */
-  const [perUnit, setPerUnit] = useState({ calories: 0, protein: 0, carbs: 0, fat: 0 });
+  const [perGram, setPerGram] = useState({ calories: 0, protein: 0, carbs: 0, fat: 0 });
 
   useEffect(() => {
     if (!entry) return;
@@ -48,27 +49,30 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
       meal: entry.meal_type ?? 'snack',
     });
 
-    const basis = entry.quantity && entry.quantity > 0 ? entry.quantity : 1;
-    setQty(basis);
-    setPerUnit({
-      calories: entry.calories / basis,
-      protein: (entry.protein_g ?? 0) / basis,
-      carbs: (entry.carbs_g ?? 0) / basis,
-      fat: (entry.fat_g ?? 0) / basis,
+    const basis = portionBasis(entry, entry.quantity, entry.unit);
+    setGrams(basis.grams);
+    setEstimated(!basis.exact);
+    setPerGram({
+      calories: entry.calories / basis.grams,
+      protein: (entry.protein_g ?? 0) / basis.grams,
+      carbs: (entry.carbs_g ?? 0) / basis.grams,
+      fat: (entry.fat_g ?? 0) / basis.grams,
     });
   }, [entry]);
 
   if (!entry) return null;
 
-  /** Rescales every macro field off the per-unit basis. */
-  const changeQty = (next: number) => {
-    setQty(next);
+  const recordedGrams = toGrams(entry.quantity, entry.unit);
+
+  /** Rescales every macro field off the per-gram basis. */
+  const changeGrams = (next: number) => {
+    setGrams(next);
     setForm((f) => ({
       ...f,
-      calories: String(Math.round(perUnit.calories * next)),
-      protein: perUnit.protein ? String(Math.round(perUnit.protein * next)) : f.protein,
-      carbs: perUnit.carbs ? String(Math.round(perUnit.carbs * next)) : f.carbs,
-      fat: perUnit.fat ? String(Math.round(perUnit.fat * next)) : f.fat,
+      calories: String(Math.round(perGram.calories * next)),
+      protein: perGram.protein ? String(Math.round(perGram.protein * next)) : f.protein,
+      carbs: perGram.carbs ? String(Math.round(perGram.carbs * next)) : f.carbs,
+      fat: perGram.fat ? String(Math.round(perGram.fat * next)) : f.fat,
     }));
   };
 
@@ -92,7 +96,7 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
           <Text style={styles.name}>{entry.food_name}</Text>
           <Text style={styles.meta}>
             {entry.meal_type}
-            {entry.quantity && entry.unit ? ` · ${entry.quantity}${entry.unit}` : ''} · {entry.entry_date}
+            {recordedGrams != null ? ` · ${formatGrams(recordedGrams)}` : ''} · {entry.entry_date}
           </Text>
 
           <View style={styles.macroGrid}>
@@ -122,7 +126,11 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
           <TextField label="Name" value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} />
           <Text style={styles.fieldLabel}>Amount</Text>
           <View style={styles.amount}>
-            <AmountStepper quantity={qty} unit={entry.unit ?? 'serving'} onChange={changeQty} />
+            <AmountStepper
+              grams={grams}
+              onChange={changeGrams}
+              hint={estimated ? 'Weight estimated from the macros — correct it and they rescale.' : undefined}
+            />
           </View>
 
           <Text style={styles.fieldLabel}>Meal</Text>

@@ -1,54 +1,86 @@
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Sheet, TextField } from '@/components/ui';
-import { colors, fonts, radius, type } from '@/theme';
+import { Button, Sheet } from '@/components/ui';
+import { colors, radius, type } from '@/theme';
+import { formatGrams, portionBasis } from '@/portion';
 import { Suggestion } from '@/types';
-import { AmountStepper, formatQty, stepFor } from './AmountStepper';
+import { AmountStepper } from './AmountStepper';
 
 interface PortionSheetProps {
   food: Suggestion | null;
-  onConfirm: (quantity: number) => void;
+  /** Grams to log, plus the macros for that weight. */
+  onConfirm: (portion: { grams: number; calories: number; protein_g: number | null; carbs_g: number | null; fat_g: number | null }) => void;
   onCancel: () => void;
 }
 
 export function PortionSheet({ food, onConfirm, onCancel }: PortionSheetProps) {
-  const [qty, setQty] = useState(1);
-
-  const step = food ? stepFor(food.reference_unit) : 1;
+  const [grams, setGrams] = useState(100);
+  const [estimated, setEstimated] = useState(false);
+  const [perGram, setPerGram] = useState({ calories: 0, protein: 0, carbs: 0, fat: 0 });
 
   useEffect(() => {
-    if (food) setQty(food.default_quantity || step);
-  }, [food, step]);
+    if (!food) return;
+    // The library quotes macros per reference unit; convert that unit's default
+    // portion to grams so the stepper works in the one unit that always scales.
+    const q = food.default_quantity || 1;
+    const totals = {
+      calories: food.calories_per_unit * q,
+      protein_g: (food.protein_g_per_unit ?? 0) * q,
+      carbs_g: (food.carbs_g_per_unit ?? 0) * q,
+      fat_g: (food.fat_g_per_unit ?? 0) * q,
+    };
+    const basis = portionBasis(totals, q, food.reference_unit);
+    setGrams(basis.grams);
+    setEstimated(!basis.exact);
+    setPerGram({
+      calories: totals.calories / basis.grams,
+      protein: totals.protein_g / basis.grams,
+      carbs: totals.carbs_g / basis.grams,
+      fat: totals.fat_g / basis.grams,
+    });
+  }, [food]);
 
   if (!food) return null;
 
-  const scale = (per: number | null) => (per == null ? null : Math.round(per * qty));
-  const kcal = Math.round(food.calories_per_unit * qty);
+  const at = (perUnit: number, present: boolean) => (present ? Math.round(perUnit * grams) : null);
+  const kcal = Math.round(perGram.calories * grams);
 
   return (
     <Sheet visible={!!food} onClose={onCancel} title="Portion">
       <Text style={styles.name}>{food.canonical_name}</Text>
 
       <View style={styles.stepper}>
-        <AmountStepper quantity={qty} unit={food.reference_unit} onChange={setQty} />
+        <AmountStepper
+          grams={grams}
+          onChange={setGrams}
+          hint={
+            estimated
+              ? `Usual portion is about ${formatGrams(grams)} — tap the number to set an exact weight.`
+              : undefined
+          }
+        />
       </View>
-
-      {/* Typed entry for anything the stepper would take too long to reach. */}
-      <TextField
-        label="Or type an amount"
-        keyboardType="decimal-pad"
-        value={formatQty(qty, step)}
-        onChangeText={(v) => setQty(Math.max(0, Number(v) || 0))}
-      />
 
       <View style={styles.macros}>
         <Macro label="kcal" value={kcal} />
-        <Macro label="Protein" value={scale(food.protein_g_per_unit)} unit="g" />
-        <Macro label="Carbs" value={scale(food.carbs_g_per_unit)} unit="g" />
-        <Macro label="Fat" value={scale(food.fat_g_per_unit)} unit="g" />
+        <Macro label="Protein" value={at(perGram.protein, food.protein_g_per_unit != null)} unit="g" />
+        <Macro label="Carbs" value={at(perGram.carbs, food.carbs_g_per_unit != null)} unit="g" />
+        <Macro label="Fat" value={at(perGram.fat, food.fat_g_per_unit != null)} unit="g" />
       </View>
 
-      <Button title={`Log ${kcal} kcal`} onPress={() => onConfirm(qty)} disabled={qty <= 0} />
+      <Button
+        title={`Log ${formatGrams(grams)} · ${kcal} kcal`}
+        onPress={() =>
+          onConfirm({
+            grams,
+            calories: kcal,
+            protein_g: at(perGram.protein, food.protein_g_per_unit != null),
+            carbs_g: at(perGram.carbs, food.carbs_g_per_unit != null),
+            fat_g: at(perGram.fat, food.fat_g_per_unit != null),
+          })
+        }
+        disabled={grams <= 0}
+      />
     </Sheet>
   );
 }
@@ -67,29 +99,7 @@ function Macro({ label, value, unit }: { label: string; value: number | null; un
 
 const styles = StyleSheet.create({
   name: { ...type.subheading, color: colors.text, marginBottom: 18 },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 18 },
-  stepBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface2,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  pressed: { opacity: 0.7, borderColor: colors.accentDim },
-  disabled: { opacity: 0.35 },
-  stepText: { color: colors.text, fontFamily: fonts.semibold, fontSize: 26, lineHeight: 30 },
-  qtyBox: { flex: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 4 },
-  qty: {
-    color: colors.text,
-    fontFamily: fonts.extrabold,
-    fontSize: 40,
-    letterSpacing: -1,
-    fontVariant: ['tabular-nums'],
-  },
-  unit: { ...type.body, color: colors.textDim },
+  stepper: { marginBottom: 20 },
   macros: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   macroCell: {
     flex: 1,

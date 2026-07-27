@@ -7,6 +7,7 @@ import { Button, Loading, Sheet, TextField } from '@/components/ui';
 import { colors, radius, type } from '@/theme';
 import { MealType } from '@/types';
 import { capitalize } from '@/format';
+import { portionBasis } from '@/portion';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 /** Long edge the photo is downscaled to before upload — keeps the request small
@@ -24,10 +25,34 @@ interface PhotoMealModalProps {
 
 type Status = 'analyzing' | 'review' | 'error';
 
+/**
+ * The model reports portions in household measures ("1 bowl", "2 roti"). We
+ * weigh them on arrival so the entry is stored in grams and stays adjustable,
+ * and keep per-gram macros so correcting the weight rescales everything.
+ */
+interface ReviewItem extends PhotoItem {
+  grams: number;
+  perGram: { calories: number; protein: number; carbs: number; fat: number };
+}
+
+function toReviewItem(it: PhotoItem): ReviewItem {
+  const { grams } = portionBasis(it, it.quantity, it.unit);
+  return {
+    ...it,
+    grams,
+    perGram: {
+      calories: (it.calories || 0) / grams,
+      protein: (it.protein_g ?? 0) / grams,
+      carbs: (it.carbs_g ?? 0) / grams,
+      fat: (it.fat_g ?? 0) / grams,
+    },
+  };
+}
+
 export function PhotoMealModal({ uri, date, defaultMeal, onClose, onLogged }: PhotoMealModalProps) {
   const [status, setStatus] = useState<Status>('analyzing');
   const [note, setNote] = useState<string | null>(null);
-  const [items, setItems] = useState<PhotoItem[]>([]);
+  const [items, setItems] = useState<ReviewItem[]>([]);
   const [meal, setMeal] = useState<MealType>(defaultMeal);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +79,7 @@ export function PhotoMealModal({ uri, date, defaultMeal, onClose, onLogged }: Ph
         if (cancelled) return;
 
         setNote(res.note);
-        setItems(res.items ?? []);
+        setItems((res.items ?? []).map(toReviewItem));
         setStatus(res.items?.length ? 'review' : 'error');
         if (!res.items?.length) {
           setError(res.note ?? "Couldn't identify any food in that photo.");
@@ -71,8 +96,25 @@ export function PhotoMealModal({ uri, date, defaultMeal, onClose, onLogged }: Ph
     };
   }, [uri, defaultMeal]);
 
-  const patch = (index: number, changes: Partial<PhotoItem>) =>
+  const patch = (index: number, changes: Partial<ReviewItem>) =>
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...changes } : it)));
+
+  /** Correcting the weight rescales that item's macros off its per-gram basis. */
+  const changeGrams = (index: number, grams: number) =>
+    setItems((prev) =>
+      prev.map((it, i) =>
+        i === index
+          ? {
+              ...it,
+              grams,
+              calories: Math.round(it.perGram.calories * grams),
+              protein_g: it.perGram.protein ? Math.round(it.perGram.protein * grams) : it.protein_g,
+              carbs_g: it.perGram.carbs ? Math.round(it.perGram.carbs * grams) : it.carbs_g,
+              fat_g: it.perGram.fat ? Math.round(it.perGram.fat * grams) : it.fat_g,
+            }
+          : it
+      )
+    );
 
   const total = items.reduce((sum, it) => sum + (Number(it.calories) || 0), 0);
 
@@ -91,6 +133,8 @@ export function PhotoMealModal({ uri, date, defaultMeal, onClose, onLogged }: Ph
           fat_g: it.fat_g ?? undefined,
           meal_type: meal,
           entry_date: date,
+          quantity: it.grams,
+          unit: 'g',
         });
       }
       onLogged();
@@ -138,6 +182,15 @@ export function PhotoMealModal({ uri, date, defaultMeal, onClose, onLogged }: Ph
                 style={styles.itemName}
               />
               <View style={styles.itemRow}>
+                {/* Weight leads: correcting it rescales the rest, which is
+                    almost always what's wrong with a vision estimate. */}
+                <TextField
+                  label="Grams"
+                  keyboardType="number-pad"
+                  style={styles.itemField}
+                  value={String(it.grams)}
+                  onChangeText={(v) => changeGrams(i, Number(v.replace(/[^0-9]/g, '')) || 0)}
+                />
                 <TextField
                   label="kcal"
                   keyboardType="number-pad"

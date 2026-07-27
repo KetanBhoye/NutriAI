@@ -19,6 +19,7 @@ import type { EntriesResponse } from '@/api/entries';
 import { cached, readCache } from '@/cache';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { capitalize } from '@/format';
+import { defaultPortion, formatGrams, toGrams, type Portion } from '@/portion';
 import { colors, fonts, radius } from '@/theme';
 import { Button, EmptyState, Loading, Screen, StaleNotice } from '@/components/ui';
 import { FoodEntry, Goals, MealType, Suggestion, Totals } from '@/types';
@@ -263,22 +264,23 @@ export default function Today() {
 
   const remaining = Math.max(0, (goals.daily_calorie_goal ?? FALLBACK_GOALS.daily_calorie_goal) - totals.calories);
 
-  const logSuggestion = (suggestion: Suggestion, meal: MealType, portion?: number) => {
-    const quantity = portion ?? suggestion.default_quantity;
-    const scale = (v: number | null) => (v === null ? null : Math.round(v * quantity * 10) / 10);
+  const logSuggestion = (suggestion: Suggestion, meal: MealType, portion?: Portion) => {
+    // Every entry records a gram weight, so it can be re-portioned later even
+    // when the library quotes the food in bowls or pieces.
+    const chosen = portion ?? defaultPortion(suggestion);
     const optimistic: FoodEntry = {
       id: newPendingId(),
       user_id: '',
       food_name: suggestion.canonical_name,
-      calories: Math.round(suggestion.calories_per_unit * quantity),
-      protein_g: scale(suggestion.protein_g_per_unit),
-      carbs_g: scale(suggestion.carbs_g_per_unit),
-      fat_g: scale(suggestion.fat_g_per_unit),
+      calories: chosen.calories,
+      protein_g: chosen.protein_g,
+      carbs_g: chosen.carbs_g,
+      fat_g: chosen.fat_g,
       meal_type: meal,
       entry_date: viewDate,
       food_id: suggestion.id,
-      quantity,
-      unit: suggestion.reference_unit,
+      quantity: chosen.grams,
+      unit: 'g',
       created_at: '',
       updated_at: '',
     };
@@ -296,34 +298,41 @@ export default function Today() {
       meal_type: meal,
       entry_date: viewDate,
       food_id: suggestion.id,
-      quantity,
-      unit: suggestion.reference_unit,
+      quantity: chosen.grams,
+      unit: 'g',
     }).then(() => reconcile());
   };
 
-  const logManual = (meal: MealType, input: { food_name: string; calories: number; protein_g?: number; carbs_g?: number; fat_g?: number }) => {
+  const logManual = (
+    meal: MealType,
+    input: { food_name: string; calories: number; protein_g?: number; carbs_g?: number; fat_g?: number; grams?: number }
+  ) => {
+    const { grams, ...macros } = input;
     const optimistic: FoodEntry = {
       id: newPendingId(),
       user_id: '',
-      food_name: input.food_name,
-      calories: input.calories,
-      protein_g: input.protein_g ?? null,
-      carbs_g: input.carbs_g ?? null,
-      fat_g: input.fat_g ?? null,
+      food_name: macros.food_name,
+      calories: macros.calories,
+      protein_g: macros.protein_g ?? null,
+      carbs_g: macros.carbs_g ?? null,
+      fat_g: macros.fat_g ?? null,
       meal_type: meal,
       entry_date: viewDate,
       food_id: null,
-      quantity: null,
-      unit: null,
+      quantity: grams ?? null,
+      unit: grams ? 'g' : null,
       created_at: '',
       updated_at: '',
     };
     setEntries((prev) => [optimistic, ...prev]);
     setActiveMeal(null);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    void enqueueCreate(optimistic.id, { ...input, meal_type: meal, entry_date: viewDate }).then(() =>
-      reconcile()
-    );
+    void enqueueCreate(optimistic.id, {
+      ...macros,
+      meal_type: meal,
+      entry_date: viewDate,
+      ...(grams ? { quantity: grams, unit: 'g' } : {}),
+    }).then(() => reconcile());
   };
 
   const removeEntry = (entry: FoodEntry) => {
@@ -412,6 +421,10 @@ export default function Today() {
                       {entry.food_name}
                     </Text>
                     <Text style={styles.entrySub}>
+                      {(() => {
+                        const g = toGrams(entry.quantity, entry.unit);
+                        return g != null ? `${formatGrams(g)} · ` : '';
+                      })()}
                       {entry.calories} kcal{entry.protein_g ? ` · ${entry.protein_g}g protein` : ''}
                       {isPendingId(entry.id) ? '  queued' : ''}
                     </Text>
@@ -460,10 +473,10 @@ export default function Today() {
       <PortionSheet
         food={portionFood}
         onCancel={() => setPortionFood(null)}
-        onConfirm={(quantity) => {
+        onConfirm={(portion) => {
           const food = portionFood;
           setPortionFood(null);
-          if (food) logSuggestion(food, portionMeal, quantity);
+          if (food) logSuggestion(food, portionMeal, portion);
         }}
       />
 

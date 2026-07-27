@@ -5,6 +5,7 @@ import { Button, Sheet, TextField } from '@/components/ui';
 import { colors, radius } from '@/theme';
 import { parseISODate } from '@/dates';
 import { capitalize } from '@/format';
+import { defaultPortion, formatGrams } from '@/portion';
 import { MealType, Suggestion } from '@/types';
 
 interface AddFoodModalProps {
@@ -16,7 +17,14 @@ interface AddFoodModalProps {
   /** Open the portion stepper for a suggestion instead of logging it. */
   onAdjust: (suggestion: Suggestion) => void;
   /** Log a free-form manual entry. */
-  onManual: (input: { food_name: string; calories: number; protein_g?: number; carbs_g?: number; fat_g?: number }) => void;
+  onManual: (input: {
+    food_name: string;
+    calories: number;
+    protein_g?: number;
+    carbs_g?: number;
+    fat_g?: number;
+    grams?: number;
+  }) => void;
 }
 
 /** Strips an embedded portion like "(150g)" so it doesn't repeat the portion chip. */
@@ -44,11 +52,9 @@ function relativeDay(date: string | null): string {
 }
 
 function macroLine(food: Suggestion): string {
-  const q = food.default_quantity;
-  const calories = Math.round(food.calories_per_unit * q);
-  const protein = food.protein_g_per_unit ? `${Math.round(food.protein_g_per_unit * q)}g P` : null;
-  const portion = food.reference_unit === 'serving' ? '' : `${q}${food.reference_unit} · `;
-  return [`${portion}${calories} kcal`, protein].filter(Boolean).join(' · ');
+  const p = defaultPortion(food);
+  const protein = p.protein_g ? `${p.protein_g}g P` : null;
+  return [`${formatGrams(p.grams)} · ${p.calories} kcal`, protein].filter(Boolean).join(' · ');
 }
 
 export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onManual }: AddFoodModalProps) {
@@ -58,7 +64,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
   const [results, setResults] = useState<Suggestion[]>([]);
   const [searching, setSearching] = useState(false);
   const [manualMode, setManualMode] = useState(false);
-  const [manual, setManual] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '' });
+  const [manual, setManual] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', grams: '' });
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
@@ -66,7 +72,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
     setQuery('');
     setResults([]);
     setManualMode(false);
-    setManual({ name: '', calories: '', protein: '', carbs: '', fat: '' });
+    setManual({ name: '', calories: '', protein: '', carbs: '', fat: '', grams: '' });
     setSuggestionsLoading(true);
     entriesApi
       .getSuggestions(meal)
@@ -107,6 +113,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
       protein_g: manual.protein ? Number(manual.protein) : undefined,
       carbs_g: manual.carbs ? Number(manual.carbs) : undefined,
       fat_g: manual.fat ? Number(manual.fat) : undefined,
+      grams: manual.grams ? Number(manual.grams) : undefined,
     });
   };
 
@@ -123,12 +130,25 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
             value={manual.name}
             onChangeText={(v) => setManual((m) => ({ ...m, name: v }))}
           />
-          <TextField
-            label="Calories"
-            keyboardType="numeric"
-            value={manual.calories}
-            onChangeText={(v) => setManual((m) => ({ ...m, calories: v }))}
-          />
+          <View style={styles.grid2}>
+            <TextField
+              label="Amount (g)"
+              placeholder="e.g. 150"
+              keyboardType="number-pad"
+              style={styles.half}
+              value={manual.grams}
+              onChangeText={(v) => setManual((m) => ({ ...m, grams: v.replace(/[^0-9]/g, '') }))}
+            />
+            <TextField
+              label="Calories"
+              keyboardType="numeric"
+              style={styles.half}
+              value={manual.calories}
+              onChangeText={(v) => setManual((m) => ({ ...m, calories: v }))}
+            />
+          </View>
+          {/* Recording the weight is what makes the entry re-portionable later. */}
+          <Text style={styles.fieldHint}>Weight is optional, but it lets you re-portion this later.</Text>
           <View style={styles.grid2}>
             <TextField
               label="Protein (g)"
@@ -186,10 +206,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
                 {/* A separate target, so logging the usual amount stays one tap
                     while changing the portion is still reachable. */}
                 <Pressable style={styles.portion} onPress={() => onAdjust(food)}>
-                  <Text style={styles.portionQty}>
-                    {food.default_quantity}
-                    {food.reference_unit === 'serving' ? '' : food.reference_unit}
-                  </Text>
+                  <Text style={styles.portionQty}>{formatGrams(defaultPortion(food).grams)}</Text>
                   <Text style={styles.portionEdit}>EDIT</Text>
                 </Pressable>
               </View>
@@ -208,6 +225,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
 
 const styles = StyleSheet.create({
   hint: { color: colors.textDim, fontSize: 14, textAlign: 'center', paddingVertical: 20 },
+  fieldHint: { color: colors.textDim, fontSize: 11.5, marginTop: -6, marginBottom: 12 },
   itemRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   item: {
     flex: 1,

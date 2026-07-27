@@ -3,10 +3,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { entriesApi } from '@/api';
 import { BarcodeProduct } from '@/api/entries';
-import { Button, Loading, Sheet, TextField } from '@/components/ui';
+import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, radius, type } from '@/theme';
 import { MealType } from '@/types';
 import { capitalize } from '@/format';
+import { AmountStepper } from './AmountStepper';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 /** Formats OFF/USDA carry these; anything else is unlikely to be food. */
@@ -26,7 +27,7 @@ export function BarcodeModal({ visible, date, defaultMeal, onClose, onLogged }: 
   const [permission, requestPermission] = useCameraPermissions();
   const [status, setStatus] = useState<Status>('scanning');
   const [product, setProduct] = useState<BarcodeProduct | null>(null);
-  const [grams, setGrams] = useState('100');
+  const [grams, setGrams] = useState(100);
   const [meal, setMeal] = useState<MealType>(defaultMeal);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +52,7 @@ export function BarcodeModal({ visible, date, defaultMeal, onClose, onLogged }: 
         return;
       }
       setProduct(res);
-      setGrams(String(res.serving_g ?? 100));
+      setGrams(Math.round(res.serving_g ?? 100));
       setStatus('found');
     } catch (e) {
       setError((e as Error).message);
@@ -60,7 +61,7 @@ export function BarcodeModal({ visible, date, defaultMeal, onClose, onLogged }: 
   };
 
   // Macros are quoted per 100g, so everything scales off the gram input.
-  const g = Number(grams) || 0;
+  const g = grams;
   const scale = (v: number | null | undefined) =>
     v == null ? null : Math.round((v * g) / 100);
   const per = product?.per_100g;
@@ -135,7 +136,10 @@ export function BarcodeModal({ visible, date, defaultMeal, onClose, onLogged }: 
           <Text style={styles.name}>{product?.name}</Text>
           {product?.brand ? <Text style={styles.brand}>{product.brand}</Text> : null}
 
-          <TextField label="Amount (g)" keyboardType="number-pad" value={grams} onChangeText={setGrams} />
+          <Text style={styles.label}>Amount</Text>
+          <View style={styles.stepper}>
+            <AmountStepper grams={grams} onChange={setGrams} />
+          </View>
 
           <View style={styles.macros}>
             <Macro label="kcal" value={kcal} />
@@ -195,6 +199,7 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
     borderRadius: 10,
   },
+  stepper: { marginBottom: 18 },
   note: { ...type.caption, color: colors.textDim, marginBottom: 14 },
   name: { ...type.heading, color: colors.text },
   brand: { ...type.caption, color: colors.textDim, marginBottom: 14 },
