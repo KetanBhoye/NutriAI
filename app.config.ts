@@ -48,6 +48,20 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     [
+      // Health Connect's connect-client requires Android 8.0+ (API 26); the Expo
+      // default minSdk is 24, which fails the manifest merge. Raise it here.
+      'expo-build-properties',
+      {
+        android: {
+          // Health Connect's connect-client requires Android 8.0+ (API 26).
+          minSdkVersion: 26,
+          // react-native-health-connect pulls in Jetpack Compose, whose compiler
+          // 1.5.15 needs Kotlin 1.9.25 — Expo 52 defaults to 1.9.24.
+          kotlinVersion: '1.9.25',
+        },
+      },
+    ],
+    [
       // Adds the HealthKit entitlement + the two required usage-description
       // strings to Info.plist during prebuild.
       'react-native-health',

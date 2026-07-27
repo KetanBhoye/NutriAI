@@ -12,6 +12,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -47,6 +48,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   };
 
+  const signUp = async (name: string, email: string, password: string) => {
+    const res = await api<{ user: User }>('/api/auth/signup', {
+      method: 'POST',
+      body: { name, email, password },
+      captureCookie: true,
+    });
+    setUser(res.user);
+  };
+
   const signOut = async () => {
     try {
       await api('/api/auth/logout', { method: 'POST' });
@@ -58,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

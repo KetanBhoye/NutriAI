@@ -14,8 +14,9 @@ import { Link } from 'expo-router';
 import { useAuth } from '@/auth';
 import { ApiError } from '@/api';
 
-export default function Login() {
-  const { signIn } = useAuth();
+export default function SignUp() {
+  const { signUp } = useAuth();
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,11 +24,14 @@ export default function Login() {
 
   const onSubmit = async () => {
     setError(null);
+    if (name.trim().length < 1) return setError('Please enter your name.');
+    if (password.length < 8) return setError('Password must be at least 8 characters.');
     setBusy(true);
     try {
-      await signIn(email.trim(), password);
+      await signUp(name.trim(), email.trim(), password);
+      // On success the auth gate redirects into the app automatically.
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
+      setError(e instanceof ApiError ? e.message : 'Could not create account. Try again.');
     } finally {
       setBusy(false);
     }
@@ -39,9 +43,17 @@ export default function Login() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.container}
       >
-        <Text style={styles.logo}>NutriAI</Text>
-        <Text style={styles.subtitle}>Sign in to sync your health data</Text>
+        <Text style={styles.logo}>Create account</Text>
+        <Text style={styles.subtitle}>Start tracking with NutriAI</Text>
 
+        <TextInput
+          style={styles.input}
+          placeholder="Name"
+          placeholderTextColor="#6b7280"
+          autoCapitalize="words"
+          value={name}
+          onChangeText={setName}
+        />
         <TextInput
           style={styles.input}
           placeholder="Email"
@@ -54,10 +66,9 @@ export default function Login() {
         />
         <TextInput
           style={styles.input}
-          placeholder="Password"
+          placeholder="Password (min 8 characters)"
           placeholderTextColor="#6b7280"
           secureTextEntry
-          autoComplete="password"
           value={password}
           onChangeText={setPassword}
           onSubmitEditing={onSubmit}
@@ -70,14 +81,12 @@ export default function Login() {
           onPress={onSubmit}
           disabled={busy}
         >
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign in</Text>}
+          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign up</Text>}
         </Pressable>
 
-        <Link href="/signup" style={styles.link}>
-          <Text style={styles.linkText}>New here? Create an account</Text>
+        <Link href="/login" style={styles.link}>
+          <Text style={styles.linkText}>Already have an account? Sign in</Text>
         </Link>
-
-        <Text style={styles.hint}>Use the same email &amp; password as the NutriAI web app.</Text>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -86,8 +95,8 @@ export default function Login() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0b0f1a' },
   container: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
-  logo: { color: '#5b8cff', fontSize: 40, fontWeight: '800', textAlign: 'center' },
-  subtitle: { color: '#9ca3af', fontSize: 15, textAlign: 'center', marginTop: 6, marginBottom: 32 },
+  logo: { color: '#f3f4f6', fontSize: 30, fontWeight: '800', textAlign: 'center' },
+  subtitle: { color: '#9ca3af', fontSize: 15, textAlign: 'center', marginTop: 6, marginBottom: 28 },
   input: {
     backgroundColor: '#151c2c',
     borderRadius: 14,
@@ -111,5 +120,4 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   link: { marginTop: 20, alignSelf: 'center' },
   linkText: { color: '#5b8cff', fontSize: 15, fontWeight: '600' },
-  hint: { color: '#6b7280', fontSize: 13, textAlign: 'center', marginTop: 20 },
 });
