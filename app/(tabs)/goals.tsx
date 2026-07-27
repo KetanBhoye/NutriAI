@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { goalsApi, onboardingApi, profileApi } from '@/api';
-import { Button, Card, EmptyState, Loading, PillGroup, Screen, StatTile, TextField } from '@/components/ui';
+import { cached, readCache } from '@/cache';
+import { Button, Card, EmptyState, PillGroup, Screen, SkeletonCard, StaleNotice, StatTile, TextField } from '@/components/ui';
 import { colors, fonts, statusColor, type } from '@/theme';
 import { addDays, todayISO } from '@/dates';
 import {
@@ -53,6 +54,8 @@ const DEFAULT_FORM: PlanForm = {
 export default function Plan() {
   const [data, setData] = useState<GoalsPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -180,11 +183,33 @@ export default function Plan() {
     }
   };
 
-  const load = async () => {
-    setLoading(true);
+  /** Applies a payload to both the readouts and the edit form. */
+  const apply = (payload: GoalsPayload) => {
+    setData(payload);
+    if (payload.plan) {
+      setForm((f) => ({
+        ...f,
+        ...payload.plan!,
+        daily_calorie_goal: payload.macros.calories,
+        daily_protein_goal_g: payload.macros.protein_g,
+        daily_carbs_goal_g: payload.macros.carbs_g,
+        daily_fat_goal_g: payload.macros.fat_g,
+      }));
+    }
+  };
+
+  const load = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
     setError(null);
     try {
-      const payload = await goalsApi.getGoals();
+      // Paint the cached plan first so switching to this tab isn't a spinner.
+      const seed = await readCache<GoalsPayload>('goals');
+      if (seed && !isRefresh) {
+        apply(seed);
+        setLoading(false);
+      }
+      const { data: payload, stale: fromCache } = await cached('goals', () => goalsApi.getGoals());
+      setStale(fromCache);
       setData(payload);
       if (payload.plan) {
         setForm((f) => ({
@@ -203,6 +228,7 @@ export default function Plan() {
       setError("Couldn't load your goals.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -292,9 +318,7 @@ export default function Plan() {
     return (
       <Screen>
         <Text style={styles.eyebrow}>PLAN</Text>
-        <Card>
-          <Loading />
-        </Card>
+        <SkeletonCard lines={4} />
       </Screen>
     );
   }
@@ -314,8 +338,10 @@ export default function Plan() {
   const showViewMode = !editing && data.plan;
 
   return (
-    <Screen>
+    <Screen refreshing={refreshing} onRefresh={() => load(true)}>
       <Text style={styles.eyebrow}>PLAN</Text>
+
+      {stale ? <StaleNotice /> : null}
 
       {showViewMode ? (
         <View>

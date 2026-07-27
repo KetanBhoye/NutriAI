@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { entriesApi, goalsApi } from '@/api';
 import type { EntriesResponse } from '@/api/entries';
@@ -118,7 +119,12 @@ export default function Today() {
   }, [dateParam]);
 
   useEffect(() => {
-    setLoading(true);
+    // Only blank the list when we have nothing cached for that day; otherwise
+    // `load` paints the cached entries and swaps in fresh data behind them,
+    // so stepping through days doesn't flash a skeleton each time.
+    readCache<EntriesResponse>(`entries.${viewDate}`).then((seed) => {
+      if (!seed) setLoading(true);
+    });
     load(viewDate);
   }, [viewDate, load]);
 
@@ -199,6 +205,9 @@ export default function Today() {
     };
     setEntries((prev) => [optimistic, ...prev]);
     setActiveMeal(null);
+    // The row appears instantly, so a tap confirms it landed rather than
+    // leaving the user unsure whether the press registered.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     entriesApi
       .createEntry({
         food_name: optimistic.food_name,
@@ -217,6 +226,7 @@ export default function Today() {
       })
       .catch(() => {
         setEntries((prev) => prev.filter((e) => e.id !== optimistic.id));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Alert.alert("Couldn't log", 'Check your connection and try again.');
       });
   };
@@ -240,6 +250,7 @@ export default function Today() {
     };
     setEntries((prev) => [optimistic, ...prev]);
     setActiveMeal(null);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     entriesApi
       .createEntry({ ...input, meal_type: meal, entry_date: viewDate })
       .then((res) => {
@@ -247,6 +258,7 @@ export default function Today() {
       })
       .catch(() => {
         setEntries((prev) => prev.filter((e) => e.id !== optimistic.id));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Alert.alert("Couldn't log", 'Check your connection and try again.');
       });
   };

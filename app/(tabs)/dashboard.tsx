@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { dashboardApi, goalsApi } from '@/api';
+import { useCachedResource } from '@/useCachedResource';
+import { writeCache } from '@/cache';
 import { toLocalISODate } from '@/dates';
 import { colors, fonts, type } from '@/theme';
-import { Button, Card, EmptyState, Loading, Screen, StatTile } from '@/components/ui';
+import { Button, Card, EmptyState, Screen, SkeletonCard, StaleNotice, StatTile } from '@/components/ui';
 import { WeeklyInsights, WeeklyStats } from '@/types';
 
 const FALLBACK_GOAL_CALORIES = 1900;
@@ -45,84 +47,71 @@ function buildBars(stats: WeeklyStats, goalCalories: number): { bars: Bar[]; goa
 }
 
 export default function Trends() {
-  const [stats, setStats] = useState<WeeklyStats | null>(null);
-  const [goalCalories, setGoalCalories] = useState(FALLBACK_GOAL_CALORIES);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const stats = useCachedResource('stats.weekly', () => dashboardApi.getWeeklyStats(30), {
+    errorMessage: "Couldn't load your trends.",
+  });
+  const goals = useCachedResource('goals', () => goalsApi.getGoals());
+  // The weekly report is an LLM call and the server caches it per day, so it
+  // is the most valuable thing to serve from cache and refresh behind.
+  const report = useCachedResource('insights.weekly', () => dashboardApi.getWeeklyInsights(), {
+    errorMessage: "Couldn't load your weekly report.",
+  });
 
-  const [report, setReport] = useState<WeeklyInsights | null>(null);
-  const [reportLoading, setReportLoading] = useState(true);
-  const [reportRefreshing, setReportRefreshing] = useState(false);
-
-  const load = () => {
-    setLoading(true);
-    setError(null);
-    dashboardApi
-      .getWeeklyStats(30)
-      .then(setStats)
-      .catch(() => setError("Couldn't load your trends."))
-      .finally(() => setLoading(false));
+  const [refreshingReport, setRefreshingReport] = useState(false);
+  const regenerateReport = async () => {
+    setRefreshingReport(true);
+    try {
+      const fresh = await dashboardApi.getWeeklyInsights(true);
+      await writeCache('insights.weekly', fresh);
+      await report.refresh();
+    } catch {
+      // leave the existing report on screen
+    } finally {
+      setRefreshingReport(false);
+    }
   };
 
-  const loadReport = (refresh = false) => {
-    if (refresh) setReportRefreshing(true);
-    else setReportLoading(true);
-    dashboardApi
-      .getWeeklyInsights(refresh)
-      .then(setReport)
-      .catch(() => {})
-      .finally(() => {
-        setReportLoading(false);
-        setReportRefreshing(false);
-      });
+  const refreshAll = async () => {
+    await Promise.all([stats.refresh(), goals.refresh(), report.refresh()]);
   };
 
-  useEffect(() => {
-    load();
-    loadReport();
-    // The goal line and the over-target bar colour should reflect the user's
-    // actual target, not a hardcoded default.
-    goalsApi
-      .getGoals()
-      .then((g) => {
-        if (g.macros.calories) setGoalCalories(g.macros.calories);
-      })
-      .catch(() => {});
-  }, []);
+  const goalCalories = goals.data?.macros.calories ?? FALLBACK_GOAL_CALORIES;
 
   const { bars, goalLineBottom } = useMemo(
-    () => (stats ? buildBars(stats, goalCalories) : { bars: [] as Bar[], goalLineBottom: 0 }),
-    [stats, goalCalories]
+    () => (stats.data ? buildBars(stats.data, goalCalories) : { bars: [] as Bar[], goalLineBottom: 0 }),
+    [stats.data, goalCalories]
   );
   const missedDays = bars.filter((b) => b.missing).length;
 
   return (
-    <Screen>
+    <Screen refreshing={stats.refreshing || report.refreshing} onRefresh={refreshAll}>
       <Text style={styles.title}>Trends</Text>
+
+      {stats.stale || report.stale ? <StaleNotice /> : null}
 
       <Card style={styles.reportCard}>
         <View style={styles.reportHead}>
           <Text style={styles.reportEyebrow}>🥗 Weekly report</Text>
           <Button
-            title={reportRefreshing ? '…' : '↻ Refresh'}
+            title={refreshingReport ? '…' : '↻ Refresh'}
             variant="ghost"
-            onPress={() => loadReport(true)}
-            disabled={reportRefreshing || reportLoading}
+            onPress={regenerateReport}
+            disabled={refreshingReport || report.loading}
             style={styles.refreshBtn}
           />
         </View>
 
-        {reportLoading ? (
-          <Loading label="Reading your week…" />
-        ) : report?.report ? (
+        {report.loading ? (
+          <SkeletonCard lines={4} />
+        ) : report.data?.report ? (
           <View>
-            <Text style={styles.reportHeadline}>{report.report.headline}</Text>
-            <Text style={styles.reportSummary}>{report.report.summary}</Text>
+            <Text style={styles.reportHeadline}>{report.data.report.headline}</Text>
+            <Text style={styles.reportSummary}>{report.data.report.summary}</Text>
 
-            {report.report.wins.length ? (
+            {report.data.report.wins.length ? (
               <View style={styles.reportList}>
                 <Text style={styles.reportListTitle}>What went well</Text>
-                {report.report.wins.map((w, i) => (
+                {report.data.report.wins.map((w, i) => (
                   <View key={`w${i}`} style={styles.reportItem}>
                     <View style={[styles.dot, { backgroundColor: colors.accent }]} />
                     <Text style={styles.reportItemText}>{w}</Text>
@@ -131,10 +120,10 @@ export default function Trends() {
               </View>
             ) : null}
 
-            {report.report.focus.length ? (
+            {report.data.report.focus.length ? (
               <View style={styles.reportList}>
                 <Text style={styles.reportListTitle}>Focus next week</Text>
-                {report.report.focus.map((f, i) => (
+                {report.data.report.focus.map((f, i) => (
                   <View key={`f${i}`} style={styles.reportItem}>
                     <View style={[styles.dot, { backgroundColor: colors.warn }]} />
                     <Text style={styles.reportItemText}>{f}</Text>
@@ -143,7 +132,7 @@ export default function Trends() {
               </View>
             ) : null}
 
-            {report.source === 'rule' ? (
+            {report.data.source === 'rule' ? (
               <Text style={styles.reportNote}>Based on your numbers (AI coach unavailable right now).</Text>
             ) : null}
           </View>
@@ -152,18 +141,19 @@ export default function Trends() {
         )}
       </Card>
 
-      {loading ? (
-        <Card style={styles.chartCard}>
-          <Loading />
-        </Card>
-      ) : error ? (
-        <EmptyState message={error} />
-      ) : stats ? (
+      {stats.loading ? (
+        <SkeletonCard lines={5} />
+      ) : stats.error && !stats.data ? (
+        <View>
+          <EmptyState message={stats.error} />
+          <Button title="Try again" variant="ghost" onPress={() => stats.refresh()} style={{ marginTop: 12 }} />
+        </View>
+      ) : stats.data ? (
         <>
           <View style={styles.statsRow}>
-            <StatTile label="Day streak" value={String(stats.streak)} />
-            <StatTile label="Avg kcal" value={String(stats.average_calories)} />
-            <StatTile label="Days logged" value={`${stats.complete_days}`} unit="/30" />
+            <StatTile label="Day streak" value={String(stats.data.streak)} />
+            <StatTile label="Avg kcal" value={String(stats.data.average_calories)} />
+            <StatTile label="Days logged" value={`${stats.data.complete_days}`} unit="/30" />
           </View>
 
           <Text style={styles.sectionTitle}>Last 14 days</Text>
@@ -198,7 +188,7 @@ export default function Trends() {
 
           <Text style={styles.footnote}>
             {missedDays > 0 ? `${missedDays} of the last 14 days have nothing logged (shown as gaps). ` : ''}
-            A day counts toward the streak once it passes {stats.complete_day_threshold} kcal, so a half-finished
+            A day counts toward the streak once it passes {stats.data.complete_day_threshold} kcal, so a half-finished
             log doesn't count as a full day.
           </Text>
         </>
