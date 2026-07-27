@@ -87,11 +87,12 @@ on `POST /api/entries`):
 Editing an entry derives per-gram macros from `total ÷ basis` and rescales all
 four fields as the weight changes.
 
-**Server limitation:** `PATCH /api/entries/:id` accepts only `food_name`,
-`calories`, `protein_g`, `carbs_g`, `fat_g` and `meal_type` — **not**
-`quantity`/`unit`. Rescaled macros persist; the stored weight does not. Fixing
-that needs a backend change in `calorie-tracker-codex-refactored`
-(`src/http/api.ts`, the entry-update schema).
+`PATCH /api/entries/:id` originally accepted only the macros and `meal_type`,
+so a corrected weight was silently dropped. Fixed in
+`calorie-tracker-codex-refactored` @ `66a0938` (entry-update schema, the
+repository's `update()`, and `UpdateEntryParams`). Old servers strip the two
+new keys rather than rejecting the request, so the app degrades safely against
+an undeployed backend.
 
 The **coach** logs entries server-side, so its rows still arrive with whatever
 unit the LLM chose; they get an estimated weight in the edit sheet like any
