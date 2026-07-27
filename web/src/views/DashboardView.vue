@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { toLocalISODate } from '../dates';
+import ShareStory from '../components/ShareStory.vue';
 
 interface DailyTotal {
   entry_date: string;
@@ -24,6 +25,34 @@ const stats = ref<WeeklyStats | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
+// ── AI weekly report ──────────────────────────────────────
+interface WeeklyReport {
+  report: { headline: string; summary: string; wins: string[]; focus: string[] };
+  generated_at: string;
+  source: 'ai' | 'rule' | 'insufficient';
+}
+const report = ref<WeeklyReport | null>(null);
+const reportLoading = ref(true);
+const reportRefreshing = ref(false);
+const showShareWeek = ref(false);
+
+async function loadReport(refresh = false): Promise<void> {
+  if (refresh) reportRefreshing.value = true;
+  else reportLoading.value = true;
+  try {
+    const res = await fetch(`/api/insights/weekly${refresh ? '?refresh=1' : ''}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (res.ok) report.value = (await res.json()) as WeeklyReport;
+  } catch {
+    /* leave prior report; the tab still shows charts */
+  } finally {
+    reportLoading.value = false;
+    reportRefreshing.value = false;
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
@@ -33,7 +62,7 @@ async function load(): Promise<void> {
       cache: 'no-store',
     });
     if (response.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/app/login';
       return;
     }
     if (!response.ok) throw new Error('failed');
@@ -93,12 +122,68 @@ const goalLinePct = computed(() => {
 
 const missedDays = computed(() => bars.value.filter((bar) => bar.missing).length);
 
-onMounted(load);
+onMounted(() => {
+  load();
+  loadReport();
+});
 </script>
 
 <template>
   <div class="page">
     <h1>Trends</h1>
+
+    <!-- AI weekly report -->
+    <div class="report card">
+      <div class="report-head">
+        <span class="report-eyebrow">🥗 Weekly report</span>
+        <button
+          class="report-refresh"
+          :disabled="reportRefreshing || reportLoading"
+          @click="loadReport(true)"
+        >
+          {{ reportRefreshing ? '…' : '↻ Refresh' }}
+        </button>
+      </div>
+
+      <div v-if="reportLoading" class="report-loading">
+        <div class="skeleton" style="height: 18px; width: 70%; margin-bottom: 10px"></div>
+        <div class="skeleton" style="height: 12px; width: 100%; margin-bottom: 6px"></div>
+        <div class="skeleton" style="height: 12px; width: 85%"></div>
+      </div>
+
+      <template v-else-if="report">
+        <h2 class="report-headline">{{ report.report.headline }}</h2>
+        <p class="report-summary">{{ report.report.summary }}</p>
+
+        <div v-if="report.report.wins.length" class="report-list wins">
+          <div class="report-list-title">What went well</div>
+          <div v-for="(w, i) in report.report.wins" :key="'w' + i" class="report-item">
+            <span class="dot ok"></span><span>{{ w }}</span>
+          </div>
+        </div>
+
+        <div v-if="report.report.focus.length" class="report-list focus">
+          <div class="report-list-title">Focus next week</div>
+          <div v-for="(f, i) in report.report.focus" :key="'f' + i" class="report-item">
+            <span class="dot warn"></span><span>{{ f }}</span>
+          </div>
+        </div>
+
+        <p v-if="report.source === 'rule'" class="report-note muted">
+          Based on your numbers (AI coach unavailable right now).
+        </p>
+
+        <button v-if="report.source !== 'insufficient'" class="share-week" @click="showShareWeek = true">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Share this week
+        </button>
+      </template>
+    </div>
+
+    <ShareStory v-if="showShareWeek" type="week" date="" @close="showShareWeek = false" />
 
     <div v-if="loading" class="card" style="margin-top: 16px">
       <div class="skeleton" style="height: 14px; width: 40%; margin-bottom: 16px"></div>
@@ -170,6 +255,95 @@ onMounted(load);
 </template>
 
 <style scoped>
+.report {
+  margin-top: 16px;
+  padding: 16px;
+}
+
+.report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.report-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.report-refresh {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  min-height: 30px;
+}
+
+.report-headline {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  margin: 0 0 8px;
+}
+
+.report-summary {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.report-list {
+  margin-top: 14px;
+}
+
+.report-list-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.report-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  padding: 3px 0;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.dot.ok {
+  background: var(--accent);
+}
+
+.dot.warn {
+  background: var(--warn);
+}
+
+.report-note {
+  font-size: 11px;
+  margin: 12px 0 0;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

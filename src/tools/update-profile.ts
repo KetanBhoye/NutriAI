@@ -23,6 +23,10 @@ const updateProfileParamsSchema = z.object({
   weight_kg: z.number().min(1).max(1000).optional(),
   muscle_mass_kg: z.number().min(0).max(1000).optional(),
   body_fat_percentage: z.number().min(0).max(100).optional(),
+  recorded_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'recorded_date must be YYYY-MM-DD')
+    .optional(),
 });
 
 export const updateProfile: ToolHandler<
@@ -186,7 +190,10 @@ export const updateProfile: ToolHandler<
     );
 
     if (hasTrackingData) {
-      const today = new Date().toISOString().split('T')[0];
+      // Date the weigh-in to the caller's chosen day (the Coach passes the date
+      // the user is viewing); fall back to today.
+      const today =
+        validatedParams.recorded_date || new Date().toISOString().split('T')[0];
 
       // Check if tracking entry exists for today
       const existingTracking = await trackingRepo.getTrackingByDate(

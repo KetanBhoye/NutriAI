@@ -15,9 +15,11 @@ const props = defineProps<{
   tolerance: number;
 }>();
 
-const W = 820;
-const H = 360;
-const PAD = { l: 46, r: 22, t: 22, b: 46 };
+// viewBox sized close to a phone's width so text/strokes render near 1:1 and
+// stay legible (a wide viewBox scaled down to 340px shrinks all text with it).
+const W = 360;
+const H = 300;
+const PAD = { l: 30, r: 16, t: 16, b: 34 };
 
 const STATUS_COLOR: Record<GlideWeek['status'], string> = {
   ahead: '#5ad1ff',
@@ -50,11 +52,14 @@ function y(kg: number): number {
   return PAD.t + ((max - kg) / span) * (H - PAD.t - PAD.b);
 }
 
-/** Gridlines every 0.5 kg across the visible range. */
+/** Gridlines at a step that keeps them ~5–6 apart, so they don't crowd. */
+const gridStep = computed(() => ((bounds.value.max - bounds.value.min) > 4 ? 1 : 0.5));
+
 const gridLines = computed(() => {
   const { min, max } = bounds.value;
+  const step = gridStep.value;
   const lines: number[] = [];
-  for (let kg = Math.ceil(min * 2) / 2; kg <= max; kg += 0.5) {
+  for (let kg = Math.ceil(min / step) * step; kg <= max; kg += step) {
     lines.push(Math.round(kg * 10) / 10);
   }
   return lines;
@@ -78,8 +83,8 @@ const actualPath = computed(() =>
   logged.value.map((w, i) => `${i ? 'L' : 'M'}${x(w.week)} ${y(w.actual_kg!)}`).join(' ')
 );
 
-/** Only every other label on narrow plans, so they don't collide. */
-const labelStep = computed(() => (props.weeks.length > 9 ? 2 : 1));
+/** Thin x-axis labels to ~6 across, whatever the plan length. */
+const labelStep = computed(() => Math.max(1, Math.ceil(props.weeks.length / 6)));
 
 function shortDate(iso: string): string {
   const [, m, d] = iso.split('-').map(Number);
@@ -121,12 +126,12 @@ function shortDate(iso: string): string {
       <path :d="glidePath" class="glide" />
 
       <g v-for="week in weeks" :key="week.week">
-        <circle class="tdot" :cx="x(week.week)" :cy="y(week.target_kg)" r="3.2" />
+        <circle class="tdot" :cx="x(week.week)" :cy="y(week.target_kg)" r="2.6" />
         <text
           v-if="week.week % labelStep === 0"
           class="axis"
           :x="x(week.week)"
-          :y="H - PAD.b + 22"
+          :y="H - PAD.b + 20"
           text-anchor="middle"
         >
           {{ shortDate(week.date) }}
@@ -139,15 +144,15 @@ function shortDate(iso: string): string {
         <circle
           :cx="x(week.week)"
           :cy="y(week.actual_kg!)"
-          r="6"
+          r="5"
           :stroke="STATUS_COLOR[week.status]"
           fill="var(--bg)"
-          stroke-width="2.5"
+          stroke-width="2.2"
         />
         <circle
           :cx="x(week.week)"
           :cy="y(week.actual_kg!)"
-          r="2.4"
+          r="2"
           :fill="STATUS_COLOR[week.status]"
         />
       </g>
@@ -191,7 +196,7 @@ svg {
 .axis {
   fill: var(--text-dim);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .band {

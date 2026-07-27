@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import {
   api,
   FALLBACK_GOALS,
@@ -16,6 +17,10 @@ import MacroBar from '../components/MacroBar.vue';
 import NewFoodSheet from '../components/NewFoodSheet.vue';
 import PortionSheet from '../components/PortionSheet.vue';
 import QuickLogSheet from '../components/QuickLogSheet.vue';
+import ShareStory from '../components/ShareStory.vue';
+import PhotoMealSheet from '../components/PhotoMealSheet.vue';
+import SuggestMealSheet from '../components/SuggestMealSheet.vue';
+import BarcodeScanner from '../components/BarcodeScanner.vue';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -26,8 +31,14 @@ const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 const goals = ref<Goals>({ ...FALLBACK_GOALS });
 
 const today = todayISO();
-/** The day being viewed. Defaults to today; the header arrows move it. */
-const viewDate = ref(today);
+/**
+ * The day being viewed. Defaults to today; the header arrows move it. A
+ * `?date=YYYY-MM-DD` query (e.g. from the Coach's "updated your log" link)
+ * opens straight to that day.
+ */
+const route = useRoute();
+const queryDate = typeof route.query.date === 'string' ? route.query.date : '';
+const viewDate = ref(/^\d{4}-\d{2}-\d{2}$/.test(queryDate) && queryDate <= today ? queryDate : today);
 const entries = ref<FoodEntry[]>([]);
 const totals = ref<Totals>({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
 const loading = ref(true);
@@ -36,6 +47,29 @@ const loadError = ref<string | null>(null);
 const activeMeal = ref<MealType | null>(null);
 const suggestions = ref<Suggestion[]>([]);
 const suggestionsLoading = ref(false);
+const showShare = ref(false);
+const showSuggest = ref(false);
+const showBarcode = ref(false);
+
+// ── Photo meal logging ────────────────────────────────────
+const photoInput = ref<HTMLInputElement | null>(null);
+const photoFile = ref<File | null>(null);
+
+function openPhoto(): void {
+  photoInput.value?.click();
+}
+
+function onPhotoPicked(e: Event): void {
+  const file = (e.target as HTMLInputElement).files?.[0] ?? null;
+  if (file) photoFile.value = file;
+  // reset so picking the same file again re-fires change
+  (e.target as HTMLInputElement).value = '';
+}
+
+async function onPhotoLogged(): Promise<void> {
+  photoFile.value = null;
+  await load();
+}
 
 /** Set while adjusting a portion; null when the quick list is showing. */
 const adjusting = ref<Suggestion | null>(null);
@@ -248,15 +282,45 @@ onMounted(async () => {
           </button>
         </div>
       </div>
-      <div style="text-align: right">
-        <div style="font-size: 26px; font-weight: 700">{{ totals.calories }}</div>
-        <div class="muted" style="font-size: 13px">{{ remaining }} left</div>
+      <div class="head-right">
+        <button class="share-btn" aria-label="Share my day" @click="showShare = true">
+          <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <div style="text-align: right">
+          <div style="font-size: 26px; font-weight: 700">{{ totals.calories }}</div>
+          <div class="muted" style="font-size: 13px">{{ remaining }} left</div>
+        </div>
       </div>
     </header>
 
     <button v-if="!isToday" class="jump-today" @click="viewDate = today">
       Jump to today
     </button>
+
+    <!-- Snap a meal: AI reads the photo and logs it. -->
+    <button class="snap-cta" @click="openPhoto">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5L15.5 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      </svg>
+      <span>Snap a meal <em>— AI logs it</em></span>
+    </button>
+    <input
+      ref="photoInput"
+      type="file"
+      accept="image/*"
+      capture="environment"
+      class="hidden-input"
+      @change="onPhotoPicked"
+    />
+
+    <div class="action-row">
+      <button class="mini-cta" @click="showSuggest = true">🍽️ What to eat?</button>
+      <button class="mini-cta" @click="showBarcode = true">📷 Scan barcode</button>
+    </div>
 
     <!-- Primary path: opens straight onto the meal slot the clock implies,
          so a repeat log is two taps from launch. -->
@@ -339,6 +403,32 @@ onMounted(async () => {
       @created="onFoodCreated"
       @cancel="addingNew = null"
     />
+
+    <ShareStory v-if="showShare" :date="viewDate" @close="showShare = false" />
+
+    <PhotoMealSheet
+      v-if="photoFile"
+      :file="photoFile"
+      :date="viewDate"
+      @close="photoFile = null"
+      @logged="onPhotoLogged"
+    />
+
+    <SuggestMealSheet
+      v-if="showSuggest"
+      :meal-type="currentMeal()"
+      :date="viewDate"
+      @close="showSuggest = false"
+      @logged="load"
+    />
+
+    <BarcodeScanner
+      v-if="showBarcode"
+      :meal-type="currentMeal()"
+      :date="viewDate"
+      @close="showBarcode = false"
+      @logged="load"
+    />
   </div>
 </template>
 
@@ -354,6 +444,30 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.share-btn {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: transform 0.12s ease;
+}
+
+.share-btn:active {
+  transform: scale(0.92);
 }
 
 .nav-btn {
@@ -380,6 +494,59 @@ onMounted(async () => {
 .date-sub {
   margin: 0;
   font-size: 12px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.mini-cta {
+  padding: 12px 8px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.12s ease;
+}
+
+.mini-cta:active {
+  border-color: var(--accent-dim);
+}
+
+.snap-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+  padding: 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.14), rgba(90, 209, 255, 0.1));
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 0.12s ease;
+}
+
+.snap-cta em {
+  color: var(--text-dim);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.snap-cta:active {
+  transform: scale(0.985);
 }
 
 .jump-today {

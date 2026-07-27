@@ -208,3 +208,60 @@ export async function lookupFood(query: string, limit = 8): Promise<LookupResult
   const usda = await fetchJson<{ foods?: UsdaFood[] }>(usdaUrl);
   return normalizeUsda(usda?.foods ?? []).slice(0, limit);
 }
+
+// ── Barcode lookup (Open Food Facts) ────────────────────────────────────────
+export interface BarcodeProduct {
+  found: boolean;
+  code: string;
+  name: string;
+  brand: string | null;
+  serving_g: number | null;
+  per_100g: { calories: number; protein_g: number; carbs_g: number; fat_g: number } | null;
+}
+
+interface OffProductResponse {
+  status?: number;
+  product?: {
+    product_name?: string;
+    brands?: string;
+    serving_quantity?: number | string;
+    nutriments?: Record<string, number | string | undefined>;
+  };
+}
+
+/** Looks up a packaged product by its barcode via Open Food Facts. */
+export async function lookupBarcode(code: string): Promise<BarcodeProduct> {
+  const url =
+    `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json` +
+    `?fields=product_name,brands,serving_quantity,nutriments`;
+  const data = await fetchJson<OffProductResponse>(url);
+  const p = data?.product;
+  if (!data || data.status === 0 || !p) {
+    return { found: false, code, name: '', brand: null, serving_g: null, per_100g: null };
+  }
+
+  const n = p.nutriments ?? {};
+  const num = (v: unknown): number | null => {
+    const x = Number(v);
+    return Number.isFinite(x) && x >= 0 ? x : null;
+  };
+  const kcal = num(n['energy-kcal_100g']) ?? (num(n['energy_100g']) !== null ? num(n['energy_100g'])! / 4.184 : null);
+  const per100 =
+    kcal !== null
+      ? {
+          calories: Math.round(kcal),
+          protein_g: Math.round(num(n['proteins_100g']) ?? 0),
+          carbs_g: Math.round(num(n['carbohydrates_100g']) ?? 0),
+          fat_g: Math.round(num(n['fat_100g']) ?? 0),
+        }
+      : null;
+
+  return {
+    found: Boolean(p.product_name && per100),
+    code,
+    name: p.product_name ?? 'Unknown product',
+    brand: p.brands ?? null,
+    serving_g: num(p.serving_quantity),
+    per_100g: per100,
+  };
+}

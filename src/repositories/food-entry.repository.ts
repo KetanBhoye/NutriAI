@@ -77,6 +77,16 @@ export class FoodEntryRepository {
       updates.push('meal_type = ?');
       values.push(updateData.meal_type);
     }
+    // Re-portioning an entry rewrites its macros; the weight has to move with
+    // them, or reopening the entry shows the old portion against new macros.
+    if (updateData.quantity !== undefined) {
+      updates.push('quantity = ?');
+      values.push(updateData.quantity);
+    }
+    if (updateData.unit !== undefined) {
+      updates.push('unit = ?');
+      values.push(updateData.unit);
+    }
 
     if (updates.length === 0) {
       return false;

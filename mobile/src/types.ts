@@ -1,0 +1,147 @@
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+
+export interface Totals {
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+}
+
+export interface FoodEntry {
+  id: string;
+  user_id: string;
+  food_name: string;
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  meal_type: MealType | null;
+  entry_date: string;
+  food_id: string | null;
+  quantity: number | null;
+  unit: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Suggestion {
+  id: string;
+  canonical_name: string;
+  normalized_key: string;
+  reference_unit: string;
+  calories_per_unit: number;
+  protein_g_per_unit: number | null;
+  carbs_g_per_unit: number | null;
+  fat_g_per_unit: number | null;
+  default_quantity: number;
+  source: string;
+  times_logged: number;
+  last_logged: string | null;
+  score: number;
+}
+
+export interface Goals {
+  daily_calorie_goal?: number | null;
+  daily_protein_goal_g?: number | null;
+  daily_carbs_goal_g?: number | null;
+  daily_fat_goal_g?: number | null;
+}
+
+export interface GlideWeek {
+  week: number;
+  date: string;
+  target_kg: number;
+  actual_kg: number | null;
+  status: 'ahead' | 'on' | 'watch' | 'behind' | 'empty';
+}
+
+export interface GoalPlan {
+  start_weight_kg: number;
+  start_date: string;
+  goal_weight_kg: number;
+  target_date: string;
+  tolerance_kg: number;
+  daily_step_goal: number | null;
+  weekly_training_days: number | null;
+}
+
+export interface WeeklyDeficit {
+  week_start: string;
+  days_logged: number;
+  total_deficit: number;
+  projected_kg: number;
+}
+
+export interface DailyActivity {
+  activity_date: string;
+  steps: number | null;
+  active_energy_kcal: number | null;
+  weight_kg?: number | null;
+}
+
+export interface GoalsPayload {
+  plan: GoalPlan | null;
+  macros: {
+    calories: number | null;
+    protein_g: number | null;
+    carbs_g: number | null;
+    fat_g: number | null;
+  };
+  glide_path: GlideWeek[];
+  weekly_deficit: WeeklyDeficit[];
+  latest_weight: number | null;
+  activity: DailyActivity[];
+}
+
+export interface ProfileBasics {
+  height_cm: number | null;
+  age: number | null;
+  gender: 'male' | 'female' | null;
+  activity_level: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active' | null;
+}
+
+export interface WeeklyStats {
+  days: number;
+  daily: Array<{
+    entry_date: string;
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    entry_count: number;
+  }>;
+  streak: number;
+  days_logged: number;
+  complete_days: number;
+  average_calories: number;
+  complete_day_threshold: number;
+}
+
+export interface WeeklyInsights {
+  report: {
+    headline: string;
+    summary: string;
+    wins: string[];
+    focus: string[];
+  } | null;
+  stats: WeeklyStats;
+  generated_at: string;
+  source: 'ai' | 'rule' | 'insufficient';
+}
+
+export interface CoachHistoryTurn {
+  role: 'user' | 'model';
+  parts: unknown[];
+}
+
+export interface CoachTurn {
+  reply: string;
+  actions: string[];
+  history: CoachHistoryTurn[];
+}
+
+export interface DashboardPayload {
+  date: string;
+  totals: Totals;
+  profile?: Record<string, number | null> | null;
+}

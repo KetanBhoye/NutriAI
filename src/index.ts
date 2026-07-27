@@ -7,10 +7,13 @@ import { bootstrapDatabase } from './db/bootstrap.js';
 import { registerApiRoutes } from './http/api.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/routes.js';
+import { startDailyReminders } from './services/reminders.js';
+import { warmUpVertex } from './services/llm/vertex.js';
 import type { AppEnv } from './db/types.js';
 
 export interface RunningApp {
   app: Express;
+  env: AppEnv;
   server?: Server;
   close: () => Promise<void>;
 }
@@ -32,7 +35,8 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
+  // 4mb headroom for meal-photo uploads (resized client-side to well under this).
+  app.use(express.json({ limit: '4mb' }));
   app.use(express.urlencoded({ extended: false }));
 
   // Compatibility aliases for OAuth clients that fall back to root auth paths.
@@ -120,7 +124,40 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   });
 
   const publicDir = resolve(process.cwd(), 'public');
-  app.use(express.static(publicDir));
+
+  // The app is the product: root opens NutriAI. This must run BEFORE the static
+  // middleware, otherwise static serves public/index.html (the old MCP landing
+  // page) as the directory index at "/". We keep the static index enabled so
+  // "/app/" still resolves to public/app/index.html (the SPA shell) — disabling
+  // it made "/app/" fall through to the /app redirect and loop. The MCP server
+  // metadata is still served for connectors at /health, /openapi.json, /mcp,
+  // and the old info page is reachable at /info.
+  app.get('/', (_req, res) => {
+    res.redirect('/app/');
+  });
+
+  app.get('/info', (_req, res) => {
+    res.sendFile(resolve(publicDir, 'index.html'));
+  });
+
+  // Cache policy so PWA updates land fast without a reinstall:
+  //  - the service worker, app shell and manifest must NEVER be stale, so the
+  //    browser always revalidates them and detects a new version immediately;
+  //  - hashed build assets (/app/assets/index-<hash>.js) are immutable, so they
+  //    cache forever for instant loads (a new build = a new filename).
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        if (/(?:sw\.js|workbox-[^/]+\.js|registerSW\.js|\.webmanifest)$/.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (/[\\/]assets[\\/]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    })
+  );
 
   app.get('/login', (_req, res) => {
     res.sendFile(resolve(publicDir, 'login.html'));
@@ -142,15 +179,13 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
       next();
       return;
     }
+    // The SPA shell must always revalidate so a new deploy is picked up.
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(resolve(publicDir, 'app', 'index.html'));
   });
 
   app.get('/dashboard', (_req, res) => {
     res.redirect('/app/');
-  });
-
-  app.get('/', (_req, res) => {
-    res.sendFile(resolve(publicDir, 'index.html'));
   });
 
   app.use((req, res) => {
@@ -159,6 +194,7 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
 
   return {
     app,
+    env,
     close: async () => {
       raw.close();
     },
@@ -173,6 +209,22 @@ if (process.env.NODE_ENV !== 'test') {
       running.server = running.app.listen(config.port, () => {
         console.log(`Calorie Tracker MCP server running on ${config.baseUrl}`);
       });
+
+      // Daily push reminders (no-op unless push + subscribers exist).
+      startDailyReminders(running.env);
+
+      // Spend the cold-connection Vertex stall at startup so the first user's AI
+      // action after a deploy doesn't time out. Fire-and-forget.
+      const gcpCred = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const gcpProject = process.env.GCP_PROJECT;
+      if (gcpCred && gcpProject) {
+        void warmUpVertex(
+          gcpCred,
+          gcpProject,
+          process.env.GCP_LOCATION || 'us-central1',
+          process.env.LLM_MODEL || 'gemini-2.5-flash'
+        );
+      }
 
       const shutdown = async () => {
         if (running.server) {

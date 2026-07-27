@@ -1,11 +1,19 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { isOnline, pendingCount } from './api';
+import InstallBanner from './components/InstallBanner.vue';
+
+const route = useRoute();
+const chrome = computed(() => !route.meta.noChrome);
 </script>
 
 <template>
   <div>
+    <InstallBanner v-if="chrome" />
+
     <Transition name="fade">
-      <div v-if="!isOnline || pendingCount > 0" class="banner">
+      <div v-if="chrome && (!isOnline || pendingCount > 0)" class="banner">
         <span v-if="!isOnline">
           Offline — {{ pendingCount }} {{ pendingCount === 1 ? 'entry' : 'entries' }} saved on this
           device, syncing when you're back.
@@ -20,10 +28,12 @@ import { isOnline, pendingCount } from './api';
       </Transition>
     </RouterView>
 
-    <nav class="tabbar">
+    <nav v-if="chrome" class="tabbar">
       <RouterLink to="/" class="tab">Today</RouterLink>
+      <RouterLink to="/coach" class="tab">Coach</RouterLink>
       <RouterLink to="/dashboard" class="tab">Trends</RouterLink>
       <RouterLink to="/goals" class="tab">Plan</RouterLink>
+      <RouterLink to="/profile" class="tab">You</RouterLink>
     </nav>
   </div>
 </template>

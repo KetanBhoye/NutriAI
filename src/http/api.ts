@@ -22,8 +22,24 @@ import { FoodLibraryRepository, type MealType } from '../repositories/food-libra
 import { UserProfileRepository } from '../repositories/user-profile.repository.js';
 import { ProfileTrackingRepository } from '../repositories/profile-tracking.repository.js';
 import { updateProfile, getProfileHistory } from '../tools/index.js';
-import { lookupFood } from '../services/food-lookup.js';
+import { lookupFood, lookupBarcode } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
+import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
+import { runCoachTurn } from '../services/coach/agent.js';
+import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
+import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
+import { parseMealPhoto } from '../services/coach/photo-parse.js';
+import { generateMealSuggestions } from '../services/coach/suggest-meal.js';
+import { getVertexUsage } from '../services/admin/usage.js';
+import {
+  isPushConfigured,
+  pushPublicKey,
+  saveSubscription,
+  removeSubscription,
+  sendPushToUser,
+} from '../services/push.js';
+import { sendReminderNow } from '../services/reminders.js';
+import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
 import { buildDeficitSeries, buildGlidePath, weeklyDeficit } from '../services/goal-progress.js';
@@ -85,6 +101,24 @@ const goalPlanSchema = z.object({
   message: 'Target date must be after the start date',
 });
 
+const coachChatSchema = z.object({
+  message: z.string().min(1).max(2000),
+  history: z
+    .array(z.object({ role: z.enum(['user', 'model']), parts: z.array(z.any()) }))
+    .max(30)
+    .optional(),
+  // The date the user is viewing in the app; the agent defaults dated actions
+  // (logging food, weigh-ins, "what did I eat") to it unless told otherwise.
+  active_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+const aiParseSchema = z.object({
+  message: z.string().min(1).max(2000),
+});
+
 const activitySchema = z.object({
   activity_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   // Bounds are generous but finite: Health can emit odd values, and a garbage
@@ -105,6 +139,61 @@ const activitySchema = z.object({
   // otherwise be silently dropped every night while the request still
   // returned success — the metric would just never appear.
   .strict();
+
+const preferencesSchema = z.object({
+  display_name: z.string().min(1).max(100).optional(),
+  daily_calorie_goal: z.number().int().min(800).max(8000),
+  daily_protein_goal_g: z.number().min(0).max(500),
+  daily_carbs_goal_g: z.number().min(0).max(1000),
+  daily_fat_goal_g: z.number().min(0).max(500),
+});
+
+/** Shared shape for the profile inputs collected during onboarding. */
+const onboardingProfileSchema = z.object({
+  gender: z.enum(['male', 'female']),
+  age: z.number().int().min(13).max(100),
+  height_cm: z.number().min(120).max(230),
+  weight_kg: z.number().min(30).max(400),
+  activity_level: z.enum(['sedentary', 'light', 'moderate', 'active', 'very_active']),
+  goal: z.enum(['cut', 'maintain', 'lean_bulk', 'bulk']),
+});
+
+// The Vertex plan step: profile + the app's computed baseline, returns refined
+// targets + a coaching note. Baseline is echoed so the model can anchor to it.
+const aiPlanSchema = onboardingProfileSchema.extend({
+  display_name: z.string().max(100).optional(),
+  target_weight_kg: z.number().min(30).max(400).nullish(),
+  target_rate_kg_per_week: z.number().min(0).max(2).nullish(),
+  bmr: z.number().min(500).max(5000),
+  tdee: z.number().min(600).max(8000),
+  baseline: z.object({
+    calories: z.number(),
+    protein_g: z.number(),
+    carbs_g: z.number(),
+    fat_g: z.number(),
+  }),
+});
+
+// The final commit: saves profile, preferences (with the AI note) and, if a
+// target weight is given, a glide-path plan for the Plan tab.
+const onboardingCompleteSchema = onboardingProfileSchema.extend({
+  display_name: z.string().min(1).max(100),
+  daily_calorie_goal: z.number().int().min(800).max(8000),
+  daily_protein_goal_g: z.number().min(0).max(500),
+  daily_carbs_goal_g: z.number().min(0).max(1000),
+  daily_fat_goal_g: z.number().min(0).max(500),
+  behavior_instructions: z.string().max(4000).optional(),
+  target_weight_kg: z.number().min(30).max(400).nullish(),
+  target_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+});
+
+const pushSubscribeSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+});
 
 const suggestionsQuerySchema = z.object({
   meal: z.enum(['breakfast', 'lunch', 'dinner', 'snack']),
@@ -132,6 +221,8 @@ const entryUpdateSchema = z
     carbs_g: z.number().min(0).optional(),
     fat_g: z.number().min(0).optional(),
     meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+    quantity: z.number().positive().max(10000).optional(),
+    unit: z.string().min(1).max(20).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field must be provided',
@@ -180,6 +271,74 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     next();
   };
 
+  app.get('/api/auth/config', (_req, res) => {
+    // Public: lets the login screen decide whether to show the Google button.
+    res.json({ googleClientId: process.env.GOOGLE_OAUTH_CLIENT_ID || null });
+  });
+
+  app.post('/api/auth/google', async (req, res) => {
+    try {
+      const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+      if (!clientId) {
+        res.status(503).json({ error: 'Google sign-in is not configured on this server.' });
+        return;
+      }
+
+      const credential = typeof req.body?.credential === 'string' ? req.body.credential : '';
+      if (!credential) {
+        res.status(400).json({ error: 'Missing Google credential.' });
+        return;
+      }
+
+      // Verify the ID token with Google and confirm it was issued for our app.
+      const info = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+      ).then((r) => (r.ok ? r.json() : null)) as
+        | { aud?: string; email?: string; email_verified?: string | boolean; name?: string }
+        | null;
+
+      if (!info || info.aud !== clientId) {
+        res.status(401).json({ error: 'Invalid Google credential.' });
+        return;
+      }
+      if (info.email_verified !== 'true' && info.email_verified !== true) {
+        res.status(401).json({ error: 'Your Google email is not verified.' });
+        return;
+      }
+
+      const email = (info.email || '').trim().toLowerCase();
+      const name = info.name || email.split('@')[0] || 'You';
+      if (!email) {
+        res.status(401).json({ error: 'Google did not return an email.' });
+        return;
+      }
+
+      let user = await env.DB
+        .prepare('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE')
+        .bind(email)
+        .first<{ id: string; name: string; email: string }>();
+
+      if (!user) {
+        // New Google account — no password row (they sign in with Google).
+        const userId = randomUUID();
+        await env.DB
+          .prepare(
+            'INSERT INTO users (id, name, email, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          )
+          .bind(userId, name, email, 'user')
+          .run();
+        user = { id: userId, name, email };
+      }
+
+      const session = await createSession(env.DB, user.id, options.sessionTtlHours);
+      setSessionCookie(res, session.sessionId, session.expiresAt, options.secureCookies);
+      res.json({ user: { id: user.id, name: user.name, email: user.email } });
+    } catch (error) {
+      console.error('Google auth error:', error);
+      res.status(500).json({ error: 'Google sign-in failed. Try again.' });
+    }
+  });
+
   app.post('/api/auth/signup', async (req, res) => {
     try {
       const parsed = signupSchema.safeParse(req.body);
@@ -189,10 +348,13 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
-      const { name, email, password } = parsed.data;
+      const { name, password } = parsed.data;
+      // Emails are matched case-insensitively, so store them lowercased —
+      // "Ketan@x.com" and "ketan@x.com" must be the same account.
+      const email = parsed.data.email.trim().toLowerCase();
 
       const existing = await env.DB
-        .prepare('SELECT id FROM users WHERE email = ?')
+        .prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE')
         .bind(email)
         .first<{ id: string }>();
 
@@ -237,10 +399,11 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
-      const { email, password, next } = parsed.data;
+      const { password, next } = parsed.data;
+      const email = parsed.data.email.trim().toLowerCase();
 
       const user = await env.DB
-        .prepare('SELECT id, name, email, role FROM users WHERE email = ?')
+        .prepare('SELECT id, name, email, role FROM users WHERE email = ? COLLATE NOCASE')
         .bind(email)
         .first<{ id: string; name: string; email: string; role: string }>();
 
@@ -287,6 +450,50 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     }
   });
 
+  // Permanently delete the signed-in user's account and ALL their data. The
+  // owner/admin account is protected here (delete it via the DB if ever needed)
+  // so it can't be wiped by accident. Table list is a fixed allowlist — no user
+  // input reaches the SQL.
+  app.delete('/api/account', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.sessionUser!;
+      if (user.isAdmin) {
+        res.status(403).json({ error: 'The owner account cannot be deleted from the app.' });
+        return;
+      }
+      const userId = user.userId;
+      const USER_TABLES = [
+        'user_passwords',
+        'web_sessions',
+        'food_entries',
+        'user_profiles',
+        'profile_tracking',
+        'oauth_clients',
+        'oauth_authorization_codes',
+        'oauth_tokens',
+        'body_measurements',
+        'progress_photos',
+        'user_tracking_preferences',
+        'food_aliases',
+        'foods',
+        'daily_activity',
+        'goal_plans',
+        'push_subscriptions',
+        'weekly_reports',
+      ];
+      for (const table of USER_TABLES) {
+        await env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
+      }
+      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+
+      clearSessionCookie(res, options.secureCookies);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Delete account error:', error);
+      res.status(500).json({ error: 'Failed to delete the account.' });
+    }
+  });
+
   app.get('/api/me', requireSession, async (req: AuthenticatedRequest, res) => {
     const user = req.sessionUser!;
 
@@ -311,6 +518,9 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       name: user.name,
       email: user.email,
       role: user.isAdmin ? 'admin' : 'user',
+      // A user is "onboarded" once they've set a calorie target. New signups
+      // have no preferences row, so this is false and the app shows onboarding.
+      onboarded: prefs?.daily_calorie_goal != null,
       goals: {
         calories: prefs?.daily_calorie_goal ?? null,
         protein_g: prefs?.daily_protein_goal_g ?? null,
@@ -643,30 +853,464 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         macros.daily_carbs_goal_g != null ||
         macros.daily_fat_goal_g != null
       ) {
-        await env.DB
-          .prepare(
-            `UPDATE user_tracking_preferences SET
-               daily_calorie_goal = COALESCE(?, daily_calorie_goal),
-               daily_protein_goal_g = COALESCE(?, daily_protein_goal_g),
-               daily_carbs_goal_g = COALESCE(?, daily_carbs_goal_g),
-               daily_fat_goal_g = COALESCE(?, daily_fat_goal_g),
-               updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ?`
-          )
-          .bind(
-            macros.daily_calorie_goal ?? null,
-            macros.daily_protein_goal_g ?? null,
-            macros.daily_carbs_goal_g ?? null,
-            macros.daily_fat_goal_g ?? null,
-            userId
-          )
-          .run();
+        // upsert so a user with no preferences row yet (a fresh signup) gets
+        // one created rather than a no-op UPDATE.
+        await new UserTrackingPreferencesRepository(env.DB).upsert(userId, {
+          daily_calorie_goal: macros.daily_calorie_goal ?? undefined,
+          daily_protein_goal_g: macros.daily_protein_goal_g ?? undefined,
+          daily_carbs_goal_g: macros.daily_carbs_goal_g ?? undefined,
+          daily_fat_goal_g: macros.daily_fat_goal_g ?? undefined,
+        });
       }
 
       res.json({ ok: true });
     } catch (error) {
       console.error('Goals save error:', error);
       res.status(500).json({ error: 'Failed to save goals' });
+    }
+  });
+
+  app.put('/api/preferences', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = preferencesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      await new UserTrackingPreferencesRepository(env.DB).upsert(req.sessionUser!.userId, parsed.data);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Preferences save error:', error);
+      res.status(500).json({ error: 'Failed to save preferences' });
+    }
+  });
+
+  // Onboarding step: refine the app's computed baseline into a personalised
+  // plan via Vertex AI. 503 when Vertex isn't configured so the client silently
+  // falls back to its own baseline; 502 on a transient AI failure (same).
+  app.post('/api/onboarding/ai-plan', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = aiPlanSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'AI planning is not configured on this server.' });
+        return;
+      }
+
+      const plan = await generateOnboardingPlan({
+        ...parsed.data,
+        target_weight_kg: parsed.data.target_weight_kg ?? null,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json({ plan });
+    } catch (error) {
+      console.error('Onboarding AI plan error:', error);
+      res.status(502).json({ error: 'Could not generate an AI plan. Using the standard targets.' });
+    }
+  });
+
+  // Onboarding commit: create the profile (with a first weigh-in), save the
+  // daily targets + coaching note, and — if a target weight was given — a
+  // glide-path plan so the Plan tab is ready. One call, so a new user is set up
+  // atomically from the client's perspective.
+  app.post('/api/onboarding/complete', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = onboardingCompleteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const userId = req.sessionUser!.userId;
+      const d = parsed.data;
+
+      // Profile + first weigh-in (this also records BMR/TDEE from the weight).
+      const profileResult = await updateProfile(
+        {
+          height_cm: d.height_cm,
+          age: d.age,
+          gender: d.gender,
+          activity_level: d.activity_level,
+          weight_kg: d.weight_kg,
+        },
+        userId,
+        env
+      );
+      if (profileResult.isError) {
+        const text = profileResult.content?.[0];
+        res.status(400).json({
+          error: text && text.type === 'text' ? (text as { text: string }).text : 'Could not save profile.',
+        });
+        return;
+      }
+
+      // Daily targets + the AI coaching note (behavior_instructions is what the
+      // Coach reads on every turn).
+      await new UserTrackingPreferencesRepository(env.DB).upsert(userId, {
+        display_name: d.display_name,
+        daily_calorie_goal: d.daily_calorie_goal,
+        daily_protein_goal_g: d.daily_protein_goal_g,
+        daily_carbs_goal_g: d.daily_carbs_goal_g,
+        daily_fat_goal_g: d.daily_fat_goal_g,
+        behavior_instructions: d.behavior_instructions || undefined,
+      });
+
+      // Optional glide-path plan for the Plan tab.
+      if (d.target_weight_kg && d.target_date) {
+        const today = new Date().toLocaleDateString('en-CA');
+        await new GoalPlanRepository(env.DB).replaceActive(userId, {
+          start_weight_kg: d.weight_kg,
+          start_date: today,
+          goal_weight_kg: d.target_weight_kg,
+          target_date: d.target_date,
+        });
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Onboarding complete error:', error);
+      res.status(500).json({ error: 'Could not finish setting up your account.' });
+    }
+  });
+
+  // ── Web Push ────────────────────────────────────────────────────────────
+  // The client needs the VAPID public key to subscribe; null means the feature
+  // is off on this server and the UI hides the toggle.
+  app.get('/api/push/config', requireSession, (_req: AuthenticatedRequest, res) => {
+    res.json({ publicKey: pushPublicKey() });
+  });
+
+  app.post('/api/push/subscribe', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!isPushConfigured()) {
+        res.status(503).json({ error: 'Push notifications are not configured on this server.' });
+        return;
+      }
+      const parsed = pushSubscribeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      await saveSubscription(env.DB, req.sessionUser!.userId, parsed.data);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Push subscribe error:', error);
+      res.status(500).json({ error: 'Could not save the subscription.' });
+    }
+  });
+
+  app.post('/api/push/unsubscribe', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+      if (endpoint) await removeSubscription(env.DB, endpoint);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Push unsubscribe error:', error);
+      res.status(500).json({ error: 'Could not remove the subscription.' });
+    }
+  });
+
+  // Fires a notification to the user's own devices — used right after they
+  // enable notifications so they see it working immediately.
+  app.post('/api/push/test', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const delivered = await sendPushToUser(env.DB, req.sessionUser!.userId, {
+        title: 'NutriAI',
+        body: "Notifications are on 🎉 I'll nudge you to log your meals.",
+        url: '/app/',
+        tag: 'nutriai-test',
+      });
+      res.json({ ok: true, delivered });
+    } catch (error) {
+      console.error('Push test error:', error);
+      res.status(500).json({ error: 'Could not send a test notification.' });
+    }
+  });
+
+  // Sends the user the exact daily reminder they'd get tonight, computed from
+  // today's log — lets them preview the personalised content on demand.
+  app.post('/api/push/preview-reminder', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const delivered = await sendReminderNow(env, req.sessionUser!.userId);
+      res.json({ ok: true, delivered });
+    } catch (error) {
+      console.error('Push preview error:', error);
+      res.status(500).json({ error: 'Could not send a sample reminder.' });
+    }
+  });
+
+  app.get('/api/ai/status', requireSession, (_req: AuthenticatedRequest, res) => {
+    // Whether the AI logger is usable is purely a deployment-config question
+    // (is an API key set), so the client can hide the feature when it isn't.
+    res.json({ configured: createProviderFromEnv() !== null });
+  });
+
+  app.post('/api/ai/parse', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = aiParseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      const provider = createProviderFromEnv();
+      if (!provider) {
+        res.status(503).json({ error: 'AI logging is not configured on this server.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+
+      // Give the model the user's most-logged foods so it reuses their verified
+      // macros rather than estimating from scratch.
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ?
+           GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{
+          canonical_name: string;
+          reference_unit: string;
+          calories_per_unit: number;
+          protein_g_per_unit: number | null;
+        }>();
+
+      const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local
+      const result = await parseFoodLog(provider, parsed.data.message, {
+        today,
+        knownFoods: (known.results ?? []).map((f) => ({
+          name: f.canonical_name,
+          unit: f.reference_unit,
+          calories_per_unit: f.calories_per_unit,
+          protein_per_unit: f.protein_g_per_unit,
+        })),
+      });
+
+      // Deliberately does NOT log anything. The parsed items go back to the
+      // client for confirmation, and only a subsequent POST /api/entries writes
+      // to the log — an LLM misread should never silently corrupt the diary.
+      res.json(result);
+    } catch (error) {
+      console.error('AI parse error:', error);
+      res.status(502).json({
+        error: 'The AI service could not be reached. Try again, or add the food manually.',
+      });
+    }
+  });
+
+  // Photo meal logging: Gemini vision identifies foods + macros from a photo.
+  // Returns items for confirmation only (never logs) — same safety rule as parse.
+  app.post('/api/ai/photo', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'Photo logging needs Vertex AI configured on the server.' });
+        return;
+      }
+
+      const raw = typeof req.body?.image === 'string' ? req.body.image : '';
+      // Accept a data URL ("data:image/jpeg;base64,....") or bare base64.
+      const match = raw.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+      const mimeType = match ? match[1] : 'image/jpeg';
+      const imageBase64 = match ? match[2] : raw;
+      if (!imageBase64 || imageBase64.length < 100) {
+        res.status(400).json({ error: 'No image provided.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ? GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{ canonical_name: string; reference_unit: string; calories_per_unit: number; protein_g_per_unit: number | null }>();
+      const knownFoods = (known.results ?? [])
+        .map(
+          (f) =>
+            `- ${f.canonical_name}: ${f.calories_per_unit} kcal/${f.reference_unit}` +
+            (f.protein_g_per_unit !== null ? `, ${f.protein_g_per_unit}g protein/${f.reference_unit}` : '')
+        )
+        .join('\n');
+
+      const result = await parseMealPhoto({
+        imageBase64,
+        mimeType,
+        knownFoods,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('AI photo error:', error);
+      res.status(502).json({ error: 'Could not read the photo. Try again or add the food manually.' });
+    }
+  });
+
+  app.post('/api/coach/chat', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = coachChatSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+
+      // The agent drives Vertex directly (function calling), so it needs the
+      // Vertex credentials — not just any LLM provider.
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'The Coach assistant needs Vertex AI configured on the server.' });
+        return;
+      }
+
+      const userId = req.sessionUser!.userId;
+      const known = await env.DB
+        .prepare(
+          `SELECT f.canonical_name, f.reference_unit, f.calories_per_unit, f.protein_g_per_unit,
+                  COUNT(e.id) AS n
+           FROM foods f LEFT JOIN food_entries e ON e.food_id = f.id
+           WHERE f.user_id = ?
+           GROUP BY f.id ORDER BY n DESC LIMIT 25`
+        )
+        .bind(userId)
+        .all<{ canonical_name: string; reference_unit: string; calories_per_unit: number; protein_g_per_unit: number | null }>();
+
+      const knownFoods = (known.results ?? [])
+        .map(
+          (f) =>
+            `- ${f.canonical_name}: ${f.calories_per_unit} kcal/${f.reference_unit}` +
+            (f.protein_g_per_unit !== null ? `, ${f.protein_g_per_unit}g protein/${f.reference_unit}` : '')
+        )
+        .join('\n');
+
+      const result = await runCoachTurn({
+        message: parsed.data.message,
+        history: (parsed.data.history ?? []) as never,
+        userId,
+        env,
+        knownFoods,
+        activeDate: parsed.data.active_date,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('429')) {
+        // Vertex rate limit — transient, the user just retries.
+        res.status(429).json({ error: "The AI is busy right now — give it a few seconds and try again." });
+        return;
+      }
+      console.error('Coach chat error:', error);
+      res.status(502).json({ error: 'The Coach could not be reached. Try again in a moment.' });
+    }
+  });
+
+  // "What should I eat?" — 3 simple Indian meal ideas that fit the calories left
+  // today and the user's diet notes.
+  app.post('/api/ai/suggest-meal', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      if (!credentialJson || !project) {
+        res.status(503).json({ error: 'Meal suggestions need Vertex AI configured on the server.' });
+        return;
+      }
+      const userId = req.sessionUser!.userId;
+      const mealType = ['breakfast', 'lunch', 'dinner', 'snack'].includes(req.body?.meal_type)
+        ? (req.body.meal_type as string)
+        : 'meal';
+      const date = new Date().toISOString().slice(0, 10);
+
+      const consumed = await env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) pro
+           FROM food_entries WHERE user_id = ? AND entry_date = ?`
+        )
+        .bind(userId, date)
+        .first<{ cal: number; pro: number }>();
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g, behavior_instructions
+           FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{
+          daily_calorie_goal: number | null;
+          daily_protein_goal_g: number | null;
+          behavior_instructions: string | null;
+        }>();
+
+      const remainingCalories =
+        prefs?.daily_calorie_goal != null
+          ? Math.max(150, prefs.daily_calorie_goal - Math.round(consumed?.cal ?? 0))
+          : null;
+      const remainingProtein =
+        prefs?.daily_protein_goal_g != null
+          ? Math.max(0, prefs.daily_protein_goal_g - Math.round(consumed?.pro ?? 0))
+          : null;
+
+      const suggestions = await generateMealSuggestions({
+        remainingCalories,
+        remainingProtein,
+        mealType,
+        dietNotes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
+        credentialJson,
+        project,
+        location: process.env.GCP_LOCATION || 'us-central1',
+        model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+      });
+
+      res.json({
+        meal_type: mealType,
+        remaining_calories: remainingCalories,
+        remaining_protein: remainingProtein,
+        suggestions,
+      });
+    } catch (error) {
+      console.error('Suggest meal error:', error);
+      res.status(502).json({ error: 'Could not get suggestions right now. Try again.' });
+    }
+  });
+
+  // Barcode → packaged product macros via Open Food Facts.
+  app.get('/api/foods/barcode', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const code = typeof req.query.code === 'string' ? req.query.code.replace(/\D/g, '') : '';
+      if (code.length < 6 || code.length > 14) {
+        res.status(400).json({ error: 'Invalid barcode.' });
+        return;
+      }
+      const product = await lookupBarcode(code);
+      res.json(product);
+    } catch (error) {
+      console.error('Barcode lookup error:', error);
+      res.status(502).json({ error: 'Could not look up that barcode.' });
     }
   });
 
@@ -892,6 +1536,348 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Dashboard error:', error);
       res.status(500).json({ error: 'Failed to load dashboard' });
+    }
+  });
+
+  // AI weekly report for the Trends tab. Computes the week's stats
+  // deterministically, then asks Vertex to write the analysis. Cached per
+  // (user, day) so it generates at most once a day unless ?refresh=1.
+  app.get('/api/insights/weekly', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.sessionUser!.userId;
+      const refresh = req.query.refresh === '1';
+      const periodKey = new Date().toISOString().slice(0, 10);
+
+      if (!refresh) {
+        const cached = await env.DB
+          .prepare('SELECT report_json FROM weekly_reports WHERE user_id = ? AND period_key = ?')
+          .bind(userId, periodKey)
+          .first<{ report_json: string }>();
+        if (cached) {
+          res.json(JSON.parse(cached.report_json));
+          return;
+        }
+      }
+
+      // ── Compute the last-7-day stats ──────────────────────────────────────
+      const intake = await env.DB
+        .prepare(
+          `SELECT entry_date, SUM(calories) AS cal, SUM(protein_g) AS pro
+           FROM food_entries WHERE user_id = ? AND entry_date >= date('now', '-6 days')
+           GROUP BY entry_date`
+        )
+        .bind(userId)
+        .all<{ entry_date: string; cal: number; pro: number }>();
+      const days = (intake.results ?? []).filter((d) => d.cal >= 200);
+      const daysLogged = days.length;
+      const avg = (xs: number[]) =>
+        xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+      const avgCalories = avg(days.map((d) => d.cal));
+      const avgProtein = avg(days.map((d) => Math.round(d.pro)));
+
+      const stepRows = await env.DB
+        .prepare(
+          `SELECT steps FROM daily_activity
+           WHERE user_id = ? AND activity_date >= date('now', '-6 days') AND steps IS NOT NULL`
+        )
+        .bind(userId)
+        .all<{ steps: number }>();
+      const avgSteps = avg((stepRows.results ?? []).map((r) => r.steps));
+
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g, behavior_instructions
+           FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{
+          daily_calorie_goal: number | null;
+          daily_protein_goal_g: number | null;
+          behavior_instructions: string | null;
+        }>();
+
+      const plan = await new GoalPlanRepository(env.DB).getActive(userId);
+      const weightGoalDir: WeeklyStats['weight_goal_direction'] = plan
+        ? plan.goal_weight_kg < plan.start_weight_kg
+          ? 'lose'
+          : plan.goal_weight_kg > plan.start_weight_kg
+            ? 'gain'
+            : 'maintain'
+        : null;
+
+      // Weight change across the window (first vs last weigh-in in ~14 days).
+      const weigh = await env.DB
+        .prepare(
+          `SELECT weight_kg, tdee_calories, recorded_date FROM profile_tracking
+           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date >= date('now', '-14 days')
+           ORDER BY recorded_date ASC`
+        )
+        .bind(userId)
+        .all<{ weight_kg: number; tdee_calories: number | null; recorded_date: string }>();
+      const weighIns = weigh.results ?? [];
+      const weightChange =
+        weighIns.length >= 2
+          ? Math.round((weighIns[weighIns.length - 1]!.weight_kg - weighIns[0]!.weight_kg) * 10) / 10
+          : null;
+
+      const latestTdee = [...weighIns].reverse().find((w) => w.tdee_calories !== null)?.tdee_calories ?? null;
+      const weeklyDeficit =
+        latestTdee && avgCalories !== null ? Math.round((latestTdee - avgCalories) * daysLogged) : null;
+
+      const stats: WeeklyStats = {
+        days_logged: daysLogged,
+        avg_calories: avgCalories,
+        calorie_goal: prefs?.daily_calorie_goal ?? null,
+        avg_protein_g: avgProtein,
+        protein_goal_g: prefs?.daily_protein_goal_g ?? null,
+        avg_steps: avgSteps,
+        step_goal: plan?.daily_step_goal ?? null,
+        weight_change_kg: weightChange,
+        weight_goal_direction: weightGoalDir,
+        estimated_weekly_deficit_kcal: weeklyDeficit,
+        diet_notes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
+      };
+
+      // Too little data to say anything useful.
+      if (daysLogged < 2) {
+        res.json({
+          report: {
+            headline: 'Not enough data yet',
+            summary: `Log at least a couple of days this week and I'll analyse your calories, protein, steps and weight trend here.`,
+            wins: [],
+            focus: ['Log your meals for a few days so this report has something to work with.'],
+          },
+          stats,
+          generated_at: new Date().toISOString(),
+          source: 'insufficient',
+        });
+        return;
+      }
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+
+      // Rule-based fallback used when Vertex is off or fails — the tab still works.
+      const fallback = () => {
+        const wins: string[] = [];
+        const focus: string[] = [];
+        if (daysLogged >= 5) wins.push(`Logged ${daysLogged} of the last 7 days — great consistency.`);
+        else focus.push(`Only ${daysLogged} days logged — aim for 6–7 for a clearer picture.`);
+        if (stats.calorie_goal && avgCalories !== null) {
+          if (avgCalories <= stats.calorie_goal) wins.push('Averaged at or under your calorie target.');
+          else focus.push(`Averaging ${avgCalories - stats.calorie_goal} kcal/day over target.`);
+        }
+        if (stats.protein_goal_g && avgProtein !== null && avgProtein >= stats.protein_goal_g * 0.9)
+          wins.push('Protein was on point.');
+        return {
+          report: {
+            headline: daysLogged >= 5 ? 'Consistent week' : 'A partial week',
+            summary: `You logged ${daysLogged} days, averaging ${avgCalories ?? '—'} kcal${
+              stats.calorie_goal ? ` against a ${stats.calorie_goal} goal` : ''
+            }${avgProtein !== null ? ` and ${avgProtein}g protein` : ''}${
+              avgSteps !== null ? `, with about ${avgSteps.toLocaleString()} steps/day` : ''
+            }${weightChange !== null ? `. Weight moved ${weightChange > 0 ? '+' : ''}${weightChange} kg` : ''}.`,
+            wins,
+            focus,
+          },
+          stats,
+          generated_at: new Date().toISOString(),
+          source: 'rule',
+        };
+      };
+
+      if (!credentialJson || !project) {
+        res.json(fallback());
+        return;
+      }
+
+      let payload: unknown;
+      try {
+        const report = await generateWeeklyInsights({
+          displayName: req.sessionUser!.name,
+          stats,
+          credentialJson,
+          project,
+          location: process.env.GCP_LOCATION || 'us-central1',
+          model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+        });
+        payload = { report, stats, generated_at: new Date().toISOString(), source: 'ai' };
+        await env.DB
+          .prepare(
+            'INSERT OR REPLACE INTO weekly_reports (user_id, period_key, report_json) VALUES (?, ?, ?)'
+          )
+          .bind(userId, periodKey, JSON.stringify(payload))
+          .run();
+      } catch (error) {
+        console.error('Weekly insights AI error:', error);
+        payload = fallback();
+      }
+
+      res.json(payload);
+    } catch (error) {
+      console.error('Weekly insights error:', error);
+      res.status(500).json({ error: 'Failed to build your weekly report.' });
+    }
+  });
+
+  // Admin-only overview: adoption + AI cost. Gated on the admin role.
+  app.get('/api/admin/overview', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+
+      const users = await env.DB
+        .prepare('SELECT id, email, name, role, created_at FROM users ORDER BY created_at DESC')
+        .all<{ id: string; email: string; name: string; role: string; created_at: string }>();
+      const logs = await env.DB
+        .prepare(
+          `SELECT user_id, COUNT(*) n, MAX(entry_date) last, COUNT(DISTINCT entry_date) days
+           FROM food_entries GROUP BY user_id`
+        )
+        .all<{ user_id: string; n: number; last: string; days: number }>();
+      const byUser = new Map((logs.results ?? []).map((l) => [l.user_id, l]));
+      const cutoff7 = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+      const userRows = (users.results ?? []).map((u) => {
+        const l = byUser.get(u.id);
+        return {
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          signed_up: (u.created_at ?? '').slice(0, 10),
+          entries: l?.n ?? 0,
+          days_logged: l?.days ?? 0,
+          last_log: l?.last ?? null,
+          active_7d: !!l?.last && l.last >= cutoff7,
+        };
+      });
+
+      const totalEntriesRow = await env.DB.prepare('SELECT COUNT(*) c FROM food_entries').first<{ c: number }>();
+      const entries7dRow = await env.DB
+        .prepare("SELECT COUNT(*) c FROM food_entries WHERE entry_date >= date('now','-7 days')")
+        .first<{ c: number }>();
+      const foodsRow = await env.DB.prepare('SELECT COUNT(*) c FROM foods').first<{ c: number }>();
+      const weighRow = await env.DB
+        .prepare('SELECT COUNT(*) c FROM profile_tracking WHERE weight_kg IS NOT NULL')
+        .first<{ c: number }>();
+
+      const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      const project = process.env.GCP_PROJECT;
+      const ai = credentialJson && project ? await getVertexUsage(credentialJson, project) : null;
+
+      res.json({
+        users: {
+          total: userRows.length,
+          logged_food: userRows.filter((u) => u.entries > 0).length,
+          active_7d: userRows.filter((u) => u.active_7d).length,
+          list: userRows,
+        },
+        content: {
+          total_entries: totalEntriesRow?.c ?? 0,
+          entries_7d: entries7dRow?.c ?? 0,
+          foods: foodsRow?.c ?? 0,
+          weigh_ins: weighRow?.c ?? 0,
+        },
+        ai,
+        railway_estimate_usd: 5,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Admin overview error:', error);
+      res.status(500).json({ error: 'Failed to load admin overview.' });
+    }
+  });
+
+  // Compact stats bundle for the shareable "daily story" card.
+  app.get('/api/share/today', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.sessionUser!.userId;
+      const date =
+        typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+          ? req.query.date
+          : new Date().toISOString().slice(0, 10);
+
+      const totals = await env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) pro,
+                  COALESCE(SUM(carbs_g),0) carb, COALESCE(SUM(fat_g),0) fat
+           FROM food_entries WHERE user_id = ? AND entry_date = ?`
+        )
+        .bind(userId, date)
+        .first<{ cal: number; pro: number; carb: number; fat: number }>();
+
+      const prefs = await env.DB
+        .prepare(
+          `SELECT daily_calorie_goal, daily_protein_goal_g FROM user_tracking_preferences WHERE user_id = ?`
+        )
+        .bind(userId)
+        .first<{ daily_calorie_goal: number | null; daily_protein_goal_g: number | null }>();
+
+      // Steps for the day, else the most recent day with steps.
+      const stepRow = await env.DB
+        .prepare(
+          `SELECT steps FROM daily_activity WHERE user_id = ? AND steps IS NOT NULL
+             AND activity_date <= ? ORDER BY activity_date DESC LIMIT 1`
+        )
+        .bind(userId, date)
+        .first<{ steps: number }>();
+
+      // Logging streak ending on `date` (or the day before).
+      const dateRows = await env.DB
+        .prepare(
+          `SELECT DISTINCT entry_date FROM food_entries WHERE user_id = ? AND entry_date <= ?
+           ORDER BY entry_date DESC LIMIT 120`
+        )
+        .bind(userId, date)
+        .all<{ entry_date: string }>();
+      const logged = new Set((dateRows.results ?? []).map((r) => r.entry_date));
+      const shift = (d: string, n: number) => {
+        const dt = new Date(`${d}T00:00:00Z`);
+        dt.setUTCDate(dt.getUTCDate() + n);
+        return dt.toISOString().slice(0, 10);
+      };
+      let streak = 0;
+      let cursor = logged.has(date) ? date : logged.has(shift(date, -1)) ? shift(date, -1) : null;
+      while (cursor && logged.has(cursor)) {
+        streak += 1;
+        cursor = shift(cursor, -1);
+      }
+
+      // Weight: latest + change over ~2 weeks.
+      const weigh = await env.DB
+        .prepare(
+          `SELECT weight_kg, recorded_date FROM profile_tracking
+           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date <= ?
+           ORDER BY recorded_date DESC LIMIT 30`
+        )
+        .bind(userId, date)
+        .all<{ weight_kg: number; recorded_date: string }>();
+      const weighIns = weigh.results ?? [];
+      const latestWeight = weighIns[0]?.weight_kg ?? null;
+      const twoWeeksAgo = shift(date, -14);
+      const past = weighIns.find((w) => w.recorded_date <= twoWeeksAgo) ?? weighIns[weighIns.length - 1];
+      const weightChange =
+        latestWeight !== null && past && past.recorded_date !== weighIns[0]?.recorded_date
+          ? Math.round((latestWeight - past.weight_kg) * 10) / 10
+          : null;
+
+      res.json({
+        date,
+        name: req.sessionUser!.name,
+        calories: { consumed: Math.round(totals?.cal ?? 0), goal: prefs?.daily_calorie_goal ?? null },
+        protein: { consumed: Math.round(totals?.pro ?? 0), goal: prefs?.daily_protein_goal_g ?? null },
+        carbs_g: Math.round(totals?.carb ?? 0),
+        fat_g: Math.round(totals?.fat ?? 0),
+        steps: stepRow?.steps ?? null,
+        streak,
+        weight_kg: latestWeight,
+        weight_change_kg: weightChange,
+      });
+    } catch (error) {
+      console.error('Share stats error:', error);
+      res.status(500).json({ error: 'Failed to build share stats.' });
     }
   });
 

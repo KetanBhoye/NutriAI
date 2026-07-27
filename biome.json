@@ -4,7 +4,7 @@
 		"enabled": true
 	},
 	"files": {
-		"ignore": ["worker-configuration.d.ts"]
+		"ignore": ["worker-configuration.d.ts", "mobile/**"]
 	},
 	"vcs": {
 		"enabled": true,

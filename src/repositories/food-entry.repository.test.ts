@@ -167,6 +167,24 @@ describe('FoodEntryRepository', () => {
       );
     });
 
+    it('should write the re-portioned weight alongside the macros', async () => {
+      // Re-portioning sends new macros and the gram weight they came from;
+      // dropping the weight would leave the entry unscalable next time.
+      await repository.update('entry-123', 'user-123', {
+        calories: 375,
+        protein_g: 22.5,
+        quantity: 150,
+        unit: 'g',
+      });
+
+      const sql = mockDB.prepare.mock.calls[0][0] as string;
+      expect(sql).toMatch(/quantity = \?/);
+      expect(sql).toMatch(/unit = \?/);
+
+      const bound = mockDB.prepare.mock.results[0].value.bind.mock.calls[0];
+      expect(bound).toEqual([375, 22.5, 150, 'g', 'entry-123', 'user-123']);
+    });
+
     it('should return false when no rows are affected', async () => {
       // Mock zero rows affected
       mockDB.prepare.mockReturnValue({

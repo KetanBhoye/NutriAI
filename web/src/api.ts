@@ -122,7 +122,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
 
     if (response.status === 401) {
-      window.location.href = '/login';
+      // Send the user to the in-app auth screen, not the old server page.
+      if (!window.location.pathname.startsWith('/app/login')) {
+        window.location.assign('/app/login');
+      }
       throw new ApiError('Session expired', 401);
     }
 
@@ -137,32 +140,46 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 }
 
+// Only one flush may run at a time. Without this guard, enqueuing several
+// writes in the same tick (e.g. confirming a multi-item AI parse) starts
+// several concurrent flushes that each read the same queue head and send it
+// before any of them removes it — silently double-logging the first item.
+let flushing = false;
+
 /** Sends queued writes oldest-first, stopping at the first failure so ordering holds. */
 export async function flushQueue(): Promise<void> {
-  let queue = readQueue();
+  if (flushing) return;
+  flushing = true;
+  try {
+    let queue = readQueue();
 
-  while (queue.length > 0) {
-    const [next] = queue;
-    if (!next) break;
+    while (queue.length > 0) {
+      const [next] = queue;
+      if (!next) break;
 
-    try {
-      await request(next.path, {
-        method: next.method,
-        body: next.body ? JSON.stringify(next.body) : undefined,
-      });
-    } catch (error) {
-      // A 4xx will never succeed on retry — drop it rather than blocking the
-      // queue forever behind a permanently invalid write.
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-        queue = queue.slice(1);
-        writeQueue(queue);
-        continue;
+      try {
+        await request(next.path, {
+          method: next.method,
+          body: next.body ? JSON.stringify(next.body) : undefined,
+        });
+      } catch (error) {
+        // A 4xx will never succeed on retry — drop it rather than blocking the
+        // queue forever behind a permanently invalid write.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+          queue = queue.slice(1);
+          writeQueue(queue);
+          continue;
+        }
+        return;
       }
-      return;
-    }
 
-    queue = queue.slice(1);
-    writeQueue(queue);
+      // Re-read: another enqueue may have appended while this request was in
+      // flight. Drop the head we just sent and keep anything new.
+      queue = readQueue().slice(1);
+      writeQueue(queue);
+    }
+  } finally {
+    flushing = false;
   }
 }
 
@@ -188,7 +205,108 @@ export const FALLBACK_GOALS: Goals = {
   fat_g: 63,
 };
 
+export interface Me {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  onboarded: boolean;
+  goals: Partial<Goals> | null;
+}
+
 export const api = {
+  async me(): Promise<Me> {
+    return request('/api/me');
+  },
+
+  async login(email: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Login failed', res.status);
+    }
+  },
+
+  async signup(name: string, email: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password }),
+    });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Signup failed', res.status);
+    }
+  },
+
+  async logout(): Promise<void> {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  },
+
+  /** Permanently deletes the account and all its data. */
+  async deleteAccount(): Promise<void> {
+    const res = await fetch('/api/account', { method: 'DELETE', credentials: 'same-origin' });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new ApiError(d.error ?? 'Failed to delete account', res.status);
+    }
+  },
+
+  async saveOnboarding(prefs: {
+    display_name: string;
+    daily_calorie_goal: number;
+    daily_protein_goal_g: number;
+    daily_carbs_goal_g: number;
+    daily_fat_goal_g: number;
+  }): Promise<void> {
+    await request('/api/preferences', { method: 'PUT', body: JSON.stringify(prefs) });
+  },
+
+  /**
+   * Asks the server (Vertex AI) to refine the wizard's baseline into a
+   * personalised plan. Resolves null when the server has no AI configured or
+   * the call fails — the caller then keeps its own computed baseline.
+   */
+  async aiPlan(body: Record<string, unknown>): Promise<{
+    daily_calorie_goal: number;
+    daily_protein_goal_g: number;
+    daily_carbs_goal_g: number;
+    daily_fat_goal_g: number;
+    summary: string;
+  } | null> {
+    try {
+      const res = await fetch('/api/onboarding/ai-plan', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).plan ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async completeOnboarding(body: Record<string, unknown>): Promise<void> {
+    await request('/api/onboarding/complete', { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  /** Manually log steps and/or weight for a day (upserts into daily activity). */
+  async logActivity(body: {
+    activity_date: string;
+    steps?: number | null;
+    weight_kg?: number | null;
+  }): Promise<void> {
+    await request('/api/activity', { method: 'POST', body: JSON.stringify(body) });
+  },
+
   async getGoals(): Promise<Goals> {
     const me = await request<{ goals: Partial<Goals> | null }>('/api/me');
     return {
@@ -213,6 +331,56 @@ export const api = {
 
   async getDashboard(): Promise<unknown> {
     return request('/api/dashboard');
+  },
+
+  async shareStats(date: string): Promise<import('./share').ShareStats> {
+    return request<import('./share').ShareStats>(`/api/share/today?date=${encodeURIComponent(date)}`);
+  },
+
+  /** "What should I eat?" — simple Indian meal ideas fitting today's remaining macros. */
+  async suggestMeal(mealType: string): Promise<{
+    meal_type: string;
+    remaining_calories: number | null;
+    remaining_protein: number | null;
+    suggestions: Array<{
+      name: string;
+      description: string;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+    }>;
+  }> {
+    return request('/api/ai/suggest-meal', { method: 'POST', body: JSON.stringify({ meal_type: mealType }) });
+  },
+
+  /** Look up a packaged product by barcode (Open Food Facts). */
+  async lookupBarcode(code: string): Promise<{
+    found: boolean;
+    code: string;
+    name: string;
+    brand: string | null;
+    serving_g: number | null;
+    per_100g: { calories: number; protein_g: number; carbs_g: number; fat_g: number } | null;
+  }> {
+    return request(`/api/foods/barcode?code=${encodeURIComponent(code)}`);
+  },
+
+  /** Sends a meal photo to Gemini vision; returns detected items to confirm. */
+  async photoParse(imageDataUrl: string): Promise<{
+    understood: boolean;
+    note: string;
+    items: Array<{
+      food_name: string;
+      quantity: number;
+      unit: string;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+    }>;
+  }> {
+    return request('/api/ai/photo', { method: 'POST', body: JSON.stringify({ image: imageDataUrl }) });
   },
 
   /** External food databases, for foods with no logging history. */

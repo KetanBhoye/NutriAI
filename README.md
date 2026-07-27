@@ -1,12 +1,20 @@
-# Calorie Tracker MCP Server (Portable Refactor)
+# NutriAI
 
-Portable MCP server for calorie tracking with a built-in web dashboard.
+Calorie tracking across three surfaces, one backend: an MCP server, a web PWA,
+and a native iOS/Android app. Runs anywhere Node.js runs — VPS, Docker,
+Railway/Render/Fly, or on-prem. No Cloudflare dependency.
 
-This version removes all Cloudflare dependencies and runs anywhere Node.js runs:
-- private VPS
-- Docker/Kubernetes
-- Render/Railway/Fly.io
-- on-prem Linux server
+## Repository layout
+
+| Directory | What it is | Run it with |
+|---|---|---|
+| `src/` | Express + SQLite API and MCP server | `pnpm dev` |
+| `web/` | Vue 3 PWA, built into `public/app/` and served by the API | `pnpm web:dev` |
+| `mobile/` | Expo / React Native app (iOS + Android) | `cd mobile && npx expo start` |
+
+**[SETUP.md](SETUP.md) is the full guide** — prerequisites, every environment
+variable, APK builds, signing, and the Google Sign-In wiring. This file is the
+short version.
 
 ## What You Get
 
@@ -15,6 +23,8 @@ This version removes all Cloudflare dependencies and runs anywhere Node.js runs:
 - OAuth endpoints for remote MCP connectors (`/oauth/*` + metadata)
 - Web signup/login/session auth
 - Dashboard for profile, weight/body-fat tracking, and daily entries
+- Native app: food logging, photo/barcode logging, AI coach, trends, plan
+  tracking, and Apple Health / Health Connect sync
 - SQLite persistence with automatic migrations
 
 ## Tech Stack
@@ -48,6 +58,98 @@ Server starts at `http://localhost:8787` by default.
 | `ADMIN_PASSWORD` | `admin123456` | Seeded admin password (change in production) |
 | `SESSION_TTL_HOURS` | `168` | Web session lifetime |
 | `BASE_URL` | `http://localhost:<PORT>` | Public server URL for OAuth metadata |
+
+## Mobile app (iOS + Android)
+
+```bash
+cd mobile
+npm install          # mobile has its own lockfile — npm, not pnpm
+```
+
+The app defaults to the **production** API. To point it at a server you're
+running locally, set `API_URL` at build time — it's compiled into the binary, so
+this is a rebuild rather than a restart, and it must be your machine's LAN IP
+(`localhost` on a phone means the phone):
+
+```bash
+API_URL=http://192.168.1.x:8787 npx expo run:ios
+```
+
+### Running after you change something
+
+**Changed JS/TS only** — anything under `mobile/app/` or `mobile/src/`:
+
+```bash
+cd mobile
+npx expo start       # then press `i` for iOS, `a` for Android
+```
+
+Fast Refresh applies the change on save; no rebuild. If a dev build is already
+installed on the device, just launch it and it picks up Metro.
+
+**Changed anything native** — `app.config.ts`, `plugins/*.js`, or added or
+removed a dependency that ships native code:
+
+```bash
+cd mobile
+npx expo prebuild --clean       # regenerate ios/ and android/
+cd ios && pod install && cd ..  # iOS only
+npx expo run:ios                # or: npx expo run:android
+```
+
+Fast Refresh cannot pick these up — icons, permissions, entitlements and native
+modules are all compiled in. `ios/` and `android/` are generated and gitignored,
+so **never edit them by hand**; the next prebuild discards it.
+
+### Running on a physical device
+
+```bash
+# iOS — Release is required, see below
+xcrun xctrace list devices                     # find the UDID
+npx expo run:ios --device <udid> --configuration Release
+
+# Android
+npx expo run:android --variant release
+```
+
+A **Debug** iOS build expects a Metro server and falls back to `localhost` on a
+device — which is the phone itself, so you get a black screen. Use
+`--configuration Release` on hardware.
+
+Release builds bundle the JS, so a Release build is a full rebuild for **every**
+change, including JS-only ones. Free Apple provisioning profiles also expire
+after 7 days; reinstall to keep a sideloaded build alive.
+
+### Building an APK
+
+```bash
+cd mobile
+npx expo prebuild -p android --clean
+cd android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+ANDROID_HOME="$HOME/Library/Android/sdk" \
+  ./gradlew assembleRelease
+```
+
+Output: `mobile/android/app/build/outputs/apk/release/app-release.apk`.
+Install with `adb install -r <path>`, or copy it to the phone and open it.
+
+Release APKs are signed from `mobile/credentials/` (gitignored — back it up).
+Google Sign-In on Android matches the signing certificate's SHA-1, so that
+fingerprint has to be registered in Google Cloud; see
+[SETUP.md §6](SETUP.md#6-google-sign-in).
+
+### Notes
+
+- Health data is **read-only** on both platforms. Apple Health needs a real
+  device (the simulator has no health store); Health Connect needs Android 8.0+
+  and the Health Connect app.
+- iOS push notifications are impossible without a paid Apple Developer account —
+  the app uses local notifications for reminders instead. SETUP.md §7 explains
+  why.
+- `mobile/` is excluded from this repo's `tsconfig.json`, `vitest.config.ts`,
+  `biome.json` and `.railwayignore`, so it never affects the server build or the
+  Railway image.
 
 ## MCP Endpoints
 
@@ -173,6 +275,8 @@ Full Railway deployment guide: `deploy/railway/README.md`
 - `pnpm db:migrate` - apply migrations + admin seed
 - `pnpm test` - run tests
 - `pnpm type-check` - TypeScript check
+- `pnpm web:dev` / `pnpm web:build` - PWA dev server / production build
+- `cd mobile && npm run typecheck` - type-check the native app
 - `node deploy/windows/acceptance-test.mjs ...` - deployment acceptance checks
 
 ## Core MCP Tools

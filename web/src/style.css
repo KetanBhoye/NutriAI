@@ -25,6 +25,17 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Native-app feel: no double-tap-zoom lag on controls, no long-press callout
+   or accidental text-selection on chrome, but keep content selectable. */
+button,
+a,
+.tab,
+.nav-btn {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
 html,
 body {
   margin: 0;
