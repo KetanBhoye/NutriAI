@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Share, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Share, StyleSheet, Text, View } from 'react-native';
 import ViewShot, { captureRef } from 'react-native-view-shot';
 import { dashboardApi } from '@/api';
 import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
-import { parseISODate } from '@/dates';
+import { formatCardDate, pickCaption } from './shareCaption';
 
 interface ShareStoryModalProps {
   visible: boolean;
@@ -13,11 +13,14 @@ interface ShareStoryModalProps {
   onClose: () => void;
 }
 
+/** 9:16 so it drops straight into an Instagram/WhatsApp story without cropping. */
+const CARD_W = Math.min(Dimensions.get('window').width - 72, 300);
+const CARD_H = Math.round((CARD_W * 16) / 9);
+
 /**
- * Renders a shareable summary card and hands a PNG of it to the OS share
- * sheet. The web app draws an equivalent card onto a <canvas>; here the card
- * is real RN views and `react-native-view-shot` snapshots them, which keeps
- * the styling in the same system as the rest of the app.
+ * Shareable story card. The web app draws an equivalent on a <canvas>; here
+ * it's real views snapshotted with react-native-view-shot, so it inherits the
+ * app's own type scale and colours instead of duplicating them in draw calls.
  */
 export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps) {
   const shotRef = useRef<View>(null);
@@ -43,6 +46,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     setSharing(true);
     setError(null);
     try {
+      // Capture at 3x so the card is crisp when a story viewer scales it up.
       const uri = await captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' });
       await Share.share({ url: uri });
     } catch {
@@ -52,90 +56,154 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     }
   };
 
-  const label = parseISODate(date).toLocaleDateString(undefined, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-
+  const caption = stats ? pickCaption(stats) : null;
   const pct = stats?.calories.goal
     ? Math.min(100, (stats.calories.consumed / stats.calories.goal) * 100)
     : 0;
 
   return (
     <Sheet visible={visible} onClose={onClose} title="Share your day">
-      {!stats && !error ? (
-        <Loading />
-      ) : error ? (
-        <Text style={styles.error}>{error}</Text>
-      ) : stats ? (
-        <View>
+      {!stats || !caption ? (
+        error ? (
+          <Text style={styles.error}>{error}</Text>
+        ) : (
+          <Loading label="Building your card…" />
+        )
+      ) : (
+        <View style={styles.wrap}>
           <ViewShot ref={shotRef} style={styles.card}>
-            <Text style={styles.brand}>NUTRIAI</Text>
-            <Text style={styles.name}>{stats.name}</Text>
-            <Text style={styles.date}>{label}</Text>
+            {/* Header */}
+            <View style={styles.cardHead}>
+              <Text style={styles.brand}>NUTRIAI</Text>
+              <Text style={styles.date}>{formatCardDate(stats.date)}</Text>
+            </View>
 
-            <Text style={styles.big}>{stats.calories.consumed.toLocaleString()}</Text>
-            <Text style={styles.bigLabel}>
-              kcal{stats.calories.goal ? ` of ${stats.calories.goal.toLocaleString()}` : ''}
+            {/* Editorial headline — the reason the card is worth posting */}
+            <View style={styles.headlineBlock}>
+              <Text style={styles.headline}>{caption.headline}</Text>
+              <Text style={styles.sub}>{caption.sub}</Text>
+            </View>
+
+            <View style={styles.spacer} />
+
+            {/* Hero figure */}
+            <Text style={styles.kcal}>{stats.calories.consumed.toLocaleString()}</Text>
+            <Text style={styles.kcalLabel}>
+              KCAL{stats.calories.goal ? ` · GOAL ${stats.calories.goal.toLocaleString()}` : ''}
             </Text>
 
             <View style={styles.track}>
               <View style={[styles.fill, { width: `${pct}%` }]} />
             </View>
 
-            <View style={styles.row}>
-              <Stat value={`${Math.round(stats.protein.consumed)}g`} label="Protein" />
-              <Stat value={`${Math.round(stats.carbs_g)}g`} label="Carbs" />
-              <Stat value={`${Math.round(stats.fat_g)}g`} label="Fat" />
+            {/* Supporting figures */}
+            <View style={styles.stats}>
+              <Figure value={`${Math.round(stats.protein.consumed)}g`} label="PROTEIN" />
+              <Figure value={`${Math.round(stats.carbs_g)}g`} label="CARBS" />
+              <Figure value={`${Math.round(stats.fat_g)}g`} label="FAT" />
             </View>
 
-            <View style={styles.row}>
-              {stats.steps != null ? <Stat value={stats.steps.toLocaleString()} label="Steps" /> : null}
-              <Stat value={`${stats.streak}`} label="Day streak" />
-              {stats.weight_change_kg != null ? (
-                <Stat
-                  value={`${stats.weight_change_kg > 0 ? '+' : ''}${stats.weight_change_kg.toFixed(1)}kg`}
-                  label="Since start"
-                />
-              ) : null}
+            <View style={styles.stats}>
+              <Figure value={stats.steps != null ? stats.steps.toLocaleString() : '—'} label="STEPS" />
+              <Figure value={`${stats.streak}`} label="STREAK" />
+              <Figure
+                value={
+                  stats.weight_change_kg != null
+                    ? `${stats.weight_change_kg > 0 ? '+' : ''}${stats.weight_change_kg.toFixed(1)}`
+                    : '—'
+                }
+                label="KG MOVED"
+              />
             </View>
+
+            <View style={styles.rule} />
+            <Text style={styles.footer}>{stats.name}</Text>
           </ViewShot>
 
           <Button
             title={sharing ? 'Preparing…' : 'Share'}
             onPress={share}
             disabled={sharing}
-            style={{ marginTop: 14 }}
+            style={styles.shareBtn}
           />
         </View>
-      ) : null}
+      )}
     </Sheet>
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function Figure({ value, label }: { value: string; label: string }) {
   return (
-    <View style={styles.stat}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.figure}>
+      <Text style={styles.figureValue} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <Text style={styles.figureLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Opaque background: a transparent snapshot renders black in most apps.
-  card: { backgroundColor: colors.bg, borderRadius: 20, padding: 24 },
-  brand: { ...type.overline, color: colors.accent, letterSpacing: 3 },
-  name: { ...type.title, fontSize: 26, color: colors.text, marginTop: 10 },
-  date: { ...type.caption, color: colors.textDim, marginBottom: 18 },
-  big: { ...type.figureLarge, fontSize: 56, lineHeight: 60, color: colors.accent },
-  bigLabel: { ...type.caption, color: colors.textDim, marginBottom: 14 },
-  track: { height: 8, backgroundColor: colors.surface2, borderRadius: 999, overflow: 'hidden', marginBottom: 20 },
+  wrap: { alignItems: 'center' },
+  // Opaque: a transparent snapshot renders black in most share targets.
+  card: {
+    width: CARD_W,
+    height: CARD_H,
+    backgroundColor: colors.bg,
+    borderRadius: 22,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  brand: { fontFamily: fonts.extrabold, fontSize: 12, letterSpacing: 3, color: colors.accent },
+  date: { fontFamily: fonts.medium, fontSize: 10, letterSpacing: 1.2, color: colors.textDim },
+  headlineBlock: { marginTop: 26 },
+  headline: {
+    fontFamily: fonts.extrabold,
+    fontSize: 34,
+    lineHeight: 36,
+    letterSpacing: -1,
+    color: colors.text,
+  },
+  sub: { fontFamily: fonts.medium, fontSize: 13, color: colors.textDim, marginTop: 10 },
+  spacer: { flex: 1 },
+  kcal: {
+    fontFamily: fonts.extrabold,
+    fontSize: 60,
+    lineHeight: 62,
+    letterSpacing: -2,
+    color: colors.accent,
+    fontVariant: ['tabular-nums'],
+  },
+  kcalLabel: { fontFamily: fonts.medium, fontSize: 10, letterSpacing: 1.4, color: colors.textDim, marginTop: 4 },
+  track: {
+    height: 6,
+    backgroundColor: colors.surface2,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginTop: 14,
+    marginBottom: 18,
+  },
   fill: { height: '100%', backgroundColor: colors.accent, borderRadius: 999 },
-  row: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  stat: { flex: 1, backgroundColor: colors.surface, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  statValue: { ...type.figure, fontSize: 18, color: colors.text },
-  statLabel: { ...type.caption, fontSize: 11, color: colors.textDim, marginTop: 2 },
+  stats: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  figure: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+  },
+  figureValue: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  figureLabel: { fontFamily: fonts.medium, fontSize: 8, letterSpacing: 1, color: colors.textDim, marginTop: 3 },
+  rule: { height: 1, backgroundColor: colors.border, marginTop: 14, marginBottom: 10 },
+  footer: { fontFamily: fonts.semibold, fontSize: 11, color: colors.textDim, letterSpacing: 0.4 },
+  shareBtn: { marginTop: 18, alignSelf: 'stretch' },
   error: { ...type.body, color: colors.danger },
 });

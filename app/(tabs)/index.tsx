@@ -31,6 +31,42 @@ function currentMeal(): MealType {
   return 'snack';
 }
 
+function ActionTile({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [tileStyles.tile, pressed && tileStyles.pressed]}
+    >
+      <Feather name={icon} size={18} color={colors.accent} />
+      <Text style={tileStyles.label}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const tileStyles = StyleSheet.create({
+  tile: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    borderRadius: radius,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pressed: { opacity: 0.75, borderColor: colors.accentDim },
+  label: { color: colors.text, fontFamily: fonts.medium, fontSize: 12.5 },
+});
+
 function emptyTotals(): Totals {
   return { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
 }
@@ -309,15 +345,12 @@ export default function Today() {
         <Button title="Jump to today" variant="ghost" onPress={() => setViewDate(today)} style={styles.jumpToday} />
       ) : null}
 
-      <Pressable style={styles.snapCta} onPress={pickPhoto}>
-        <Text style={styles.snapText}>
-          📷 Snap a meal <Text style={styles.snapHint}>— AI logs it</Text>
-        </Text>
-      </Pressable>
-
+      {/* Three secondary ways in, as compact tiles — stacking them as
+          full-width buttons pushed the day's actual food below the fold. */}
       <View style={styles.actionRow}>
-        <Button title="🍽️ What to eat?" variant="ghost" onPress={() => setShowSuggest(true)} style={styles.actionBtn} />
-        <Button title="📷 Scan barcode" variant="ghost" onPress={() => setShowBarcode(true)} style={styles.actionBtn} />
+        <ActionTile icon="camera" label="Snap" onPress={pickPhoto} />
+        <ActionTile icon="maximize" label="Scan" onPress={() => setShowBarcode(true)} />
+        <ActionTile icon="coffee" label="Ideas" onPress={() => setShowSuggest(true)} />
       </View>
 
       <Button
@@ -434,19 +467,7 @@ const styles = StyleSheet.create({
   bigNumber: { color: colors.text, fontSize: 26, fontFamily: fonts.bold },
   remaining: { color: colors.textDim, fontSize: 13 },
   jumpToday: { marginTop: 12, paddingVertical: 8 },
-  snapCta: {
-    marginTop: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderRadius: radius,
-    borderWidth: 1,
-    borderColor: 'rgba(74,222,128,0.4)',
-    backgroundColor: 'rgba(74,222,128,0.10)',
-  },
-  snapText: { color: colors.accent, fontFamily: fonts.semibold, fontSize: 15 },
-  snapHint: { color: colors.textDim, fontFamily: fonts.regular },
-  actionRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
-  actionBtn: { flex: 1, paddingHorizontal: 6 },
+  actionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
   quickBtn: { marginTop: 10 },
   mealSection: { marginTop: 22 },
   mealTitle: { color: colors.text, fontSize: 16, fontFamily: fonts.bold, marginBottom: 10, textTransform: 'capitalize' },

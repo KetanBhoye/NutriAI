@@ -117,6 +117,9 @@ const config: ExpoConfig = {
     // GoogleSignIn's dependency chain (AppCheckCore → GoogleUtilities/RecaptchaInterop)
     // needs modular headers to build as static libraries under CocoaPods.
     './plugins/withModularHeaders',
+    // Must come last: strips the aps-environment entitlement that
+    // expo-notifications adds. See the plugin for why.
+    './plugins/withoutPushEntitlement',
   ],
   extra: {
     apiUrl: API_URL,
