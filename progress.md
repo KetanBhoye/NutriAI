@@ -33,7 +33,7 @@ both apps talk to; nothing server-side changed as part of this pass.
 
 | Screen | File | Wired to real API | Notable stand-ins this pass | Deep polish (later phase) |
 |---|---|---|---|---|
-| Today | `app/(tabs)/index.tsx` | yes | logs at a suggestion's default portion (no quantity-stepper) | `PortionSheet` stepper, `NewFoodSheet` external lookup, barcode |
+| Today | `app/(tabs)/index.tsx` | yes | — (portion stepper, barcode, photo and share all ship) | `NewFoodSheet` external lookup (`GET /api/foods/lookup`) |
 | Trends | `app/(tabs)/dashboard.tsx` | yes | — (14-day bar chart is plain `View`s, same as the web app's own CSS bars — not a stand-in) | — |
 | Coach | `app/(tabs)/coach.tsx` | yes | text-only composer | Voice dictation (Web Speech API has no RN equivalent without a new dependency) |
 | Plan | `app/(tabs)/goals.tsx` | yes | — | — |
@@ -46,7 +46,7 @@ both apps talk to; nothing server-side changed as part of this pass.
 | Feature | Where it was in the web app | Blocking dependency | Notes |
 |---|---|---|---|
 | Weekly share card | Trends "Share this week" | — | the daily card ships; the weekly variant was not ported |
-| Offline durable **write** queue | app-wide | — (AsyncStorage now installed) | reads are cached via `src/cache.ts`; writes are still optimistic-in-memory, and `entries.ts` call sites are shaped so a queue can drop in without changing them |
+| Offline durable **write** queue | app-wide | — | **done** — `src/api/queue.ts`; oldest-first, stops at the first failure, drops 4xx |
 | Coach voice input | Coach composer mic button | new native STT module | |
 | Bottom-sheet gesture polish | all modals | maybe `@gorhom/bottom-sheet` | `Sheet.tsx` is a plain `Modal` for now |
 
@@ -64,6 +64,38 @@ both apps talk to; nothing server-side changed as part of this pass.
   `expo-notifications` adds automatically and which otherwise fails every device
   build on a personal team. Delete that plugin if a paid account is ever added.
 - **Admin dashboard** — ops-only KPI/user table for the owner account; can stay web-only.
+
+## Portions are always grams (`src/portion.ts`)
+
+Portions were originally recorded in whatever unit the source used — the food
+library's `reference_unit`, or the household measure the photo parser returned
+("1 bowl", "2 roti"), or nothing at all for manual and coach-logged rows. That
+made the amount control useless: with no unit, the only thing a stepper could
+do was double the meal.
+
+Everything the app logs now records a **gram weight** (`quantity` + `unit:'g'`
+on `POST /api/entries`):
+
+- `toGrams()` converts household measures via a lookup table. Volumes are taken
+  at water density; countables (roti, idli, slice, egg) use typical weights.
+- `estimateGrams()` weighs rows that recorded no portion, from macro mass
+  (protein+carbs+fat ÷ 0.35 dry-matter fraction), falling back to kcal ÷ 1.5.
+  Surfaces that show an estimated weight say so.
+- `AmountStepper` is the one control for all of it — gram-based, value typable,
+  10g steps under 200g and 25g above.
+
+Editing an entry derives per-gram macros from `total ÷ basis` and rescales all
+four fields as the weight changes.
+
+**Server limitation:** `PATCH /api/entries/:id` accepts only `food_name`,
+`calories`, `protein_g`, `carbs_g`, `fat_g` and `meal_type` — **not**
+`quantity`/`unit`. Rescaled macros persist; the stored weight does not. Fixing
+that needs a backend change in `calorie-tracker-codex-refactored`
+(`src/http/api.ts`, the entry-update schema).
+
+The **coach** logs entries server-side, so its rows still arrive with whatever
+unit the LLM chose; they get an estimated weight in the edit sheet like any
+other legacy row.
 
 ## Session cookie on React Native (read before editing `src/api/client.ts`)
 
