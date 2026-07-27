@@ -1,30 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { StyleSheet, Text, View } from 'react-native';
 import { Button, Sheet, TextField } from '@/components/ui';
 import { colors, fonts, radius, type } from '@/theme';
 import { Suggestion } from '@/types';
+import { AmountStepper, formatQty, stepFor } from './AmountStepper';
 
 interface PortionSheetProps {
   food: Suggestion | null;
   onConfirm: (quantity: number) => void;
   onCancel: () => void;
-}
-
-/**
- * Step size per unit. Nudging grams by 1 would take forever, and nudging
- * "1 scoop" by 25 is nonsense — so the step follows what the unit measures.
- */
-function stepFor(unit: string): number {
-  const u = unit.toLowerCase();
-  if (u === 'g' || u === 'ml') return 25;
-  if (u === 'kg' || u === 'l') return 0.1;
-  return 1; // scoop, piece, slice, can, serving…
-}
-
-/** Grams read oddly as "150.0"; scoops read oddly as "1". */
-function formatQty(q: number, step: number): string {
-  return step < 1 ? q.toFixed(1) : String(Math.round(q));
 }
 
 export function PortionSheet({ food, onConfirm, onCancel }: PortionSheetProps) {
@@ -38,13 +22,6 @@ export function PortionSheet({ food, onConfirm, onCancel }: PortionSheetProps) {
 
   if (!food) return null;
 
-  const unitLabel = food.reference_unit === 'serving' ? '' : food.reference_unit;
-
-  const nudge = (delta: number) => {
-    void Haptics.selectionAsync();
-    setQty((q) => Math.max(step, Math.round((q + delta) / step) * step));
-  };
-
   const scale = (per: number | null) => (per == null ? null : Math.round(per * qty));
   const kcal = Math.round(food.calories_per_unit * qty);
 
@@ -53,25 +30,7 @@ export function PortionSheet({ food, onConfirm, onCancel }: PortionSheetProps) {
       <Text style={styles.name}>{food.canonical_name}</Text>
 
       <View style={styles.stepper}>
-        <Pressable
-          onPress={() => nudge(-step)}
-          disabled={qty <= step}
-          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed, qty <= step && styles.disabled]}
-        >
-          <Text style={styles.stepText}>−</Text>
-        </Pressable>
-
-        <View style={styles.qtyBox}>
-          <Text style={styles.qty}>{formatQty(qty, step)}</Text>
-          {unitLabel ? <Text style={styles.unit}>{unitLabel}</Text> : null}
-        </View>
-
-        <Pressable
-          onPress={() => nudge(step)}
-          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
-        >
-          <Text style={styles.stepText}>+</Text>
-        </Pressable>
+        <AmountStepper quantity={qty} unit={food.reference_unit} onChange={setQty} />
       </View>
 
       {/* Typed entry for anything the stepper would take too long to reach. */}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Button, PillGroup, Sheet, TextField } from '@/components/ui';
 import { capitalize } from '@/format';
+import { AmountStepper } from './AmountStepper';
 import { colors, fonts, radius } from '@/theme';
 import { FoodEntry, MealType } from '@/types';
 
@@ -25,6 +26,14 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [form, setForm] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', meal: 'snack' as MealType });
+  const [qty, setQty] = useState(1);
+  /**
+   * Macros per single unit, derived when the sheet opens. Entries store totals,
+   * not per-unit figures, so this is the only way to rescale them. Entries with
+   * no recorded quantity (manual and AI-logged rows) are treated as one
+   * serving, which still lets you double or halve them.
+   */
+  const [perUnit, setPerUnit] = useState({ calories: 0, protein: 0, carbs: 0, fat: 0 });
 
   useEffect(() => {
     if (!entry) return;
@@ -38,9 +47,30 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
       fat: entry.fat_g != null ? String(entry.fat_g) : '',
       meal: entry.meal_type ?? 'snack',
     });
+
+    const basis = entry.quantity && entry.quantity > 0 ? entry.quantity : 1;
+    setQty(basis);
+    setPerUnit({
+      calories: entry.calories / basis,
+      protein: (entry.protein_g ?? 0) / basis,
+      carbs: (entry.carbs_g ?? 0) / basis,
+      fat: (entry.fat_g ?? 0) / basis,
+    });
   }, [entry]);
 
   if (!entry) return null;
+
+  /** Rescales every macro field off the per-unit basis. */
+  const changeQty = (next: number) => {
+    setQty(next);
+    setForm((f) => ({
+      ...f,
+      calories: String(Math.round(perUnit.calories * next)),
+      protein: perUnit.protein ? String(Math.round(perUnit.protein * next)) : f.protein,
+      carbs: perUnit.carbs ? String(Math.round(perUnit.carbs * next)) : f.carbs,
+      fat: perUnit.fat ? String(Math.round(perUnit.fat * next)) : f.fat,
+    }));
+  };
 
   const save = () => {
     const calories = Number(form.calories);
@@ -90,6 +120,11 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
       ) : (
         <View>
           <TextField label="Name" value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} />
+          <Text style={styles.fieldLabel}>Amount</Text>
+          <View style={styles.amount}>
+            <AmountStepper quantity={qty} unit={entry.unit ?? 'serving'} onChange={changeQty} />
+          </View>
+
           <Text style={styles.fieldLabel}>Meal</Text>
           <View style={styles.mealRow}>
             <PillGroup
@@ -171,6 +206,7 @@ const styles = StyleSheet.create({
   confirmBox: { backgroundColor: colors.surface2, borderRadius: radius - 2, padding: 14, marginTop: 4 },
   confirmText: { color: colors.text, fontSize: 14, marginBottom: 12 },
   fieldLabel: { color: colors.textDim, fontSize: 12, marginBottom: 6 },
+  amount: { marginBottom: 16 },
   mealRow: { marginBottom: 12 },
   grid2: { flexDirection: 'row', gap: 12 },
   half: { flex: 1 },
