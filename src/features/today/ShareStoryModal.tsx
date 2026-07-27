@@ -6,6 +6,7 @@ import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 import { formatCardDate, pickCaption } from './shareCaption';
+import { ShareCardBackground, themeForCaption } from './ShareCardBackground';
 
 interface ShareStoryModalProps {
   visible: boolean;
@@ -72,6 +73,8 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
       ) : (
         <View style={styles.wrap}>
           <ViewShot ref={shotRef} style={styles.card}>
+            <ShareCardBackground theme={themeForCaption(caption.headline)} width={CARD_W} height={CARD_H} />
+
             {/* Header */}
             <View style={styles.cardHead}>
               <Text style={styles.brand}>NUTRIAI</Text>
@@ -149,11 +152,13 @@ const styles = StyleSheet.create({
   card: {
     width: CARD_W,
     height: CARD_H,
-    backgroundColor: colors.bg,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255,255,255,0.10)',
+    // Clips the oversized background rings to the rounded corners.
+    overflow: 'hidden',
+    backgroundColor: colors.bg,
   },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   brand: { fontFamily: fonts.extrabold, fontSize: 12, letterSpacing: 3, color: colors.accent },
@@ -179,7 +184,7 @@ const styles = StyleSheet.create({
   kcalLabel: { fontFamily: fonts.medium, fontSize: 10, letterSpacing: 1.4, color: colors.textDim, marginTop: 4 },
   track: {
     height: 6,
-    backgroundColor: colors.surface2,
+    backgroundColor: 'rgba(255,255,255,0.14)',
     borderRadius: 999,
     overflow: 'hidden',
     marginTop: 14,
@@ -189,7 +194,9 @@ const styles = StyleSheet.create({
   stats: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   figure: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 4,
@@ -202,7 +209,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   figureLabel: { fontFamily: fonts.medium, fontSize: 8, letterSpacing: 1, color: colors.textDim, marginTop: 3 },
-  rule: { height: 1, backgroundColor: colors.border, marginTop: 14, marginBottom: 10 },
+  rule: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginTop: 14, marginBottom: 10 },
   footer: { fontFamily: fonts.semibold, fontSize: 11, color: colors.textDim, letterSpacing: 0.4 },
   shareBtn: { marginTop: 18, alignSelf: 'stretch' },
   error: { ...type.body, color: colors.danger },
