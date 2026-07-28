@@ -106,18 +106,22 @@ export default function Plan() {
     } else {
       targetDate = addDays(todayISO(), 56);
     }
+
     setForm((f) => ({
       ...f,
       start_weight_kg: editWeight,
       start_date: todayISO(),
       goal_weight_kg: goalW,
       target_date: targetDate,
-      daily_calorie_goal: editMacros.calories,
-      daily_protein_goal_g: editMacros.protein_g,
-      daily_carbs_goal_g: editMacros.carbs_g,
-      daily_fat_goal_g: editMacros.fat_g,
+      // If the user is fine-tuning, don't overwrite their numbers.
+      ...(!showAdvanced && {
+        daily_calorie_goal: editMacros.calories,
+        daily_protein_goal_g: editMacros.protein_g,
+        daily_carbs_goal_g: editMacros.carbs_g,
+        daily_fat_goal_g: editMacros.fat_g,
+      }),
     }));
-  }, [canCompute, editGoal, editRate, editWeight, editTargetWeight, editMacros]);
+  }, [canCompute, editGoal, editRate, editWeight, editTargetWeight, editMacros, showAdvanced]);
 
   const pickEditGoal = (g: Goal) => {
     setEditGoal(g);
@@ -202,14 +206,7 @@ export default function Plan() {
     if (isRefresh) setRefreshing(true);
     setError(null);
     try {
-      // Paint the cached plan first so switching to this tab isn't a spinner.
-      const seed = await readCache<GoalsPayload>('goals');
-      if (seed && !isRefresh) {
-        apply(seed);
-        setLoading(false);
-      }
-      const { data: payload, stale: fromCache } = await cached('goals', () => goalsApi.getGoals());
-      setStale(fromCache);
+      const payload = await goalsApi.getGoals();
       setData(payload);
       if (payload.plan) {
         setForm((f) => ({
@@ -258,11 +255,17 @@ export default function Plan() {
     return null;
   }, [impliedRate]);
 
-  const save = async () => {
+  import { invalidateCache } from '@/cache';
+
+import { broadcast } from '@/events';
+
+const save = async () => {
     if (!planValid) return;
     setSaving(true);
     try {
       await goalsApi.saveGoals(form);
+      await invalidateCache('goals');
+      broadcast('goals');
       setEditing(false);
       await load();
     } catch {
@@ -491,8 +494,7 @@ export default function Plan() {
               </View>
 
               <Button
-                title={aiBusy ? 'Thinking…' : '✨ Refine with AI coach'}
-                variant="ghost"
+                title={aiBusy ? 'Thinking…' : '✨ Get AI-powered plan'}
                 onPress={refineWithAI}
                 disabled={aiBusy}
                 style={{ marginTop: 14 }}
@@ -504,8 +506,15 @@ export default function Plan() {
                 </View>
               ) : null}
 
+              <View style={styles.row}>
+                {data.plan ? (
+                  <Button title="Cancel" variant="ghost" onPress={() => setEditing(false)} style={styles.flex1} />
+                ) : null}
+                <Button title={saving ? 'Saving…' : 'Save plan'} onPress={save} disabled={!planValid || saving} style={styles.flex2} />
+              </View>
+
               <Button
-                title={showAdvanced ? '▾ Hide fine-tune' : '▸ Fine-tune numbers & steps'}
+                title={showAdvanced ? '▾ Hide manual inputs' : '▸ Manually set targets'}
                 variant="ghost"
                 onPress={() => setShowAdvanced((v) => !v)}
                 style={{ marginTop: 12 }}

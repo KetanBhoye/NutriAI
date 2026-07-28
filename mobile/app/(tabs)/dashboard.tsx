@@ -1,24 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { dashboardApi, goalsApi } from '@/api';
-import { useCachedResource } from '@/useCachedResource';
-import { writeCache } from '@/cache';
 import { toLocalISODate } from '@/dates';
 import { colors, fonts, type } from '@/theme';
-import { Button, Card, EmptyState, Screen, SkeletonCard, StaleNotice, StatTile } from '@/components/ui';
-import { WeeklyInsights, WeeklyStats } from '@/types';
+import { Button, Card, EmptyState, Screen, SkeletonCard, StatTile } from '@/components/ui';
+import { WeeklyInsights, WeeklyStats, GoalsPayload } from '@/types';
+import { subscribe } from '@/events';
 
 const FALLBACK_GOAL_CALORIES = 1900;
-/** Height of the plot area itself; the weekday label sits below it. */
 const PLOT_HEIGHT = 140;
 const MIN_BAR_HEIGHT = 3;
 
 interface Bar {
   date: string;
   calories: number;
-  /** Pixel height within the plot area. Computed here rather than as a CSS
-   *  percentage — percentage heights need a definite parent height, which is
-   *  easy to break when the column also holds a label. */
   height: number;
   over: boolean;
   missing: boolean;
@@ -47,23 +42,46 @@ function buildBars(stats: WeeklyStats, goalCalories: number): { bars: Bar[]; goa
 }
 
 export default function Trends() {
-  const stats = useCachedResource('stats.weekly', () => dashboardApi.getWeeklyStats(30), {
-    errorMessage: "Couldn't load your trends.",
-  });
-  const goals = useCachedResource('goals', () => goalsApi.getGoals());
-  // The weekly report is an LLM call and the server caches it per day, so it
-  // is the most valuable thing to serve from cache and refresh behind.
-  const report = useCachedResource('insights.weekly', () => dashboardApi.getWeeklyInsights(), {
-    errorMessage: "Couldn't load your weekly report.",
-  });
-
+  const [stats, setStats] = useState<WeeklyStats | null>(null);
+  const [goals, setGoals] = useState<GoalsPayload | null>(null);
+  const [report, setReport] = useState<WeeklyInsights | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshingReport, setRefreshingReport] = useState(false);
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    setLoading(true);
+    setError(null);
+    try {
+      const [statsData, goalsData, reportData] = await Promise.all([
+        dashboardApi.getWeeklyStats(30),
+        goalsApi.getGoals(),
+        dashboardApi.getWeeklyInsights(),
+      ]);
+      setStats(statsData);
+      setGoals(goalsData);
+      setReport(reportData);
+    } catch (e) {
+      setError("Couldn't load your trends.");
+    } finally {
+      setLoading(false);
+      if (isRefresh) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const unsubscribe = subscribe('goals', () => load());
+    return unsubscribe;
+  }, [load]);
+
   const regenerateReport = async () => {
     setRefreshingReport(true);
     try {
       const fresh = await dashboardApi.getWeeklyInsights(true);
-      await writeCache('insights.weekly', fresh);
-      await report.refresh();
+      setReport(fresh);
     } catch {
       // leave the existing report on screen
     } finally {
@@ -71,23 +89,38 @@ export default function Trends() {
     }
   };
 
-  const refreshAll = async () => {
-    await Promise.all([stats.refresh(), goals.refresh(), report.refresh()]);
-  };
+  const refreshAll = () => load(true);
 
-  const goalCalories = goals.data?.macros.calories ?? FALLBACK_GOAL_CALORIES;
+  const goalCalories = goals?.macros.calories ?? FALLBACK_GOAL_CALORIES;
 
   const { bars, goalLineBottom } = useMemo(
-    () => (stats.data ? buildBars(stats.data, goalCalories) : { bars: [] as Bar[], goalLineBottom: 0 }),
-    [stats.data, goalCalories]
+    () => (stats ? buildBars(stats, goalCalories) : { bars: [] as Bar[], goalLineBottom: 0 }),
+    [stats, goalCalories]
   );
   const missedDays = bars.filter((b) => b.missing).length;
 
-  return (
-    <Screen refreshing={stats.refreshing || report.refreshing} onRefresh={refreshAll}>
-      <Text style={styles.title}>Trends</Text>
+  if (loading && !refreshing) {
+    return (
+      <Screen>
+        <Text style={styles.title}>Trends</Text>
+        <SkeletonCard lines={5} />
+      </Screen>
+    );
+  }
 
-      {stats.stale || report.stale ? <StaleNotice /> : null}
+  if (error && !stats) {
+    return (
+      <Screen>
+        <Text style={styles.title}>Trends</Text>
+        <EmptyState message={error} />
+        <Button title="Try again" variant="ghost" onPress={() => load(true)} style={{ marginTop: 12 }} />
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen refreshing={refreshing} onRefresh={refreshAll}>
+      <Text style={styles.title}>Trends</Text>
 
       <Card style={styles.reportCard}>
         <View style={styles.reportHead}>
@@ -96,22 +129,22 @@ export default function Trends() {
             title={refreshingReport ? '…' : '↻ Refresh'}
             variant="ghost"
             onPress={regenerateReport}
-            disabled={refreshingReport || report.loading}
+            disabled={refreshingReport || loading}
             style={styles.refreshBtn}
           />
         </View>
 
-        {report.loading ? (
+        {loading && !report ? (
           <SkeletonCard lines={4} />
-        ) : report.data?.report ? (
+        ) : report?.report ? (
           <View>
-            <Text style={styles.reportHeadline}>{report.data.report.headline}</Text>
-            <Text style={styles.reportSummary}>{report.data.report.summary}</Text>
+            <Text style={styles.reportHeadline}>{report.report.headline}</Text>
+            <Text style={styles.reportSummary}>{report.report.summary}</Text>
 
-            {report.data.report.wins.length ? (
+            {report.report.wins.length ? (
               <View style={styles.reportList}>
                 <Text style={styles.reportListTitle}>What went well</Text>
-                {report.data.report.wins.map((w, i) => (
+                {report.report.wins.map((w, i) => (
                   <View key={`w${i}`} style={styles.reportItem}>
                     <View style={[styles.dot, { backgroundColor: colors.accent }]} />
                     <Text style={styles.reportItemText}>{w}</Text>
@@ -120,10 +153,10 @@ export default function Trends() {
               </View>
             ) : null}
 
-            {report.data.report.focus.length ? (
+            {report.report.focus.length ? (
               <View style={styles.reportList}>
                 <Text style={styles.reportListTitle}>Focus next week</Text>
-                {report.data.report.focus.map((f, i) => (
+                {report.report.focus.map((f, i) => (
                   <View key={`f${i}`} style={styles.reportItem}>
                     <View style={[styles.dot, { backgroundColor: colors.warn }]} />
                     <Text style={styles.reportItemText}>{f}</Text>
@@ -132,7 +165,7 @@ export default function Trends() {
               </View>
             ) : null}
 
-            {report.data.source === 'rule' ? (
+            {report.source === 'rule' ? (
               <Text style={styles.reportNote}>Based on your numbers (AI coach unavailable right now).</Text>
             ) : null}
           </View>
@@ -141,19 +174,14 @@ export default function Trends() {
         )}
       </Card>
 
-      {stats.loading ? (
+      {loading && !stats ? (
         <SkeletonCard lines={5} />
-      ) : stats.error && !stats.data ? (
-        <View>
-          <EmptyState message={stats.error} />
-          <Button title="Try again" variant="ghost" onPress={() => stats.refresh()} style={{ marginTop: 12 }} />
-        </View>
-      ) : stats.data ? (
+      ) : stats ? (
         <>
           <View style={styles.statsRow}>
-            <StatTile label="Day streak" value={String(stats.data.streak)} />
-            <StatTile label="Avg kcal" value={String(stats.data.average_calories)} />
-            <StatTile label="Days logged" value={`${stats.data.complete_days}`} unit="/30" />
+            <StatTile label="Day streak" value={String(stats.streak)} />
+            <StatTile label="Avg kcal" value={String(stats.average_calories)} />
+            <StatTile label="Days logged" value={`${stats.complete_days}`} unit="/30" />
           </View>
 
           <Text style={styles.sectionTitle}>Last 14 days</Text>
@@ -188,7 +216,7 @@ export default function Trends() {
 
           <Text style={styles.footnote}>
             {missedDays > 0 ? `${missedDays} of the last 14 days have nothing logged (shown as gaps). ` : ''}
-            A day counts toward the streak once it passes {stats.data.complete_day_threshold} kcal, so a half-finished
+            A day counts toward the streak once it passes {stats.complete_day_threshold} kcal, so a half-finished
             log doesn't count as a full day.
           </Text>
         </>

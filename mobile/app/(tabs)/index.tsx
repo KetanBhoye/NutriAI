@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, AppState, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
@@ -148,14 +148,7 @@ export default function Today() {
   const load = useCallback(async (date: string) => {
     setError(null);
     try {
-      // Paint from cache first so switching days (or a cold start) shows real
-      // data immediately rather than an empty list while the request runs.
-      const seed = await readCache<EntriesResponse>(`entries.${date}`);
-      if (seed) {
-        setEntries(seed.entries);
-        setLoading(false);
-      }
-      const { data } = await cached(`entries.${date}`, () => entriesApi.getEntries(date));
+      const data = await entriesApi.getEntries(date);
       setEntries(data.entries);
     } catch (e) {
       setError((e as Error).message);
@@ -180,19 +173,24 @@ export default function Today() {
     load(viewDate);
   }, [viewDate, load]);
 
-  useEffect(() => {
-    cached('goals', () => goalsApi.getGoals())
-      .then(({ data: g }) => {
-        if (g.macros.calories) {
-          setGoals({
-            daily_calorie_goal: g.macros.calories,
-            daily_protein_goal_g: g.macros.protein_g,
-            daily_carbs_goal_g: g.macros.carbs_g,
-            daily_fat_goal_g: g.macros.fat_g,
-          });
-        }
-      })
-      .catch(() => {});
+  import { subscribe } from '@/events';
+
+useEffect(() => {
+    const unsubscribe = subscribe('goals', () => {
+      cached('goals', () => goalsApi.getGoals())
+        .then(({ data: g }) => {
+          if (g.macros.calories) {
+            setGoals({
+              daily_calorie_goal: g.macros.calories,
+              daily_protein_goal_g: g.macros.protein_g,
+              daily_carbs_goal_g: g.macros.carbs_g,
+              daily_fat_goal_g: g.macros.fat_g,
+            });
+          }
+        })
+        .catch(() => {});
+    });
+    return unsubscribe;
   }, []);
 
   /**
