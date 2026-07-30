@@ -56,6 +56,13 @@ const config: ExpoConfig = {
   },
   android: {
     package: 'app.nutriai.mobile',
+    /**
+     * Bump this on every release you hand out. Android compares versionCode,
+     * not the human version string: leave it and a phone can't tell one build
+     * from another, and some installers refuse to update at all. `npm run
+     * release` bumps both this and `version` for you.
+     */
+    versionCode: 1,
     permissions: HEALTH_CONNECT_PERMISSIONS,
     // Foreground art sits inside the ~66% safe zone; Android masks the rest.
     adaptiveIcon: {
