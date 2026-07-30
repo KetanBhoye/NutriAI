@@ -13,12 +13,7 @@ local reminders, and an offline write queue.
 
 ## Read this first
 
-**This directory is the live mobile app, and it is its own git repository.** The backend repo
-also contains a `mobile/` directory — that is an older copy, and editing it does nothing. If you
-are here to change the app, you are in the right place; see
-[Two copies of the app](#two-copies-of-the-app) before you touch the other one.
-
-Then read [`progress.md`](./progress.md). It is the engineering log: what is done, what is
+Read [`progress.md`](./progress.md). It is the engineering log: what is done, what is
 deliberately deferred, and — most usefully — the decisions that look wrong until you know why
 (the cookie handling, grams-only portions, the write queue's collapse rules, the Android text
 traps). Most bugs this app has shipped were re-introductions of something explained there.
@@ -210,23 +205,23 @@ npx expo prebuild --platform android --clean --no-install
 
 ---
 
-## Two copies of the app
+## How this fits in the repository
 
-The backend repo contains **`mobile/`**, a snapshot of this app taken at commit `1c3a58f`. It is
-stale (hundreds of lines behind) and nothing builds from it. **`nutriai-mobile/` — this directory
-— is the live app, and it is a separate git repository** with its own history and branches.
+The app lives in the same repository as the backend it talks to
+(`calorie-tracker-codex-refactored`), alongside `src/` (Express API + MCP
+server) and `web/` (the Vue PWA). One clone, one history, one place to change
+an endpoint and the client that calls it in the same commit.
 
-Consequences worth knowing before you start:
+It is still its own project inside that repo:
 
-- Changes here are **not** committed by committing in the backend repo. Two repos, two commits.
-- `nutriai-mobile/` is untracked-but-not-ignored by the backend repo, so it shows up as an
-  untracked directory in `git status` there. That is expected, not a mistake to "fix" by adding it.
-- The backend's `CLAUDE.md` still describes the app as living in `mobile/`.
-
-This duplication is a trap for anyone new. Resolving it — deleting the stale copy, or making it a
-submodule — is a decision for the repo owner, and until then this note is the map.
-
----
+- **`npm`, not `pnpm`** — it has its own `package.json` and lockfile. The
+  backend uses pnpm; don't cross the streams.
+- **Its own tests.** `npm test` here; `pnpm test` at the root runs the server's.
+  The root `tsconfig.json` and `vitest.config.ts` only include `src/**` and
+  `web/src/**`, and `biome.json`/`.railwayignore` exclude `mobile/`, so nothing
+  here can affect the server build or the Railway image.
+- **Its own release cycle.** The APK is published as a GitHub release; the
+  backend's `/download` route redirects to the latest one.
 
 ## Troubleshooting
 
