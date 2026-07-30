@@ -214,6 +214,21 @@ untouched and run on either platform. `npm run e2e:smoke` needs no account;
 the rest take credentials via `-e EMAIL=... -e PASSWORD=...` and must clean up
 after themselves, because they run against a real account on a real backend.
 
+## HealthKit's exercise time is in **seconds**
+
+`getAppleExerciseTime` looks like it returns minutes. It does not:
+`RCTAppleHealthKit+Methods_Activity.m` reads
+`withDefault:[HKUnit secondUnit]`, so without an explicit `unit` option a day
+of 83 minutes' exercise arrives as **4,980** — which then failed the API's
+1,440-minute bound and took the whole sync down with it. `healthkit.ts` now
+passes `unit: 'minute'`.
+
+Worth knowing for any metric added later: the defaults are per-method and not
+consistent. Active energy defaults to kilocalories and distance to meters
+(both what the existing callers assume), but check the native source rather
+than the TypeScript name. Health Connect on Android was never affected — it
+computes minutes from session start/end times.
+
 ## A health reading can be impossible; treat it as broken, not big
 
 Apple Health reported **4,980 exercise minutes** for a day that contains 1,440

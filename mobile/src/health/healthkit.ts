@@ -87,9 +87,16 @@ export const healthKitProvider: HealthProvider = {
         resolve(err ? null : r?.value ?? null)
       );
     });
+    // `unit` is not optional here, whatever the name suggests:
+    // getAppleExerciseTime defaults to **seconds**
+    // (RCTAppleHealthKit+Methods_Activity.m: `withDefault:[HKUnit secondUnit]`),
+    // so without this a day of 83 minutes' exercise arrives as 4,980 and the
+    // sync is rejected for exceeding the 1,440 minutes a day contains.
+    // Energy and distance default to kilocalories and meters, which is what
+    // the callers above already assume.
     const exerciseMinutes = await sumStat(
       AppleHealthKit.getAppleExerciseTime.bind(AppleHealthKit),
-      range
+      { ...range, unit: 'minute' as HealthInputOptions['unit'] }
     );
 
     const weightKg = await new Promise<number | null>((resolve) => {
