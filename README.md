@@ -10,11 +10,27 @@ Railway/Render/Fly, or on-prem. No Cloudflare dependency.
 |---|---|---|
 | `src/` | Express + SQLite API and MCP server | `pnpm dev` |
 | `web/` | Vue 3 PWA, built into `public/app/` and served by the API | `pnpm web:dev` |
-| `mobile/` | Expo / React Native app (iOS + Android) | `cd mobile && npx expo start` |
+| `nutriai-mobile/` | **The live Expo / React Native app**, a separate git repo | `cd nutriai-mobile && npm start` |
+| `mobile/` | An older snapshot of that app. Stale — see below | — |
+| `migrations/portable/` | Numbered SQL migrations, applied by `pnpm db:migrate` | |
+| `deploy/` | Per-platform deployment guides and scripts | |
 
-**[SETUP.md](SETUP.md) is the full guide** — prerequisites, every environment
-variable, APK builds, signing, and the Google Sign-In wiring. This file is the
-short version.
+> ⚠️ **Two copies of the mobile app.** `mobile/` is a snapshot committed at
+> `1c3a58f` and is hundreds of lines behind. All native work happens in
+> **`nutriai-mobile/`**, which has **its own git repository** — committing here does
+> not commit there, and it shows up as an untracked directory in this repo's
+> `git status` by design. Resolving the duplication (delete, or convert to a
+> submodule) is an open decision; until then, work in `nutriai-mobile/`.
+
+**New here?** Read this file for the shape of the system, then:
+
+- **[SETUP.md](SETUP.md)** — the full setup guide: prerequisites, every
+  environment variable, APK builds, signing, Google Sign-In wiring.
+- **[nutriai-mobile/README.md](nutriai-mobile/README.md)** — the mobile app's
+  own setup and architecture.
+- **[nutriai-mobile/progress.md](nutriai-mobile/progress.md)** — the engineering
+  log for the app: what's deferred, and the decisions that look wrong until you
+  know why. Worth reading before your first change.
 
 ## What You Get
 
@@ -35,6 +51,47 @@ short version.
 - Language: TypeScript
 - Validation: Zod
 - Testing: Vitest + Supertest
+
+## Architecture
+
+One backend serves three clients. The API is layered, and the layers are worth
+respecting — most of the logic that matters is in `services/`, not in routes.
+
+```
+src/
+  index.ts            entry point: middleware, routes, MCP server registration
+  http/api.ts         every REST route + its Zod schema (the API's contract)
+  auth/               sessions, OAuth 2.0, bearer tokens for MCP clients
+  mcp/                MCP server and tool registration
+  services/           business logic — the interesting code lives here
+    goal-progress.ts  glide path, adaptive plan progress, weekly deficit
+    coach/            LLM: chat agent, photo parsing, weekly insights, onboarding plan
+    food-lookup.ts    barcode + external food lookup
+  repositories/       data access, one per table; all SQL lives here
+  db/                 connection, schema, migration runner
+  tools/              MCP tool implementations
+```
+
+**Requests flow** route → Zod schema → service → repository → SQLite. A route
+should validate and delegate; if it grows arithmetic, that arithmetic belongs in
+`services/` where it can be unit-tested (and where the app and the coach are
+guaranteed to agree on it).
+
+**Domain maths is duplicated on purpose.** `src/utils/calculations.ts` (server),
+`web/src/nutrition.ts` (PWA) and `nutriai-mobile/src/nutrition.ts` (app) implement
+the same Mifflin-St Jeor BMR and activity multipliers, so a client can show
+targets without a round trip. If you change one, change all three — the mobile
+app's test suite pins the shared values for exactly this reason.
+
+**Two energy rules that look like bugs and aren't:**
+
+- Health-app *active energy* is never added to a day's expenditure. A TDEE built
+  from an activity level already assumes normal daily movement; adding it
+  double-counts and inflates the deficit.
+- Hand-logged exercise **is** added, but only its **net** energy (above resting).
+  Your activity level can't have anticipated Tuesday's football match.
+
+Both live in `services/goal-progress.ts` with the reasoning in comments.
 
 ## Quick Start
 
@@ -61,95 +118,58 @@ Server starts at `http://localhost:8787` by default.
 
 ## Mobile app (iOS + Android)
 
+The app lives in **`nutriai-mobile/`** and has its own README covering setup,
+architecture, testing and the traps —
+**[nutriai-mobile/README.md](nutriai-mobile/README.md)** is the place to start,
+with `nutriai-mobile/progress.md` as the engineering log behind it.
+
 ```bash
-cd mobile
-npm install          # mobile has its own lockfile — npm, not pnpm
+cd nutriai-mobile
+npm install            # its own lockfile — npm, not pnpm
+npm test               # unit tests, no device needed
+npx expo run:ios --device      # or: npx expo run:android
 ```
 
 The app defaults to the **production** API. To point it at a server you're
 running locally, set `API_URL` at build time — it's compiled into the binary, so
 this is a rebuild rather than a restart, and it must be your machine's LAN IP
-(`localhost` on a phone means the phone):
+(`localhost` on a phone means the phone; on an Android emulator use
+`10.0.2.2`):
 
 ```bash
-API_URL=http://192.168.1.x:8787 npx expo run:ios
+API_URL=http://192.168.1.x:8787 npx expo run:ios --device
 ```
 
-### Running after you change something
+A few things that bite people, all expanded in the app's own README:
 
-**Changed JS/TS only** — anything under `mobile/app/` or `mobile/src/`:
+- `ios/` and `android/` are generated by `expo prebuild` and gitignored. Never
+  edit them; native config belongs in `app.config.ts` or a plugin in `plugins/`.
+- Release APKs are signed from `nutriai-mobile/credentials/` (gitignored — back
+  it up, or you can never update an installed app). Google Sign-In matches the
+  signing certificate's SHA-1, so a release build needs its own OAuth client;
+  see [SETUP.md §6](SETUP.md#6-google-sign-in).
+- iOS push is impossible on a personal Apple team, so reminders are local
+  notifications. SETUP.md §7 explains why.
+- Health data is read-only on both platforms. Apple Health needs a real device;
+  Health Connect needs Android 8.0+ and the Health Connect app.
+- `mobile/` and `nutriai-mobile/` are both excluded from this repo's
+  `tsconfig.json`, `vitest.config.ts`, `biome.json` and `.railwayignore`, so
+  neither affects the server build or the Railway image.
 
-```bash
-cd mobile
-npx expo start       # then press `i` for iOS, `a` for Android
-```
+## API surface the app depends on
 
-Fast Refresh applies the change on save; no rebuild. If a dev build is already
-installed on the device, just launch it and it picks up Metro.
+Full contract: `src/http/api.ts`. The endpoints most likely to surprise you:
 
-**Changed anything native** — `app.config.ts`, `plugins/*.js`, or added or
-removed a dependency that ships native code:
+| Endpoint | Notes |
+|---|---|
+| `GET /api/me` | Also returns `onboarded` (true once a calorie target exists) and the current goals. |
+| `GET /api/goals` | Plan, macro targets, weekly glide path, **`weigh_ins`** (daily, for the trend chart) and **`progress`** — the server-computed adaptive verdict from `services/goal-progress.ts`. |
+| `PUT /api/goals` | Saves the plan *and* the macro targets in one call; macro fields are `nullish`. |
+| `PATCH /api/entries/:id` | Partial update. Macros are **nullable** — `null` clears a value, omitted leaves it. Sending `null` where the schema wanted a number used to 400 the whole request. |
+| `POST /api/activity` | Upserts one day: steps, weight, and hand-logged exercise (`exercise_type`, `exercise_minutes`, `exercise_kcal`). `.strict()` — unknown keys are rejected rather than silently dropped. |
 
-```bash
-cd mobile
-npx expo prebuild --clean       # regenerate ios/ and android/
-cd ios && pod install && cd ..  # iOS only
-npx expo run:ios                # or: npx expo run:android
-```
-
-Fast Refresh cannot pick these up — icons, permissions, entitlements and native
-modules are all compiled in. `ios/` and `android/` are generated and gitignored,
-so **never edit them by hand**; the next prebuild discards it.
-
-### Running on a physical device
-
-```bash
-# iOS — Release is required, see below
-xcrun xctrace list devices                     # find the UDID
-npx expo run:ios --device <udid> --configuration Release
-
-# Android
-npx expo run:android --variant release
-```
-
-A **Debug** iOS build expects a Metro server and falls back to `localhost` on a
-device — which is the phone itself, so you get a black screen. Use
-`--configuration Release` on hardware.
-
-Release builds bundle the JS, so a Release build is a full rebuild for **every**
-change, including JS-only ones. Free Apple provisioning profiles also expire
-after 7 days; reinstall to keep a sideloaded build alive.
-
-### Building an APK
-
-```bash
-cd mobile
-npx expo prebuild -p android --clean
-cd android
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
-  ./gradlew assembleRelease
-```
-
-Output: `mobile/android/app/build/outputs/apk/release/app-release.apk`.
-Install with `adb install -r <path>`, or copy it to the phone and open it.
-
-Release APKs are signed from `mobile/credentials/` (gitignored — back it up).
-Google Sign-In on Android matches the signing certificate's SHA-1, so that
-fingerprint has to be registered in Google Cloud; see
-[SETUP.md §6](SETUP.md#6-google-sign-in).
-
-### Notes
-
-- Health data is **read-only** on both platforms. Apple Health needs a real
-  device (the simulator has no health store); Health Connect needs Android 8.0+
-  and the Health Connect app.
-- iOS push notifications are impossible without a paid Apple Developer account —
-  the app uses local notifications for reminders instead. SETUP.md §7 explains
-  why.
-- `mobile/` is excluded from this repo's `tsconfig.json`, `vitest.config.ts`,
-  `biome.json` and `.railwayignore`, so it never affects the server build or the
-  Railway image.
+Adding a column? Add a numbered file in `migrations/portable/` and run
+`pnpm db:migrate`. Migrations are applied automatically on boot too.
 
 ## MCP Endpoints
 
@@ -276,7 +296,9 @@ Full Railway deployment guide: `deploy/railway/README.md`
 - `pnpm test` - run tests
 - `pnpm type-check` - TypeScript check
 - `pnpm web:dev` / `pnpm web:build` - PWA dev server / production build
-- `cd mobile && npm run typecheck` - type-check the native app
+- `cd nutriai-mobile && npm test` - unit tests for the native app (vitest)
+- `cd nutriai-mobile && npm run e2e` - end-to-end flows on a device (Maestro)
+- `cd nutriai-mobile && npm run typecheck` - type-check the native app
 - `node deploy/windows/acceptance-test.mjs ...` - deployment acceptance checks
 
 ## Core MCP Tools

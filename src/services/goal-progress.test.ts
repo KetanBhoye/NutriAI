@@ -124,11 +124,52 @@ describe('buildDeficitSeries', () => {
   });
 });
 
+describe('buildDeficitSeries with logged exercise', () => {
+  const intake = new Map([['2026-07-17', 1800]]);
+  const tdee = new Map([['2026-07-17', 2400]]);
+
+  it('counts nothing extra on a day with no logged session', () => {
+    const [day] = buildDeficitSeries(intake, tdee, null);
+    expect(day!.expenditure_kcal).toBe(2400);
+    expect(day!.exercise_kcal).toBe(0);
+    expect(day!.deficit_kcal).toBe(600);
+  });
+
+  it('adds a logged session to that day\'s expenditure', () => {
+    // The activity level can't have anticipated Tuesday's football match.
+    const exercise = new Map([['2026-07-17', 330]]);
+    const [day] = buildDeficitSeries(intake, tdee, null, exercise);
+
+    expect(day!.expenditure_kcal).toBe(2730);
+    expect(day!.exercise_kcal).toBe(330);
+    expect(day!.deficit_kcal).toBe(930);
+  });
+
+  it('ignores exercise logged on a day with no food logged', () => {
+    // A day with no intake isn't a day we can compute a balance for at all.
+    const exercise = new Map([['2026-07-18', 400]]);
+    const days = buildDeficitSeries(intake, tdee, null, exercise);
+
+    expect(days).toHaveLength(1);
+    expect(days[0]!.exercise_kcal).toBe(0);
+  });
+
+  it('still reports no deficit when the TDEE is unknown', () => {
+    const exercise = new Map([['2026-07-17', 330]]);
+    const [day] = buildDeficitSeries(intake, new Map(), null, exercise);
+
+    // Exercise alone can't produce a balance without a maintenance figure.
+    expect(day!.expenditure_kcal).toBeNull();
+    expect(day!.deficit_kcal).toBeNull();
+  });
+});
+
 describe('weeklyDeficit', () => {
   const dayFor = (date: string, deficit: number) => ({
     date,
     intake_kcal: 1800,
     expenditure_kcal: 1800 + deficit,
+    exercise_kcal: 0,
     deficit_kcal: deficit,
   });
 
@@ -170,7 +211,7 @@ describe('weeklyDeficit', () => {
   it('skips days with an unknown deficit', () => {
     const days = [
       ...['2026-07-13', '2026-07-14', '2026-07-15', '2026-07-16'].map((d) => dayFor(d, 600)),
-      { date: '2026-07-17', intake_kcal: 1800, expenditure_kcal: null, deficit_kcal: null },
+      { date: '2026-07-17', intake_kcal: 1800, expenditure_kcal: null, exercise_kcal: 0, deficit_kcal: null },
     ];
 
     const [week] = weeklyDeficit(days);

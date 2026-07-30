@@ -307,8 +307,10 @@ function headlineFor({
 export interface DeficitDay {
   date: string;
   intake_kcal: number;
-  /** TDEE from the profile, plus any active energy not already counted in it. */
+  /** TDEE from the profile, plus the net energy of any logged exercise. */
   expenditure_kcal: number | null;
+  /** The logged-exercise part of that expenditure, for showing the workings. */
+  exercise_kcal: number;
   deficit_kcal: number | null;
 }
 
@@ -319,11 +321,19 @@ export interface DeficitDay {
  * Active energy from Apple Health is deliberately NOT added on top — doing so
  * double-counts the movement TDEE already assumes and inflates the deficit,
  * which is the single most common way this kind of tracker lies to you.
+ *
+ * Hand-logged exercise is the one exception, and only its *net* energy. An
+ * activity level says how you usually spend a day; it can't know about the
+ * hour of football you played on Tuesday. `exerciseByDate` therefore carries
+ * energy above resting (see the app's `netExerciseKcal`), which is genuinely
+ * additional — a day with no steps but a real game is no longer indistinguishable
+ * from a day on the sofa.
  */
 export function buildDeficitSeries(
   intakeByDate: Map<string, number>,
   tdeeByDate: Map<string, number>,
-  fallbackTdee: number | null
+  fallbackTdee: number | null,
+  exerciseByDate: Map<string, number> = new Map()
 ): DeficitDay[] {
   const days = [...intakeByDate.keys()].sort();
 
@@ -341,11 +351,15 @@ export function buildDeficitSeries(
       }
     }
 
+    const exercise = exerciseByDate.get(date) ?? 0;
+    const expenditure = tdee === null ? null : tdee + exercise;
+
     return {
       date,
       intake_kcal: intake,
-      expenditure_kcal: tdee,
-      deficit_kcal: tdee === null ? null : Math.round(tdee - intake),
+      expenditure_kcal: expenditure,
+      exercise_kcal: exercise,
+      deficit_kcal: expenditure === null ? null : Math.round(expenditure - intake),
     };
   });
 }

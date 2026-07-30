@@ -127,6 +127,11 @@ const activitySchema = z.object({
   active_energy_kcal: z.number().min(0).max(20000).nullish(),
   resting_energy_kcal: z.number().min(0).max(20000).nullish(),
   exercise_minutes: z.number().int().min(0).max(1440).nullish(),
+  // Hand-logged exercise: what it was, and the net energy above resting. Kept
+  // apart from active_energy_kcal, which a health app pushes and which the
+  // deficit deliberately ignores (see services/goal-progress.ts).
+  exercise_type: z.string().min(1).max(40).nullish(),
+  exercise_kcal: z.number().int().min(0).max(10000).nullish(),
   stand_hours: z.number().int().min(0).max(24).nullish(),
   distance_km: z.number().min(0).max(500).nullish(),
   // Apple Health body mass is stored separately so the Goals view can surface
@@ -810,10 +815,18 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       );
 
       const latestTdee = [...tdeeByDate.values()].pop() ?? null;
-      const deficitDays = buildDeficitSeries(intakeByDate, tdeeByDate, latestTdee);
 
       const activityRepo = new ActivityRepo(env.DB);
       const activity = await activityRepo.listRecent(userId, 60);
+
+      // Only hand-logged sessions count towards expenditure — see
+      // buildDeficitSeries for why health-app active energy does not.
+      const exerciseByDate = new Map(
+        activity
+          .filter((row) => (row.exercise_kcal ?? 0) > 0)
+          .map((row) => [row.activity_date, row.exercise_kcal!] as const)
+      );
+      const deficitDays = buildDeficitSeries(intakeByDate, tdeeByDate, latestTdee, exerciseByDate);
 
       // Every weigh-in inside the plan (or the recent past when there's no
       // plan), so the app can plot the day-to-day line against the baseline
