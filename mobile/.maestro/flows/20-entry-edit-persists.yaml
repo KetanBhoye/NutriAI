@@ -1,0 +1,85 @@
+# Regression: editing an entry's calories appeared to work, then reverted on
+# the next refresh — a blank macro was sent as null, the API refused the whole
+# patch, and the queue dropped the 4xx silently.
+#
+# The unit tests cover the payload rules; this covers what the user actually
+# reported, which is that the number came back after a reload. That needs the
+# real API, so it can only be proven end to end.
+#
+# Note: no `hideKeyboard`. On Android that presses Back, which dismisses the
+# sheet this flow is typing into. Tapping the next field directly is enough —
+# the sheet keeps taps working with the keyboard up.
+appId: app.nutriai.mobile
+---
+- launchApp
+# Order-independent: any flow may run after 00-launch has cleared state.
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+# The app opens on Today, so don't tap the tab: "Today" is also the date label
+# at the top of this screen, and the first match wins. Instead make sure we're
+# looking at *today*, since the date survives a relaunch.
+- runFlow:
+    when:
+      visible: 'Jump to today'
+    commands:
+      - tapOn: 'Jump to today'
+
+# Log something to edit, so the flow doesn't depend on what's already there.
+- tapOn:
+    text: '\+ Add breakfast'
+- assertVisible: 'Breakfast'
+- tapOn: "\\+ Add a food that isn't listed"
+
+# By id, not label: Maestro can see the Today screen *behind* this sheet, and
+# "Calories" also appears there in the macro bar — tapping that match lands on
+# the backdrop and dismisses the sheet.
+- tapOn:
+    id: 'manual-name'
+- inputText: 'Maestro test food'
+- tapOn:
+    id: 'manual-calories'
+- inputText: '300'
+# Dismiss the keyboard by tapping neutral text inside the sheet. The sheet sets
+# keyboardShouldPersistTaps="handled", so this closes the keyboard and leaves
+# the sheet up — unlike `hideKeyboard`, which is a Back press on Android and
+# dismisses the sheet along with it.
+- tapOn: 'Weight is optional, but it lets you re-portion this later.'
+- tapOn: 'Log it'
+- extendedWaitUntil:
+    visible: 'Maestro test food'
+    timeout: 15000
+
+# Edit only the calories, leaving the macros blank — the exact shape that broke.
+- tapOn: 'Maestro test food'
+- assertVisible: 'Entry'
+- tapOn: 'Edit'
+- tapOn:
+    id: 'entry-calories'
+- eraseText
+- inputText: '425'
+- tapOn: 'Meal'
+- tapOn: 'Save'
+- assertVisible: '.*425 kcal.*'
+
+# Pull to refresh, which is where the old value used to reappear.
+- swipe:
+    start: 50%, 35%
+    end: 50%, 85%
+- extendedWaitUntil:
+    visible: '.*425 kcal.*'
+    timeout: 15000
+- assertNotVisible: '.*300 kcal.*'
+
+# Clean up after ourselves — this runs against a real account, not a fixture.
+# `repeat` rather than a single delete, so a previous run that failed halfway
+# doesn't leave rows behind for the next one to trip over.
+- repeat:
+    while:
+      visible: 'Maestro test food'
+    commands:
+      - tapOn: 'Maestro test food'
+      - assertVisible: 'Entry'
+      - tapOn: 'Delete'
+      - assertVisible: "Delete this entry\\? This can't be undone."
+      - tapOn: 'Delete'
+- assertNotVisible: 'Maestro test food'

@@ -1,0 +1,71 @@
+# The core journey: search the library, adjust the portion, log it, see the
+# day's totals move, then remove it.
+#
+# The portion sheet is the part worth automating — everything the app logs
+# records a gram weight, and the macros have to rescale with it. A unit test
+# proves the arithmetic (`portion.test.ts`); this proves the screen is wired to
+# it and that the server keeps what was sent.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+- runFlow:
+    when:
+      visible: 'Jump to today'
+    commands:
+      - tapOn: 'Jump to today'
+
+# Log a food we control, so the flow doesn't depend on the library's contents.
+- tapOn:
+    text: '\+ Add dinner'
+- tapOn: "\\+ Add a food that isn't listed"
+- tapOn:
+    id: 'manual-name'
+- inputText: 'Maestro portion food'
+- tapOn:
+    id: 'manual-grams'
+- inputText: '200'
+- tapOn:
+    id: 'manual-calories'
+- inputText: '400'
+- tapOn: 'Weight is optional, but it lets you re-portion this later.'
+- tapOn: 'Log it'
+- extendedWaitUntil:
+    visible: 'Maestro portion food'
+    timeout: 15000
+
+# It logged at the weight we gave it, not an estimate.
+- assertVisible: '.*200g · 400 kcal.*'
+
+# Re-portion it: half the weight should halve the calories.
+- tapOn: 'Maestro portion food'
+- tapOn: 'Edit'
+- assertVisible: 'Amount'
+- tapOn:
+    id: 'grams-input'
+- eraseText
+- inputText: '100'
+- tapOn: 'Meal'
+- assertVisible:
+    id: 'entry-calories'
+- tapOn: 'Save'
+- extendedWaitUntil:
+    visible: '.*100g · 200 kcal.*'
+    timeout: 15000
+
+# And it survives a reload, i.e. the server took the new weight too.
+- swipe:
+    start: 50%, 35%
+    end: 50%, 85%
+- extendedWaitUntil:
+    visible: '.*100g · 200 kcal.*'
+    timeout: 15000
+
+- repeat:
+    while:
+      visible: 'Maestro portion food'
+    commands:
+      - tapOn: 'Maestro portion food'
+      - tapOn: 'Delete'
+      - tapOn: 'Delete'
+- assertNotVisible: 'Maestro portion food'

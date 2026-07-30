@@ -1,0 +1,17 @@
+# Smoke test: the app starts and gets far enough to ask who you are.
+#
+# Needs no account, so it's the one flow that runs anywhere — a fresh emulator,
+# CI, a colleague's machine — and it catches the failures that matter most:
+# a bundle that won't load, a native module that crashes on boot, a blank
+# first screen.
+appId: app.nutriai.mobile
+---
+- clearState
+- launchApp
+- assertVisible: 'NutriAI'
+- assertVisible: 'Sign in to keep tracking'
+- assertVisible:
+    text: 'Email'
+- assertVisible:
+    text: 'Sign in'
+- assertVisible: 'New here? Create an account'

@@ -1,0 +1,40 @@
+# Logging a weigh-in and step count from the Plan tab.
+#
+# The weigh-in is the one number a user cannot reconstruct later, and the whole
+# adaptive plan is fitted to those readings — so this asserts it actually
+# reached the server, not merely that the screen said something encouraging.
+#
+# Safe to re-run: `POST /api/activity` upserts per day.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+- tapOn: 'Plan'
+- assertVisible: 'PLAN'
+
+- tapOn:
+    id: 'log-weight'
+- inputText: '71.2'
+- tapOn:
+    id: 'log-steps'
+- inputText: '6500'
+
+- scrollUntilVisible:
+    element:
+      text: 'Log for today'
+    direction: DOWN
+- tapOn: 'Log for today'
+
+# "Saved for today." means it synced; "Saved on this device" means it's still
+# queued. Only the first is acceptable with a working connection.
+- extendedWaitUntil:
+    visible: 'Saved for today.'
+    timeout: 20000
+- assertNotVisible: "The server wouldn't accept that weigh-in.*"
+
+# And the readout picked it up, which only happens after a reload from the API.
+- scrollUntilVisible:
+    element:
+      text: 'STEPS TODAY'
+    direction: UP
+- assertVisible: '6,500'

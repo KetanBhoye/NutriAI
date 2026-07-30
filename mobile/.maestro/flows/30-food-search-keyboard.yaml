@@ -1,0 +1,56 @@
+# Regression (Android): typing in "Search your foods" made the sheet jump and
+# the keyboard flicker, because KeyboardAvoidingView's height behaviour
+# measured the whole screen inside a transparent Modal that adjustResize never
+# resizes.
+#
+# A black-box tool can't see a flicker. What it *can* prove is the outcome that
+# actually broke: the field keeps focus across several keystrokes, the sheet
+# stays on screen with the keyboard up, and its controls are still tappable.
+appId: app.nutriai.mobile
+---
+- launchApp
+# Order-independent: any flow may run after 00-launch has cleared state.
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+# The app opens on Today, so don't tap the tab: "Today" is also the date label
+# at the top of this screen, and the first match wins. Instead make sure we're
+# looking at *today*, since the date survives a relaunch.
+- runFlow:
+    when:
+      visible: 'Jump to today'
+    commands:
+      - tapOn: 'Jump to today'
+
+- tapOn:
+    text: '\+ Add lunch'
+# The sheet's own field, not its title: "Lunch" is also a meal section on the
+# screen behind it, so a title assertion passes even when the sheet has gone.
+- assertVisible:
+    id: 'food-search'
+
+- tapOn:
+    id: 'food-search'
+- inputText: 'da'
+# The sheet must survive the keyboard opening — this is what used to collapse.
+- assertVisible:
+    id: 'food-search'
+
+# Type more: each keystroke re-renders the list underneath, and the field must
+# keep focus rather than dropping the keyboard between letters.
+- inputText: 'l'
+- assertVisible:
+    id: 'food-search'
+
+# Whatever the library holds, one of these is on screen: a result row, or the
+# "add it yourself" fallback. Either way the sheet is still rendering its list
+# under the keyboard rather than having collapsed behind it.
+- assertVisible:
+    text: 'Add "dal"|.*kcal.*|.*isn.t in your library yet\.'
+
+# Close is reachable on the first tap with the keyboard still up, which is what
+# keyboardShouldPersistTaps="handled" is there to guarantee. (Deliberately not
+# `back`: on Android that's a Back press, which this app currently answers by
+# navigating to an unmatched route once the sheet is gone.)
+- tapOn: 'Close'
+- assertNotVisible:
+    id: 'food-search'

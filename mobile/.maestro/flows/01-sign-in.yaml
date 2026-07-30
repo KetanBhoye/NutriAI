@@ -1,0 +1,33 @@
+# Signs in and leaves the app on Today, which every later flow assumes.
+#
+# Credentials come from the environment rather than the file — this repo is
+# shared, and a password in a committed YAML is a password you've published:
+#
+#   maestro test .maestro -e EMAIL=you@example.com -e PASSWORD=...
+appId: app.nutriai.mobile
+---
+- clearState
+- launchApp
+- assertVisible: 'Sign in to keep tracking'
+
+- tapOn:
+    text: 'Email'
+- inputText: ${EMAIL}
+- hideKeyboard
+
+- tapOn:
+    text: 'Password'
+- inputText: ${PASSWORD}
+- hideKeyboard
+
+- tapOn:
+    text: 'Sign in'
+
+# The session is confirmed by the tab bar existing at all: it only renders
+# behind a valid session, so this fails on a wrong password rather than
+# hanging on a screen that looks superficially fine.
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 20000
+- assertVisible: 'Plan'
+- assertVisible: 'You'

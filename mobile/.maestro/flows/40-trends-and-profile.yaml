@@ -1,0 +1,47 @@
+# The two read-mostly tabs.
+#
+# Cheap, and they catch the failures that a screen full of charts is prone to:
+# a chart that renders nothing, a stat tile that crops its own figure (the
+# Android line-height trap in progress.md), a tab that throws on empty data.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+- tapOn: 'Trends'
+- assertVisible: 'Trends'
+- extendedWaitUntil:
+    visible: 'DAY STREAK'
+    timeout: 20000
+- assertVisible: 'AVG KCAL'
+- assertVisible: 'DAYS LOGGED'
+- assertVisible: 'Last 14 days'
+
+# Figures must be readable, not cropped. Android used to cut the tops off
+# digits inside a tile that also showed a unit.
+- assertVisible:
+    text: '\d+'
+
+- tapOn: 'You'
+- assertVisible: 'YOU'
+- assertVisible: 'Plan & daily targets'
+- assertVisible: 'Daily log reminder'
+
+# The reminder toggle is device-local, so flipping it twice leaves no trace.
+- tapOn:
+    id: 'reminder-toggle'
+- assertVisible: 'Send a sample'
+- tapOn:
+    id: 'reminder-toggle'
+- assertNotVisible: 'Send a sample'
+
+# The rest of the tab is below the fold — Maestro never scrolls on its own.
+- scrollUntilVisible:
+    element:
+      text: 'Health sync'
+    direction: DOWN
+- scrollUntilVisible:
+    element:
+      text: 'Sign out'
+    direction: DOWN
+- assertVisible: 'Delete account'

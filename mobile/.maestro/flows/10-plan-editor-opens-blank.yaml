@@ -1,0 +1,82 @@
+# Regression: opening "Edit plan" used to recalculate immediately and replace
+# the user's saved targets with numbers nobody had chosen.
+#
+# The assertion is deliberately the user-visible note rather than a testID: the
+# screen tells you which state it's in ("Your current targets…" vs
+# "Recalculated…"), and that sentence is the promise being tested. A test tied
+# to an internal id would keep passing if the copy started lying.
+#
+# Both screens are taller than a phone, so every target is reached with
+# scrollUntilVisible — Maestro never scrolls on its own.
+appId: app.nutriai.mobile
+---
+- launchApp
+# Order-independent: any flow may run after 00-launch has cleared state.
+- runFlow: ../helpers/ensure-signed-in.yaml
+- tapOn: 'Plan'
+- assertVisible: 'PLAN'
+
+- scrollUntilVisible:
+    element:
+      text: 'Edit plan'
+    direction: DOWN
+- tapOn: 'Edit plan'
+- assertVisible: 'Same questions as setup, starting from blank.*'
+
+# Nothing is chosen, so nothing has been recalculated.
+- assertVisible: 'Pick an activity level to see your maintenance calories.'
+- scrollUntilVisible:
+    element:
+      text: 'Your current targets — choose an activity level, a goal and a pace to recalculate them.'
+    direction: DOWN
+- assertNotVisible: 'Recalculated from your choices above.'
+
+# One choice is not enough on its own.
+- scrollUntilVisible:
+    element:
+      text: 'How active are you\?'
+    direction: UP
+- tapOn: 'Lightly active'
+- assertVisible: 'Maintenance ≈ .*'
+- scrollUntilVisible:
+    element:
+      text: 'Your current targets — choose an activity level, a goal and a pace to recalculate them.'
+    direction: DOWN
+
+# A goal with no pace yet still implies nothing.
+- scrollUntilVisible:
+    element:
+      text: 'Pick your goal'
+    direction: UP
+- tapOn: 'Cut'
+- scrollUntilVisible:
+    element:
+      text: 'Your current targets — choose an activity level, a goal and a pace to recalculate them.'
+    direction: DOWN
+
+# Only now, with all three chosen, do the targets move.
+# Trailing `.*` because this heading has the kcal hint appended to it, and a
+# Maestro text selector must match the whole string, not a substring.
+- scrollUntilVisible:
+    element:
+      text: 'How fast\?.*'
+    direction: UP
+- tapOn: '0.5 kg / week'
+- scrollUntilVisible:
+    element:
+      text: 'Recalculated from your choices above.'
+    direction: DOWN
+
+# Leaving via Cancel puts the saved plan back, untouched: we're in view mode
+# (the editor's own copy is gone) and the saved targets are on screen. Cancel
+# lands at the bottom of the page, so assert against what's actually there
+# rather than scrolling back to the top.
+- scrollUntilVisible:
+    element:
+      text: 'Cancel'
+    direction: DOWN
+- tapOn: 'Cancel'
+- assertNotVisible: 'Same questions as setup, starting from blank.*'
+- assertNotVisible: 'Recalculated from your choices above.'
+- assertVisible: 'Daily targets'
+- assertVisible: 'Edit plan'
