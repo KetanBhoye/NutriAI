@@ -77,6 +77,10 @@ export interface DailyActivity {
   steps: number | null;
   active_energy_kcal: number | null;
   weight_kg?: number | null;
+  exercise_minutes?: number | null;
+  exercise_type?: string | null;
+  /** Net energy of a hand-logged session; counts towards the day's deficit. */
+  exercise_kcal?: number | null;
 }
 
 export interface WeighIn {

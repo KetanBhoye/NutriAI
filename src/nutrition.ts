@@ -16,6 +16,21 @@ export interface Macros {
   fat_g: number;
 }
 
+/**
+ * Stand-in targets for the brief window where the app has no real ones —
+ * a cold start with no cached goals and a failed request.
+ *
+ * There is exactly one set of these on purpose. Today and Trends used to carry
+ * their own (2000 vs 1900 kcal), so a user in that state watched Today count
+ * down from one number while the Trends goal line sat at another.
+ */
+export const FALLBACK_GOALS: Macros = {
+  calories: 2000,
+  protein_g: 150,
+  carbs_g: 200,
+  fat_g: 65,
+};
+
 export const ACTIVITY: Record<ActivityLevel, { label: string; hint: string; mult: number }> = {
   sedentary: { label: 'Sedentary', hint: 'Desk job, little exercise', mult: 1.2 },
   light: { label: 'Lightly active', hint: 'Light exercise 1–3 days/week', mult: 1.375 },

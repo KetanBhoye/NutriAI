@@ -54,6 +54,7 @@ export function AmountStepper({ grams, onChange, hint }: AmountStepperProps) {
 
         <View style={styles.value}>
           <TextInput
+            testID="grams-input"
             value={text}
             onChangeText={type_}
             onBlur={() => setText(String(Math.round(grams)))}

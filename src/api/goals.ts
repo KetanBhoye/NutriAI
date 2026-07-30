@@ -32,6 +32,9 @@ export function logActivity(input: {
   activity_date: string;
   weight_kg?: number | null;
   steps?: number | null;
+  exercise_minutes?: number | null;
+  exercise_type?: string | null;
+  exercise_kcal?: number | null;
 }): Promise<{ ok: true; activity_date: string }> {
   return api('/api/activity', { method: 'POST', body: input });
 }

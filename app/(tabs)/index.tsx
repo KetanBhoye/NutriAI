@@ -21,6 +21,8 @@ import { cached, readCache } from '@/cache';
 import { subscribeGoalsChanged } from '@/goalsBus';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { capitalize } from '@/format';
+import { FALLBACK_GOALS as FALLBACK } from '@/nutrition';
+import { MEALS, currentMeal, groupByMeal, remainingCalories, sumTotals } from '@/meals';
 import { defaultPortion, formatGrams, toGrams, type Portion } from '@/portion';
 import { colors, fonts, radius } from '@/theme';
 import { Button, EmptyState, Loading, Screen, StaleNotice } from '@/components/ui';
@@ -34,16 +36,13 @@ import { PortionSheet } from '@/features/today/PortionSheet';
 import { BarcodeModal } from '@/features/today/BarcodeModal';
 import { ShareStoryModal } from '@/features/today/ShareStoryModal';
 
-const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
-const FALLBACK_GOALS = { daily_calorie_goal: 2000, daily_protein_goal_g: 150, daily_carbs_goal_g: 200, daily_fat_goal_g: 65 };
-
-function currentMeal(): MealType {
-  const hour = new Date().getHours();
-  if (hour < 11) return 'breakfast';
-  if (hour < 16) return 'lunch';
-  if (hour < 21) return 'dinner';
-  return 'snack';
-}
+/** Shared with Trends via `src/nutrition.ts`, so the two can't disagree. */
+const FALLBACK_GOALS = {
+  daily_calorie_goal: FALLBACK.calories,
+  daily_protein_goal_g: FALLBACK.protein_g,
+  daily_carbs_goal_g: FALLBACK.carbs_g,
+  daily_fat_goal_g: FALLBACK.fat_g,
+};
 
 function ActionTile({
   icon,
@@ -80,10 +79,6 @@ const tileStyles = StyleSheet.create({
   pressed: { opacity: 0.75, borderColor: colors.accentDim },
   label: { color: colors.text, fontFamily: fonts.medium, fontSize: 12.5 },
 });
-
-function emptyTotals(): Totals {
-  return { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
-}
 
 export default function Today() {
   const { date: dateParam } = useLocalSearchParams<{ date?: string }>();
@@ -228,7 +223,7 @@ export default function Today() {
   // than leaving the edit on screen until it quietly reverts on the next load.
   useEffect(
     () =>
-      subscribeRejections((kind, message) => {
+      subscribeRejections(['create', 'update', 'delete'], (kind, message) => {
         console.warn(`Rejected ${kind}:`, message);
         Alert.alert(
           "That didn't save",
@@ -270,27 +265,13 @@ export default function Today() {
     setViewDate(next);
   };
 
-  const totals = useMemo(
-    () =>
-      entries.reduce<Totals>(
-        (acc, e) => ({
-          calories: acc.calories + e.calories,
-          protein_g: acc.protein_g + (e.protein_g ?? 0),
-          carbs_g: acc.carbs_g + (e.carbs_g ?? 0),
-          fat_g: acc.fat_g + (e.fat_g ?? 0),
-        }),
-        emptyTotals()
-      ),
-    [entries]
+  // The day's arithmetic lives in src/meals.ts, where it's under test.
+  const totals = useMemo(() => sumTotals(entries), [entries]);
+  const byMeal = useMemo(() => groupByMeal(entries), [entries]);
+  const remaining = remainingCalories(
+    goals.daily_calorie_goal ?? FALLBACK_GOALS.daily_calorie_goal,
+    totals.calories
   );
-
-  const byMeal = useMemo(() => {
-    const grouped: Record<MealType, FoodEntry[]> = { breakfast: [], lunch: [], dinner: [], snack: [] };
-    for (const e of entries) if (e.meal_type) grouped[e.meal_type].push(e);
-    return grouped;
-  }, [entries]);
-
-  const remaining = Math.max(0, (goals.daily_calorie_goal ?? FALLBACK_GOALS.daily_calorie_goal) - totals.calories);
 
   const logSuggestion = (suggestion: Suggestion, meal: MealType, portion?: Portion) => {
     // Every entry records a gram weight, so it can be re-portioned later even
@@ -379,14 +360,14 @@ export default function Today() {
     <Screen refreshing={refreshing} onRefresh={onRefresh}>
       <View style={styles.header}>
         <View style={styles.dateNav}>
-          <Pressable onPress={() => shiftDate(-1)} hitSlop={10} style={styles.navBtn}>
+          <Pressable testID="day-back" onPress={() => shiftDate(-1)} hitSlop={10} style={styles.navBtn}>
             <Text style={styles.navBtnText}>‹</Text>
           </Pressable>
           <View>
             <Text style={styles.dateLabel}>{dateLabel}</Text>
             <Text style={styles.dateSub}>{viewDate}</Text>
           </View>
-          <Pressable onPress={() => shiftDate(1)} hitSlop={10} disabled={isToday} style={styles.navBtn}>
+          <Pressable testID="day-forward" onPress={() => shiftDate(1)} hitSlop={10} disabled={isToday} style={styles.navBtn}>
             <Text style={[styles.navBtnText, isToday && styles.navBtnDisabled]}>›</Text>
           </Pressable>
         </View>

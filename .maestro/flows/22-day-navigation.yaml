@@ -1,0 +1,44 @@
+# Stepping through days.
+#
+# This guards a bug the app has already had once: `Date.toISOString()` converts
+# to UTC first, so in any timezone ahead of it the previous day is two days
+# back. The unit tests pin the date helpers; this proves the screen wired to
+# them agrees, and that you can't navigate into the future.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+- runFlow:
+    when:
+      visible: 'Jump to today'
+    commands:
+      - tapOn: 'Jump to today'
+- assertVisible: 'Today'
+- assertNotVisible: 'Jump to today'
+
+# Back one day.
+- tapOn:
+    id: 'day-back'
+- assertVisible: 'Yesterday'
+- assertVisible: 'Jump to today'
+
+# Back again — two days ago gets a weekday name, not "Yesterday".
+- tapOn:
+    id: 'day-back'
+- assertNotVisible: 'Yesterday'
+- assertVisible: 'Jump to today'
+
+# Forward returns the way we came.
+- tapOn:
+    id: 'day-forward'
+- assertVisible: 'Yesterday'
+
+- tapOn: 'Jump to today'
+- assertVisible: 'Today'
+
+# The future holds no meals: forward from today must do nothing.
+- tapOn:
+    id: 'day-forward'
+- assertVisible: 'Today'
+- assertNotVisible: 'Jump to today'

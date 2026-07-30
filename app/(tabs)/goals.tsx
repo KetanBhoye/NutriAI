@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AppState, StyleSheet, Text, View } from 'react-native';
 import { goalsApi, onboardingApi, profileApi } from '@/api';
+import type { GoalPlanInput } from '@/api/goals';
+import { enqueueActivity, enqueueGoals, flush as flushQueue, subscribeRejections } from '@/api/queue';
 import { cached, readCache } from '@/cache';
 import { emitGoalsChanged } from '@/goalsBus';
 import {
@@ -29,7 +31,9 @@ import {
   dailyDelta,
   nearestRate,
 } from '@/nutrition';
+import { EXERCISE_KINDS, describeExercise, netExerciseKcal } from '@/exercise';
 import { GoalsPayload, ProfileBasics } from '@/types';
+import { editorTargets } from '@/features/goals/editorTargets';
 import { GlideChart } from '@/features/goals/GlideChart';
 import { WeightTrendChart } from '@/features/goals/WeightTrendChart';
 import { ProgressFlag } from '@/features/goals/ProgressFlag';
@@ -71,6 +75,14 @@ export default function Plan() {
   const [refreshing, setRefreshing] = useState(false);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * A write the server refused, kept apart from `error`.
+   *
+   * `load()` clears `error` on every call, and a rejection is always followed
+   * by a reload — so the message was being wiped in the same tick it was set,
+   * and a refused weigh-in looked exactly like a successful one.
+   */
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -97,6 +109,8 @@ export default function Plan() {
 
   const [logWeight, setLogWeight] = useState('');
   const [logSteps, setLogSteps] = useState('');
+  const [logExercise, setLogExercise] = useState<string | null>(null);
+  const [logMinutes, setLogMinutes] = useState('');
   const [logBusy, setLogBusy] = useState(false);
   const [logMsg, setLogMsg] = useState<string | null>(null);
   /** SVG needs a concrete width; measured from the container. */
@@ -112,15 +126,13 @@ export default function Plan() {
   }, [canCompute, profile, editWeight, editActivity]);
 
   /**
-   * A goal needs a pace before it implies any numbers — except "maintain",
-   * which has no pace to pick. Until both are chosen this stays null and the
-   * saved targets are what the screen shows.
+   * Null until the choices are complete, which is what keeps the saved targets
+   * on screen. The rule itself lives in `editorTargets.ts`, under test.
    */
-  const editMacros = useMemo(() => {
-    if (!editTdee || !editGoal) return null;
-    if (editGoal !== 'maintain' && editRate === null) return null;
-    return computeMacros(editTdee, editWeight, editGoal, editRate ?? 0);
-  }, [editTdee, editWeight, editGoal, editRate]);
+  const editMacros = useMemo(
+    () => editorTargets(editTdee, editWeight, editGoal, editRate),
+    [editTdee, editWeight, editGoal, editRate]
+  );
 
   const editDelta = editGoal === 'maintain' || editRate === null ? 0 : dailyDelta(editRate);
   const editRateOptions = editGoal ? RATE_OPTIONS[editGoal] : [];
@@ -298,6 +310,44 @@ export default function Plan() {
     load();
   }, []);
 
+  /**
+   * Drain whatever this screen queued while offline. Coming back to the tab and
+   * returning to the app are both moments when the connection may have
+   * returned — Today does the same for meals.
+   */
+  const drain = useCallback(async () => {
+    const synced = await flushQueue();
+    if (synced > 0) {
+      await load();
+      emitGoalsChanged();
+    }
+  }, []);
+
+  useEffect(() => {
+    void drain();
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void drain();
+    });
+    return () => sub.remove();
+  }, [drain]);
+
+  // A plan or weigh-in the server refuses is dropped from the queue, so the
+  // screen is about to revert to the server's version. Say so rather than
+  // letting the numbers change back on their own.
+  useEffect(
+    () =>
+      subscribeRejections(['activity', 'goals'], (kind, message) => {
+        console.warn(`Rejected ${kind}:`, message);
+        setWriteError(
+          kind === 'goals'
+            ? "The server wouldn't accept that plan, so it hasn't been saved."
+            : "The server wouldn't accept that weigh-in, so it hasn't been saved. If you logged a session, this server may not support them yet."
+        );
+        void load();
+      }),
+    []
+  );
+
   const planValid =
     form.target_date > form.start_date && form.start_weight_kg > 0 && form.goal_weight_kg > 0;
 
@@ -320,18 +370,32 @@ export default function Plan() {
     return null;
   }, [impliedRate]);
 
+  /**
+   * Queues a plan write and drains it. Anything the network swallows stays on
+   * the device and goes out later, so the editor can close on the user's terms
+   * rather than the connection's.
+   *
+   * The other tabs are only told once the server has it: they re-read from the
+   * API, so announcing an unsent change would have them fetch the old numbers
+   * and look like the save had been undone.
+   */
+  const queuePlan = async (plan: GoalPlanInput): Promise<void> => {
+    await enqueueGoals(plan);
+    const synced = await flushQueue();
+    if (synced > 0) {
+      await load();
+      emitGoalsChanged();
+    }
+  };
+
   const save = async () => {
     if (!planValid) return;
     setSaving(true);
+    setError(null);
+    setWriteError(null);
     try {
-      await goalsApi.saveGoals(form);
+      await queuePlan(form);
       setEditing(false);
-      await load();
-      // Today, Trends, You and the daily reminder all hold their own copy of
-      // the targets; tell them the numbers moved.
-      emitGoalsChanged();
-    } catch {
-      setError("Couldn't save. Check your connection.");
     } finally {
       setSaving(false);
     }
@@ -350,7 +414,7 @@ export default function Plan() {
     try {
       const protein = form.daily_protein_goal_g ?? data.macros.protein_g;
       const fat = Math.round((calories * 0.25) / 9);
-      await goalsApi.saveGoals({
+      await queuePlan({
         ...form,
         ...data.plan,
         daily_calorie_goal: calories,
@@ -358,10 +422,6 @@ export default function Plan() {
         daily_fat_goal_g: fat,
         daily_carbs_goal_g: Math.max(0, Math.round((calories - (protein ?? 0) * 4 - fat * 9) / 4)),
       });
-      await load();
-      emitGoalsChanged();
-    } catch {
-      setError("Couldn't update your target. Check your connection.");
     } finally {
       setApplying(false);
     }
@@ -401,22 +461,73 @@ export default function Plan() {
 
   const recentDeficit = data?.weekly_deficit.length ? data.weekly_deficit[data.weekly_deficit.length - 1] : null;
 
+  /** Today's logged session, if there is one. */
+  const exerciseToday = useMemo(() => {
+    const row = data?.activity.find((a) => a.activity_date === todayISO());
+    if (!row?.exercise_minutes || !row.exercise_type) return null;
+    return { text: describeExercise(row.exercise_type, row.exercise_minutes), kcal: row.exercise_kcal ?? 0 };
+  }, [data]);
+
+  /** The last fortnight of sessions, newest first. */
+  const recentExercise = useMemo(
+    () =>
+      (data?.activity ?? [])
+        .filter((a) => a.exercise_minutes && a.exercise_type)
+        .slice(-14)
+        .reverse(),
+    [data]
+  );
+
+  /**
+   * A weigh-in is the one number in this app that can't be reconstructed later
+   * — you can remember what you ate, you cannot remember what the scale said —
+   * and the adaptive plan is fitted to them. So it goes to the durable queue
+   * first and syncs when it can, rather than being lost to a bad connection.
+   */
+  /**
+   * The net energy of a logged session, priced against today's weight — the
+   * same figure the server adds to the day's expenditure.
+   */
+  const loggedBurn = useMemo(() => {
+    const minutes = Number(logMinutes);
+    if (!logExercise || !Number.isFinite(minutes) || minutes <= 0) return 0;
+    const weight = data?.latest_weight ?? data?.plan?.start_weight_kg ?? 70;
+    return netExerciseKcal(logExercise, minutes, weight);
+  }, [logExercise, logMinutes, data?.latest_weight, data?.plan?.start_weight_kg]);
+
   const saveLog = async () => {
-    if (!logWeight && !logSteps) return;
+    if (!logWeight && !logSteps && !loggedBurn) return;
     setLogBusy(true);
     setLogMsg(null);
+    setWriteError(null);
     try {
-      await goalsApi.logActivity({
+      await enqueueActivity({
         activity_date: todayISO(),
         weight_kg: logWeight ? Number(logWeight) : null,
         steps: logSteps ? Number(logSteps) : null,
+        // Omitted entirely when there's no session, not sent as null:
+        // `POST /api/activity` is `.strict()`, so a server without the
+        // exercise columns rejects the *whole* payload — taking the weigh-in
+        // and the step count down with it.
+        ...(loggedBurn
+          ? {
+              exercise_type: logExercise,
+              exercise_minutes: Number(logMinutes),
+              exercise_kcal: loggedBurn,
+            }
+          : {}),
       });
-      setLogMsg('Saved for today.');
       setLogWeight('');
       setLogSteps('');
-      await load();
-    } catch {
-      setLogMsg("Couldn't save. Check your connection.");
+      setLogExercise(null);
+      setLogMinutes('');
+      const synced = await flushQueue();
+      if (synced > 0) {
+        setLogMsg('Saved for today.');
+        await load();
+      } else {
+        setLogMsg("Saved on this device — it'll sync when you're back online.");
+      }
     } finally {
       setLogBusy(false);
     }
@@ -450,6 +561,11 @@ export default function Plan() {
       <Text style={styles.eyebrow}>PLAN</Text>
 
       {stale ? <StaleNotice /> : null}
+      {/* A write the server refused sets this. Without somewhere to show it,
+          the screen just silently reverted — the same class of bug as the
+          dropped entry edit. */}
+      {writeError ? <Text style={styles.errorNote}>{writeError}</Text> : null}
+      {error && data ? <Text style={styles.errorNote}>{error}</Text> : null}
 
       {showViewMode ? (
         <View>
@@ -469,7 +585,11 @@ export default function Plan() {
               value={paceStatus ? STATUS_LABEL[paceStatus] : '—'}
               color={paceStatus ? statusColor[paceStatus] : undefined}
             />
-            <StatTile label="Steps today" value={stepsToday?.toLocaleString() ?? '—'} />
+            {exerciseToday ? (
+              <StatTile label="Activity today" value={exerciseToday.text} color={colors.purple} />
+            ) : (
+              <StatTile label="Steps today" value={stepsToday?.toLocaleString() ?? '—'} />
+            )}
           </View>
 
           {data.progress ? (
@@ -484,6 +604,7 @@ export default function Plan() {
           <Card style={styles.logCard}>
             <View style={styles.grid2}>
               <TextField
+                testID="log-weight"
                 label="Today's weight (kg)"
                 keyboardType="decimal-pad"
                 placeholder="—"
@@ -492,6 +613,7 @@ export default function Plan() {
                 onChangeText={setLogWeight}
               />
               <TextField
+                testID="log-steps"
                 label="Today's steps"
                 keyboardType="number-pad"
                 placeholder="—"
@@ -500,8 +622,46 @@ export default function Plan() {
                 onChangeText={setLogSteps}
               />
             </View>
-            <Button title={logBusy ? 'Saving…' : 'Log for today'} onPress={saveLog} disabled={logBusy || (!logWeight && !logSteps)} />
+            {/* Steps miss everything that isn't walking. A day with a game of
+                football and 2,000 steps is not a sedentary day, and without
+                this the plan couldn't tell the two apart. */}
+            <Text style={styles.logSectionH}>Anything else today?</Text>
+            <PillGroup
+              columns={3}
+              options={EXERCISE_KINDS.map((k) => ({ value: k.key, label: k.label }))}
+              value={logExercise}
+              onChange={(k) => setLogExercise(logExercise === k ? null : k)}
+            />
+            {logExercise ? (
+              <View style={styles.exerciseRow}>
+                <TextField
+                  testID="log-minutes"
+                  label="For how long? (min)"
+                  keyboardType="number-pad"
+                  placeholder="e.g. 45"
+                  style={styles.half}
+                  value={logMinutes}
+                  onChangeText={(v) => setLogMinutes(v.replace(/[^0-9]/g, ''))}
+                />
+                <View style={styles.burnBox}>
+                  <Text style={styles.burnLabel}>Counts as</Text>
+                  <Text style={styles.burnValue}>{loggedBurn ? `${loggedBurn} kcal` : '—'}</Text>
+                </View>
+              </View>
+            ) : null}
+
+            <Button
+              title={logBusy ? 'Saving…' : 'Log for today'}
+              onPress={saveLog}
+              disabled={logBusy || (!logWeight && !logSteps && !loggedBurn)}
+            />
             {logMsg ? <Text style={styles.logMsg}>{logMsg}</Text> : null}
+            {logExercise ? (
+              <Text style={styles.burnNote}>
+                Energy above resting, so it doesn't double-count the movement your maintenance calories
+                already assume. It raises the day's expenditure in your weekly deficit.
+              </Text>
+            ) : null}
           </Card>
 
           {/* Daily weigh-ins against the plan line. Falls back to the weekly
@@ -522,6 +682,21 @@ export default function Plan() {
           </View>
 
           <StepsChart activity={data.activity} goal={data.plan!.daily_step_goal} />
+
+          {recentExercise.length ? (
+            <>
+              <Text style={styles.h2}>Sessions logged</Text>
+              <Card>
+                {recentExercise.map((a) => (
+                  <View key={a.activity_date} style={styles.wrow}>
+                    <Text style={styles.wdate}>{a.activity_date}</Text>
+                    <Text style={styles.wval}>{describeExercise(a.exercise_type!, a.exercise_minutes!)}</Text>
+                    <Text style={styles.wproj}>+{(a.exercise_kcal ?? 0).toLocaleString()} kcal</Text>
+                  </View>
+                ))}
+              </Card>
+            </>
+          ) : null}
 
           <Text style={styles.h2}>Daily targets</Text>
           <View style={styles.targets}>
@@ -547,7 +722,9 @@ export default function Plan() {
               {recentDeficit ? (
                 <Text style={styles.footnote}>
                   Projection uses 7700 kcal per kg. Expenditure comes from your recorded TDEE — health-app active
-                  energy is deliberately not added on top, since TDEE already assumes your usual movement.
+                  energy is deliberately not added on top, since TDEE already assumes your usual movement. Sessions
+                  you log by hand are added, at their energy above resting, because your activity level can't have
+                  anticipated them.
                 </Text>
               ) : null}
             </Card>
@@ -635,6 +812,10 @@ export default function Plan() {
                         editTdee && editGoal
                           ? `${computeMacros(editTdee, editWeight, editGoal, r.kg).calories.toLocaleString()} kcal`
                           : r.tag,
+                      // Faintly mark the pace the saved plan implies, but only
+                      // while looking at that plan's own goal — the same pace
+                      // number means something different under another goal.
+                      current: savedShape?.goal === editGoal && savedShape?.rate === r.kg,
                     }))}
                     value={editRate !== null ? String(editRate) : null}
                     onChange={(v) => setEditRate(Number(v))}
@@ -643,7 +824,12 @@ export default function Plan() {
                   <TextField
                     label="Goal weight (kg) — optional"
                     keyboardType="decimal-pad"
-                    placeholder={editGoal === 'cut' ? 'e.g. 68' : 'e.g. 78'}
+                    // The saved goal weight as the placeholder: it says what
+                    // you're currently aiming at without filling the field in,
+                    // which would be a choice you didn't make.
+                    placeholder={
+                      data.plan ? `currently ${data.plan.goal_weight_kg.toFixed(1)}` : editGoal === 'cut' ? 'e.g. 68' : 'e.g. 78'
+                    }
                     value={editTargetWeight != null ? String(editTargetWeight) : ''}
                     onChangeText={(v) => setEditTargetWeight(v ? Number(v) : null)}
                   />
@@ -869,7 +1055,31 @@ const styles = StyleSheet.create({
   readouts: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20, marginBottom: 4 },
   chartWrap: { marginBottom: 12 },
   logCard: { marginTop: 16, marginBottom: 16 },
+  logSectionH: { color: colors.text, fontSize: 14, fontFamily: fonts.semibold, marginTop: 4, marginBottom: 8 },
+  exerciseRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginTop: 12 },
+  burnBox: {
+    flex: 1,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 18,
+  },
+  burnLabel: { ...type.overline, color: colors.textDim },
+  burnValue: { ...type.figureSmall, fontSize: 16, fontFamily: fonts.semibold, color: colors.accent, marginTop: 2 },
+  burnNote: { color: colors.textDim, fontSize: 11.5, lineHeight: 16, marginTop: 10 },
   logMsg: { color: colors.accent, fontSize: 13, textAlign: 'center', marginTop: 10 },
+  errorNote: {
+    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 18,
+    backgroundColor: 'rgba(248,113,113,0.08)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
   grid2: { flexDirection: 'row', gap: 12 },
   half: { flex: 1 },
   targets: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

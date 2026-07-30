@@ -7,6 +7,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "maestro test .maestro",
+    "e2e:smoke": "maestro test .maestro/flows/00-launch.yaml",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -42,7 +46,8 @@
   },
   "devDependencies": {
     "@types/react": "~18.3.12",
-    "typescript": "~5.3.3"
+    "typescript": "~5.3.3",
+    "vitest": "^3.2.7"
   },
   "private": true
 }

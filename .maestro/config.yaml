@@ -1,0 +1,7 @@
+# Maestro runs every flow under flows/ in filename order.
+#
+# Numbering is deliberate: 0x gets the app into a known signed-in state, and
+# the rest assume it. Each flow still launches the app itself, so any one of
+# them can be run alone while you're working on it.
+flows:
+  - flows/*.yaml

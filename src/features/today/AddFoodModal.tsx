@@ -126,12 +126,14 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
       {manualMode ? (
         <View>
           <TextField
+            testID="manual-name"
             label="Name"
             value={manual.name}
             onChangeText={(v) => setManual((m) => ({ ...m, name: v }))}
           />
           <View style={styles.grid2}>
             <TextField
+              testID="manual-grams"
               label="Amount (g)"
               placeholder="e.g. 150"
               keyboardType="number-pad"
@@ -140,6 +142,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
               onChangeText={(v) => setManual((m) => ({ ...m, grams: v.replace(/[^0-9]/g, '') }))}
             />
             <TextField
+              testID="manual-calories"
               label="Calories"
               keyboardType="numeric"
               style={styles.half}
@@ -179,6 +182,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
       ) : (
         <View>
           <TextField
+            testID="food-search"
             placeholder="Search your foods…"
             autoCapitalize="none"
             value={query}

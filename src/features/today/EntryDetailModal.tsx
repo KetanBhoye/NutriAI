@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Button, PillGroup, Sheet, TextField } from '@/components/ui';
 import { capitalize } from '@/format';
 import { AmountStepper } from './AmountStepper';
+import { buildEntryChanges, type EntryChanges } from './entryChanges';
 import { formatGrams, portionBasis, toGrams } from '@/portion';
 import { colors, fonts, radius } from '@/theme';
 import { FoodEntry, MealType } from '@/types';
@@ -12,22 +13,8 @@ const MEALS: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 interface EntryDetailModalProps {
   entry: FoodEntry | null;
   onClose: () => void;
-  /**
-   * Only the fields that actually changed shape are sent. A macro left blank is
-   * omitted rather than sent as `null` — `PATCH /api/entries/:id` validates
-   * each field as a number, so a null rejected the whole update with a 400 and
-   * the edit silently disappeared on the next refresh.
-   */
-  onSave: (changes: {
-    food_name: string;
-    calories: number;
-    protein_g?: number | null;
-    carbs_g?: number | null;
-    fat_g?: number | null;
-    meal_type: MealType;
-    quantity?: number;
-    unit?: string;
-  }) => void;
+  /** See `entryChanges.ts` for which fields are sent, omitted or cleared. */
+  onSave: (changes: EntryChanges) => void;
   onDelete: () => void;
 }
 
@@ -84,35 +71,10 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
     }));
   };
 
-  /**
-   * A filled field is sent as a number; a blank one is only sent (as null, to
-   * clear it) when the entry had a value there to begin with. Otherwise it's
-   * left out entirely, so an entry logged without macros doesn't turn every
-   * edit into a payload the API rejects.
-   */
-  const macro = (text: string, original: number | null | undefined) => {
-    if (text.trim()) {
-      const n = Number(text);
-      return Number.isFinite(n) ? n : undefined;
-    }
-    return original != null ? null : undefined;
-  };
-
   const save = () => {
-    const calories = Number(form.calories);
-    if (!form.name.trim() || !Number.isFinite(calories)) return;
-    onSave({
-      food_name: form.name.trim(),
-      calories: Math.round(calories),
-      protein_g: macro(form.protein, entry.protein_g),
-      carbs_g: macro(form.carbs, entry.carbs_g),
-      fat_g: macro(form.fat, entry.fat_g),
-      meal_type: form.meal,
-      // Saving the weight too, so the next edit scales from the real portion
-      // rather than re-estimating it. The API requires a positive quantity, so
-      // a weight we couldn't work out is left out rather than sent as 0.
-      ...(grams > 0 ? { quantity: grams, unit: 'g' } : {}),
-    });
+    // The payload rules live in entryChanges.ts, where they're under test.
+    const changes = buildEntryChanges(form, entry, grams);
+    if (changes) onSave(changes);
   };
 
   return (
@@ -149,7 +111,7 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
         </View>
       ) : (
         <View>
-          <TextField label="Name" value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} />
+          <TextField testID="entry-name" label="Name" value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} />
           <Text style={styles.fieldLabel}>Amount</Text>
           <View style={styles.amount}>
             <AmountStepper
@@ -170,6 +132,7 @@ export function EntryDetailModal({ entry, onClose, onSave, onDelete }: EntryDeta
           </View>
           <View style={styles.grid2}>
             <TextField
+              testID="entry-calories"
               label="Calories"
               keyboardType="numeric"
               style={styles.half}

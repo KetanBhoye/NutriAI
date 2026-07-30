@@ -1,108 +1,241 @@
 # NutriAI Mobile
 
-A lightweight **cross-platform native companion** to the NutriAI web app, built with
-**Expo (React Native + TypeScript)**. It signs in to the same NutriAI backend and pulls **real
-health data** from:
+The iOS and Android app for NutriAI, built with **Expo (React Native + TypeScript)**. It is a
+full client for the tracker — logging, coaching, trends and planning — not a companion to the
+web app.
 
-- **Apple Health** (HealthKit) on iOS — via [`react-native-health`](https://github.com/agencyenterprise/react-native-health)
-- **Android Health Connect** on Android — via [`react-native-health-connect`](https://github.com/matinzd/react-native-health-connect)
+It talks to the same backend as the Vue PWA (`calorie-tracker-codex-refactored`, `src/http/api.ts`)
+and shares its session cookie, its nutrition maths and its domain language. Where the web app
+can't go, this app does: HealthKit and Health Connect, the camera for meal photos and barcodes,
+local reminders, and an offline write queue.
 
-It reads **steps, active energy, distance, exercise minutes and weight**, then pushes them to
-`POST /api/activity` so your charts and coach stay accurate — no manual entry.
+---
 
-> Meal logging still happens in the web app / coach. This app is focused on the one thing a PWA
-> can't do: talk to the phone's health store.
+## Read this first
+
+**This directory is the live mobile app, and it is its own git repository.** The backend repo
+also contains a `mobile/` directory — that is an older copy, and editing it does nothing. If you
+are here to change the app, you are in the right place; see
+[Two copies of the app](#two-copies-of-the-app) before you touch the other one.
+
+Then read [`progress.md`](./progress.md). It is the engineering log: what is done, what is
+deliberately deferred, and — most usefully — the decisions that look wrong until you know why
+(the cookie handling, grams-only portions, the write queue's collapse rules, the Android text
+traps). Most bugs this app has shipped were re-introductions of something explained there.
+
+---
+
+## Quick start
+
+```bash
+# prerequisites: Node 18+, Xcode (iOS), Android Studio + an AVD (Android), JDK 17+
+npm install
+
+npm run typecheck        # tsc --noEmit
+npm test                 # unit tests (vitest), ~250ms, no device needed
+```
+
+To run the app you need a **development build** — several native modules (health, camera,
+Google Sign-In) mean Expo Go will not work.
+
+```bash
+# iOS, on a connected iPhone
+npx expo run:ios --device
+
+# Android, on an emulator or connected device
+npx expo run:android
+```
+
+Both commands generate the native project, build it, install it and start Metro. First build is
+slow (5–15 min); afterwards `npm start` is enough, since JS changes reload without rebuilding.
+
+By default the app talks to the deployed backend (`https://nutriai-app.up.railway.app`). To point
+it at a local one, set `API_URL` **at build time** — it is baked into the bundle via
+`app.config.ts`, not read at runtime:
+
+```bash
+API_URL="http://192.168.1.20:8787" npx expo run:ios --device   # your LAN IP, not localhost
+```
+
+On an Android emulator the host machine is `http://10.0.2.2:8787`. A release build blocks
+cleartext HTTP, so a local backend needs a debug build or an HTTPS tunnel.
+
+### iOS signing
+
+The Xcode project already carries a development team. On a personal (free) Apple team, iOS
+refuses to launch the app until you trust the certificate on the device:
+**Settings → General → VPN & Device Management → Developer App → Trust**.
+
+Push notifications are impossible on a personal team, which is why reminders are local — see
+`plugins/withoutPushEntitlement.js` and the note in `progress.md`.
 
 ---
 
 ## Architecture
 
+### Screens (`app/`, Expo Router — file-based)
+
 ```
-app/                       screens (Expo Router, file-based)
-  _layout.tsx              root + auth gate (redirects login <-> tabs)
-  login.tsx                email/password sign-in
-  (tabs)/index.tsx         Today — calories + macros from /api/dashboard
-  (tabs)/health.tsx        connect + sync health data
-src/
-  api.ts                   fetch client, ct_sid cookie auth (SecureStore)
-  auth.tsx                 AuthProvider / useAuth
-  config.ts                API_URL + health source constant
-  health/
-    index.ts               picks provider by Platform.OS
-    healthkit.ts           iOS  (Apple Health)
-    healthConnect.ts       Android (Health Connect)
-    sync.ts                read today -> POST /api/activity
-    types.ts               normalised DailyHealth shape
+app/
+  _layout.tsx              fonts, AuthProvider, auth + onboarding gate
+  login.tsx  signup.tsx    email/password + Google Sign-In
+  onboarding.tsx           4-step wizard; sets the first plan and targets
+  (tabs)/_layout.tsx       5 tabs; also schedules reminders and refreshes /api/me
+  (tabs)/index.tsx         Today — the food log
+  (tabs)/dashboard.tsx     Trends — 14-day chart, weekly AI report
+  (tabs)/coach.tsx         Coach — chat, can log food server-side
+  (tabs)/goals.tsx         Plan — weight plan, progress, weigh-ins, exercise
+  (tabs)/profile.tsx       You — account, reminders, health sync, API token
 ```
 
-Auth reuses the web app's `ct_sid` session cookie: on login we capture it from `Set-Cookie`,
-store it in `expo-secure-store`, and replay it as a `Cookie` header. **No backend changes required.**
+Screens own their data fetching and state. There is no global store: what is shared travels
+either through `AuthProvider` or through the small event buses described below.
+
+### Supporting modules (`src/`)
+
+| Module | Responsibility |
+|---|---|
+| `api/client.ts` | fetch wrapper, session cookie, timeouts, 401 → sign-out. **Read the cookie notes in `progress.md` before editing.** |
+| `api/*.ts` | one module per resource (`entries`, `goals`, `dashboard`, `profile`, `onboarding`, `ai`, `tokens`, `account`) |
+| `api/queue.ts` | durable write queue — food entries, weigh-ins, plan saves |
+| `cache.ts` / `useCachedResource.ts` | read-through cache; screens paint last-known data, then refresh |
+| `auth.tsx` | `AuthProvider` / `useAuth`, session bootstrap |
+| `goalsBus.ts` | broadcasts "the targets changed" to every mounted tab |
+| `nutrition.ts` | BMR/TDEE/macros — a port of the web app's copy, matching the backend's formulas |
+| `portion.ts` | everything is grams; unit conversion and weight estimation |
+| `exercise.ts` | MET table; gross vs **net** energy for logged sessions |
+| `dates.ts` | local calendar days (never `toISOString()` — see `progress.md`) |
+| `theme.ts` | colours, spacing, and the `type` scale. Use it; don't set `fontFamily` by hand |
+| `health/` | HealthKit + Health Connect behind one interface, plus auto-sync |
+| `notifications/reminders.ts` | local daily reminders, scheduled as dated one-shots |
+| `components/ui/` | primitives: `Screen`, `Card`, `Button`, `TextField`, `Sheet`, `PillGroup`, `OptionRow`, `StatTile`, … |
+| `features/<screen>/` | components belonging to one screen, e.g. `features/goals/WeightTrendChart.tsx` |
+
+### How data flows
+
+**Reads** are stale-while-revalidate. `useCachedResource(key, fetcher)` (or `cached()` directly)
+paints the last good payload from AsyncStorage immediately, refreshes behind it, and reports
+`stale: true` when the network failed — screens then render `<StaleNotice />` rather than passing
+old numbers off as current.
+
+**Writes** that a user would hate to lose go through `src/api/queue.ts`: food entries, weigh-ins
+and plan saves. They are persisted, drained oldest-first, and stop at the first network failure so
+ordering holds. A `4xx` is dropped (retrying can't fix it) but **reported** via
+`subscribeRejections`, because silently dropping one made an edit look saved and then revert.
+
+**Cross-screen updates.** The tab navigator keeps every tab mounted, so a screen that read the
+targets once would show them forever. `emitGoalsChanged()` after any successful write to the plan
+tells Today, Trends, You and the reminder scheduler to re-read.
+
+### The plan, and how it adapts
+
+`GET /api/goals` returns the plan, the macro targets, every weigh-in in the plan window, and a
+server-computed `progress` object. That object — `planProgress()` in the backend's
+`src/services/goal-progress.ts` — compares a **smoothed** current weight against the plan's line
+for today, fits a rate over the last 28 days, projects where it lands, and derives the daily
+calorie change that would close the gap.
+
+It is deliberately conservative: no rate from under a week of readings, no suggestion with under a
+week of plan left, clamped to ±400 kcal, and the suggestion is offered rather than applied. The app
+renders it as `ProgressFlag` plus `WeightTrendChart`.
 
 ---
 
-## Prerequisites
+## Testing
 
-- Node 18+ and the [Expo](https://docs.expo.dev/) toolchain (`npx expo`)
-- **iOS:** macOS + Xcode, and an **Apple Developer team** (HealthKit needs a signed build; it does
-  **not** run in Expo Go)
-- **Android:** Android Studio, plus the **Health Connect** app (bundled on Android 14+, otherwise
-  install it from the Play Store)
+```bash
+npm test           # unit — vitest, node environment, no device
+npm run test:watch
+npm run e2e        # end-to-end — Maestro, needs an emulator/device + credentials
+npm run e2e:smoke  # end-to-end, no account required
+```
 
-Because both health libraries include native code, you must use a **development build** — not Expo Go.
+**211 unit tests** cover the logic: portion maths, nutrition formulas, local dates, the day's
+totals, the cache, the write queue, the entry-edit payload rules, the plan editor's gating, the
+weight-trend smoothing, exercise energy, health sync and the reminder scheduler. Native modules are stubbed
+once in `src/test/setup.ts`, and AsyncStorage is swapped for an in-memory map so the cache and
+queue are tested against something that really stores.
+
+The rule this codebase follows: **logic worth trusting lives in a module, not in a component.**
+Every bug this app has shipped lived in a plain function, and none of them needed a renderer to
+catch.
+
+**Ten end-to-end flows** live in `.maestro/` — see [`.maestro/README.md`](./.maestro/README.md),
+which also lists the four traps that will bite you when writing a new flow (whole-string regexes,
+seeing through modals, `hideKeyboard` being a Back press, no implicit scrolling).
+
+```bash
+emulator -avd <your-avd> &
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+npm run e2e -- -e EMAIL=you@example.com -e PASSWORD=secret
+```
 
 ---
 
-## Setup
+## Building for distribution
 
 ```bash
-cd nutriai-mobile
-npm install
-
-# Optional: point at a local backend (defaults to production)
-export API_URL="http://192.168.1.20:8080"   # your machine's LAN IP, not localhost
+cd android && ./gradlew assembleRelease
+# → android/app/build/outputs/apk/release/app-release.apk
 ```
 
-### Run on iOS (real device recommended — the simulator has no Health data)
+Release APKs are signed with a keystore this repo controls, applied by
+`plugins/withReleaseSigning.js` from `credentials/keystore.properties`. Both the keystore and its
+passwords are gitignored.
+
+> **Back the keystore up somewhere off your machine.** Lose it and you cannot ship an update to
+> anyone who installed a previous APK — they would have to uninstall first.
+>
+> **Google Sign-In needs the release key registered.** The Android OAuth client is registered
+> against the *debug* keystore's SHA-1, so Google sign-in fails in a release build until a second
+> client is registered with the release SHA-1 (`apksigner verify --print-certs <apk>`).
+> Email/password is unaffected.
+
+EAS works too (`eas build --profile preview --platform android`), and `eas.json` carries
+`development`, `preview` and `production` profiles.
+
+### `android/` and `ios/` are generated
+
+Both are produced by `expo prebuild` and are **gitignored**. Never hand-edit them: the next
+prebuild throws the change away. Native configuration belongs in `app.config.ts` or a config
+plugin in `plugins/` — which is exactly what `withReleaseSigning`, `withModularHeaders`,
+`withoutPushEntitlement` and `withHealthConnectPermissionDelegate` are for.
+
+If a build fails with *"No matching variant … no variants exist"* for every native module, the
+generated project is stale against `package.json`. Regenerate it:
 
 ```bash
-npx expo prebuild -p ios      # generates the ios/ project + HealthKit entitlement
-npx expo run:ios --device     # build & install onto a connected iPhone
+npx expo prebuild --platform android --clean --no-install
 ```
-
-Open `ios/` in Xcode once to set your **Signing Team** if `run:ios` prompts for it. On first
-launch, open the **Health** tab → **Connect Apple Health** and allow the requested read types.
-
-### Run on Android (device or emulator with Health Connect)
-
-```bash
-npx expo prebuild -p android
-npx expo run:android
-```
-
-Make sure **Health Connect** is installed and has some data (Google Fit, Samsung Health, etc. can
-write into it). In the app: **Health** tab → **Connect Health Connect** → grant the read
-permissions.
 
 ---
 
-## Building distributables (EAS)
+## Two copies of the app
 
-```bash
-npm install -g eas-cli
-eas login
-eas build --profile development --platform ios      # or android
-```
+The backend repo contains **`mobile/`**, a snapshot of this app taken at commit `1c3a58f`. It is
+stale (hundreds of lines behind) and nothing builds from it. **`nutriai-mobile/` — this directory
+— is the live app, and it is a separate git repository** with its own history and branches.
 
-`eas.json` includes `development`, `preview`, and `production` profiles.
+Consequences worth knowing before you start:
+
+- Changes here are **not** committed by committing in the backend repo. Two repos, two commits.
+- `nutriai-mobile/` is untracked-but-not-ignored by the backend repo, so it shows up as an
+  untracked directory in `git status` there. That is expected, not a mistake to "fix" by adding it.
+- The backend's `CLAUDE.md` still describes the app as living in `mobile/`.
+
+This duplication is a trap for anyone new. Resolving it — deleting the stale copy, or making it a
+submodule — is a decision for the repo owner, and until then this note is the map.
 
 ---
 
-## Notes / follow-ups
+## Troubleshooting
 
-- **`source` field:** `POST /api/activity` currently accepts `source: 'apple_health' | 'manual'`,
-  so Android data is also tagged `apple_health` (see `src/config.ts`). If you add a
-  `'health_connect'` value to the backend enum, update the Android branch there.
-- **Background sync:** this build syncs on demand (the **Sync now** button). Automated
-  background sync (HealthKit background delivery / a periodic task) is a natural next step.
-- **Meal logging:** kept in the web app for now; the API client here can be extended to add
-  logging screens if you want the mobile app to do everything.
+| Symptom | Cause |
+|---|---|
+| Signed in, then every request 401s and never recovers | The RN cookie jar appended an empty `ct_sid`. See the session-cookie section in `progress.md`. |
+| App installs on iPhone but won't launch | Developer certificate not trusted on the device (Settings → General → VPN & Device Management). |
+| Gradle: "no variants exist" for every native module | Stale generated `android/` — run `expo prebuild --clean`. |
+| Digits render with their tops cut off on Android | A span nested in a larger `<Text>` set its own `lineHeight`. See `progress.md`. |
+| A sheet jumps or closes while typing on Android | `KeyboardAvoidingView` inside a `Modal`, or a stray Back press. `Sheet.tsx` handles both — don't undo it. |
+| An edit saves, then reverts on refresh | The server rejected the write and the queue dropped it. The alert now says so; check the payload against the endpoint's schema. |
+| `adb install` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | The installed build was signed with a different key — `adb uninstall app.nutriai.mobile` first. |

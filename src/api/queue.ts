@@ -1,16 +1,23 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiError } from './client';
 import * as entriesApi from './entries';
+import * as goalsApi from './goals';
 import type { CreateEntryInput } from './entries';
+import type { GoalPlanInput } from './goals';
 import type { FoodEntry, MealType } from '../types';
 
 /**
- * Durable queue for food-log writes.
+ * Durable queue for the writes a user would hate to lose.
  *
  * Reads are cached (src/cache.ts), but writes used to go straight out and be
  * rolled back with an alert whenever the network was unavailable — so logging
  * a meal in a lift or on the Underground simply lost it. Writes now land here
  * first and drain when connectivity returns.
+ *
+ * Covers food entries, weigh-ins/steps and the plan itself. The weigh-in is the
+ * one that matters most: it can't be reconstructed later (you can remember what
+ * you ate; you cannot remember what the scale said), and the whole adaptive
+ * plan is fitted to those readings.
  *
  * Mirrors the web app's queue: oldest-first, **stop at the first failure** so
  * ordering holds, and drop 4xx rather than retrying forever behind a write the
@@ -23,10 +30,25 @@ export type EntryPatch = Partial<
   Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type' | 'quantity' | 'unit'>
 >;
 
+export interface ActivityInput {
+  activity_date: string;
+  weight_kg?: number | null;
+  steps?: number | null;
+  exercise_minutes?: number | null;
+  exercise_type?: string | null;
+  /** Net energy above resting — see `src/exercise.ts`. */
+  exercise_kcal?: number | null;
+}
+
 type QueuedOp =
   | { id: string; kind: 'create'; tempId: string; body: CreateEntryInput }
   | { id: string; kind: 'update'; entryId: string; changes: EntryPatch }
-  | { id: string; kind: 'delete'; entryId: string };
+  | { id: string; kind: 'delete'; entryId: string }
+  | { id: string; kind: 'activity'; body: ActivityInput }
+  | { id: string; kind: 'goals'; body: GoalPlanInput };
+
+/** Which parts of the app a queued write belongs to, for reporting failures. */
+export type OpKind = QueuedOp['kind'];
 
 /** Local ids for rows that haven't reached the server yet. */
 export function isPendingId(id: string): boolean {
@@ -79,16 +101,24 @@ export function subscribePending(listener: Listener): () => void {
  * but doing it silently meant a rejected edit just reappeared with its old
  * values on the next refresh, looking like the app had ignored the save.
  */
-type RejectionListener = (kind: QueuedOp['kind'], message: string) => void;
-const rejectionListeners = new Set<RejectionListener>();
+type RejectionListener = (kind: OpKind, message: string) => void;
+const rejectionListeners = new Set<{ kinds: OpKind[]; listener: RejectionListener }>();
 
-export function subscribeRejections(listener: RejectionListener): () => void {
-  rejectionListeners.add(listener);
-  return () => rejectionListeners.delete(listener);
+/**
+ * Subscribes to refusals of the given kinds. The queue is shared across
+ * screens, so each states what it can speak for — Today shouldn't announce a
+ * rejected plan save, and the Plan tab shouldn't announce a rejected meal.
+ */
+export function subscribeRejections(kinds: OpKind[], listener: RejectionListener): () => void {
+  const entry = { kinds, listener };
+  rejectionListeners.add(entry);
+  return () => rejectionListeners.delete(entry);
 }
 
-function notifyRejected(kind: QueuedOp['kind'], message: string): void {
-  for (const l of rejectionListeners) l(kind, message);
+function notifyRejected(kind: OpKind, message: string): void {
+  for (const { kinds, listener } of rejectionListeners) {
+    if (kinds.includes(kind)) listener(kind, message);
+  }
 }
 
 export async function refreshPendingCount(): Promise<void> {
@@ -140,8 +170,49 @@ export async function enqueueDelete(entryId: string): Promise<void> {
   await write(ops);
 }
 
+/**
+ * Queues a weigh-in / step count, merging into a pending one for the same day.
+ *
+ * The endpoint upserts per day, so two queued writes for one date would mean
+ * the second overwriting the first's fields with nulls — log a weight, then
+ * steps, and the weight would vanish on sync. Merging keeps both, and only
+ * fields that were actually supplied are carried.
+ */
+export async function enqueueActivity(input: ActivityInput): Promise<void> {
+  const ops = await read();
+  const pendingForDay = ops.find(
+    (o): o is Extract<QueuedOp, { kind: 'activity' }> =>
+      o.kind === 'activity' && o.body.activity_date === input.activity_date
+  );
+
+  if (pendingForDay) {
+    Object.assign(pendingForDay.body, stripNullish(input));
+    await write(ops);
+    return;
+  }
+
+  ops.push({ id: opId(), kind: 'activity', body: input });
+  await write(ops);
+}
+
+/**
+ * Queues a plan save. Only the newest survives — an older pending plan is not
+ * a change anyone still wants, and replaying both would briefly restore the one
+ * the user already moved on from.
+ */
+export async function enqueueGoals(plan: GoalPlanInput): Promise<void> {
+  const ops = (await read()).filter((o) => o.kind !== 'goals');
+  ops.push({ id: opId(), kind: 'goals', body: plan });
+  await write(ops);
+}
+
 function stripUndefined<T extends object>(o: T): Partial<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+/** As above, but null also means "not supplied" — see `enqueueActivity`. */
+function stripNullish<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v != null)) as Partial<T>;
 }
 
 // ── draining ──────────────────────────────────────────────────────────────
@@ -167,8 +238,12 @@ export async function flush(): Promise<number> {
           await entriesApi.createEntry(next.body);
         } else if (next.kind === 'update') {
           await entriesApi.updateEntry(next.entryId, next.changes);
-        } else {
+        } else if (next.kind === 'delete') {
           await entriesApi.deleteEntry(next.entryId);
+        } else if (next.kind === 'activity') {
+          await goalsApi.logActivity(next.body);
+        } else {
+          await goalsApi.saveGoals(next.body);
         }
         ops = ops.slice(1);
         await write(ops);

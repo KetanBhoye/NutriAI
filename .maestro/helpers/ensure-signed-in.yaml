@@ -1,0 +1,20 @@
+# Signs in only if the app is showing the sign-in screen.
+#
+# Flows must not depend on the order the runner picks: `00-launch` clears state
+# on purpose, so any flow can find itself signed out. Every authenticated flow
+# starts by running this, which makes each one independently runnable — the
+# property you want at 2am when only one of them is failing.
+appId: app.nutriai.mobile
+---
+- runFlow:
+    when:
+      visible: 'Sign in to keep tracking'
+    commands:
+      - tapOn: 'Email'
+      - inputText: ${EMAIL}
+      - tapOn: 'Password'
+      - inputText: ${PASSWORD}
+      - tapOn: 'Sign in'
+      - extendedWaitUntil:
+          visible: 'Quick log .*'
+          timeout: 20000

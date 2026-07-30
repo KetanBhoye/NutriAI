@@ -4,12 +4,14 @@ import { dashboardApi, goalsApi } from '@/api';
 import { useCachedResource } from '@/useCachedResource';
 import { writeCache } from '@/cache';
 import { subscribeGoalsChanged } from '@/goalsBus';
+import { FALLBACK_GOALS } from '@/nutrition';
 import { toLocalISODate } from '@/dates';
 import { colors, fonts, type } from '@/theme';
 import { Button, Card, EmptyState, Screen, SkeletonCard, StaleNotice, StatTile } from '@/components/ui';
 import { WeeklyInsights, WeeklyStats } from '@/types';
 
-const FALLBACK_GOAL_CALORIES = 1900;
+/** Shared with Today via `src/nutrition.ts`, so the two can't disagree. */
+const FALLBACK_GOAL_CALORIES = FALLBACK_GOALS.calories;
 /** Height of the plot area itself; the weekday label sits below it. */
 const PLOT_HEIGHT = 140;
 const MIN_BAR_HEIGHT = 3;

@@ -1,0 +1,52 @@
+# Logging a training session — the thing steps can't see.
+#
+# The session's energy is computed on the device (`src/exercise.ts`), so the
+# "Counts as" figure is assertable anywhere. Whether it *stores* depends on the
+# backend having migration 0008's columns, and `POST /api/activity` is
+# `.strict()` — an older server rejects the payload outright.
+#
+# So this asserts the one thing that must hold either way: the app never claims
+# a save it didn't get. Afterwards, exactly one of "it's in the list" or "the
+# server refused it" is true.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+- tapOn: 'Plan'
+- assertVisible: 'PLAN'
+
+- scrollUntilVisible:
+    element:
+      text: 'Anything else today\?'
+    direction: DOWN
+- tapOn: 'Badminton'
+- tapOn:
+    id: 'log-minutes'
+- inputText: '45'
+
+# Priced before saving, from the MET table and today's weight. It's the energy
+# *above resting*, so it's lower than a gross-burn calculator would claim.
+- assertVisible: 'Counts as'
+- assertVisible: '.*\d+ kcal'
+
+- scrollUntilVisible:
+    element:
+      text: 'Log for today'
+    direction: DOWN
+- tapOn: 'Log for today'
+
+# The verdict is at the top of the screen, so read it from there. Exactly one
+# of these must be true afterwards — what must never happen is silence.
+- scrollUntilVisible:
+    element:
+      text: 'PLAN'
+    direction: UP
+- runFlow:
+    when:
+      notVisible: "The server wouldn't accept that weigh-in.*"
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: 'Sessions logged'
+          direction: DOWN
+      - assertVisible: '.*45 min badminton.*'

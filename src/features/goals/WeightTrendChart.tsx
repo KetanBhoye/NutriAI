@@ -2,6 +2,7 @@ import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import Svg, { Circle, Line, Path, Polygon } from 'react-native-svg';
 import { Card } from '@/components/ui';
 import { parseISODate, todayISO } from '@/dates';
+import { SMOOTH_DAYS, dayOffset, smoothSeries, toTrendPoints } from './weightTrend';
 import { colors, fonts, statusColor, type } from '@/theme';
 import { GoalPlan, PlanProgress, WeighIn } from '@/types';
 
@@ -11,9 +12,6 @@ const PAD_TOP = 10;
 const PAD_BOTTOM = 8;
 const PAD_LEFT = 34;
 const PAD_RIGHT = 10;
-/** Window for the smoothed line — the same span the server fits the trend over. */
-const SMOOTH_DAYS = 7;
-
 interface WeightTrendChartProps {
   plan: GoalPlan;
   /** Every weigh-in in the plan window, daily. */
@@ -23,25 +21,9 @@ interface WeightTrendChartProps {
   width: number;
 }
 
-function dayOffset(from: string, to: string): number {
-  return Math.round((parseISODate(to).getTime() - parseISODate(from).getTime()) / 86_400_000);
-}
-
 function shortDate(iso: string): string {
   const [, m, d] = iso.split('-');
   return `${Number(d)}/${Number(m)}`;
-}
-
-/**
- * Every reading averaged with the week before it. A daily weight swings up to
- * a kilo on salt, sleep and time of day, so the raw dots alone say nothing
- * about whether the plan is working — the smoothed line is what you read.
- */
-function smooth(points: Array<{ day: number; kg: number }>): Array<{ day: number; kg: number }> {
-  return points.map((p, i) => {
-    const window = points.slice(0, i + 1).filter((q) => p.day - q.day < SMOOTH_DAYS);
-    return { day: p.day, kg: window.reduce((s, q) => s + q.kg, 0) / window.length };
-  });
 }
 
 /**
@@ -58,13 +40,10 @@ export function WeightTrendChart({ plan, weighIns, progress, width }: WeightTren
   const today = todayISO();
   const totalDays = Math.max(1, dayOffset(plan.start_date, plan.target_date));
 
-  const points = weighIns
-    .map((w) => ({ day: dayOffset(plan.start_date, w.recorded_date), kg: w.weight_kg }))
-    .filter((p) => p.day >= 0)
-    .sort((a, b) => a.day - b.day);
+  const points = toTrendPoints(weighIns, plan.start_date);
   if (points.length === 0) return null;
 
-  const trend = smooth(points);
+  const trend = smoothSeries(points);
   const todayDay = Math.min(Math.max(dayOffset(plan.start_date, today), 0), totalDays);
 
   const plotW = width - PAD_LEFT - PAD_RIGHT;

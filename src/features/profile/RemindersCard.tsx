@@ -32,6 +32,7 @@ export function RemindersCard() {
           <Text style={styles.sub}>A nudge at 8pm if you still have calories left to log.</Text>
         </View>
         <Switch
+          testID="reminder-toggle"
           value={enabled}
           onValueChange={toggle}
           disabled={busy}
