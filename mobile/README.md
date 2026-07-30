@@ -167,27 +167,42 @@ npm run e2e -- -e EMAIL=you@example.com -e PASSWORD=secret
 
 ---
 
-## Building for distribution
+## Shipping a new version
 
 ```bash
-cd android && ./gradlew assembleRelease
-# → android/app/build/outputs/apk/release/app-release.apk
+npm run release -- 1.0.1
 ```
 
-Release APKs are signed with a keystore this repo controls, applied by
-`plugins/withReleaseSigning.js` from `credentials/keystore.properties`. Both the keystore and its
-passwords are gitignored.
+That's the whole process. It type-checks, runs the tests, bumps `version` and
+`versionCode`, builds the release APK, **verifies it carries the release key**,
+publishes it as a GitHub release, and pushes the tag. The backend's `/download`
+route follows GitHub's *latest release* permalink, so
+`https://nutriai-app.up.railway.app/download` starts serving the new build
+immediately — no backend deploy, and the link people already have keeps working.
 
-> **Back the keystore up somewhere off your machine.** Lose it and you cannot ship an update to
-> anyone who installed a previous APK — they would have to uninstall first.
->
-> **Google Sign-In needs the release key registered.** The Android OAuth client is registered
-> against the *debug* keystore's SHA-1, so Google sign-in fails in a release build until a second
-> client is registered with the release SHA-1 (`apksigner verify --print-certs <apk>`).
-> Email/password is unaffected.
+Add `--dry-run` to build and check without publishing anything.
 
-EAS works too (`eas build --profile preview --platform android`), and `eas.json` carries
-`development`, `preview` and `production` profiles.
+Two invariants the script enforces, because both are discovered far too late
+otherwise:
+
+- **Same keystore, always.** It compares the built APK's SHA-1 against the
+  release key and refuses to publish a mismatch. A different key means everyone
+  who installed a previous build must uninstall first — losing their local
+  state — and Google Sign-In stops working, since Google matches the signing
+  certificate.
+- **The asset is always `NutriAI.apk`.** The permalink resolves by filename;
+  rename it and every shared link 404s. The version lives in the release title
+  and tag.
+
+Signing comes from `credentials/keystore.properties` via
+`plugins/withReleaseSigning.js`. Both the keystore and its passwords are
+gitignored.
+
+> **Back the keystore up somewhere off your machine.** Lose it and you cannot
+> ship an update to anyone who installed a previous APK.
+
+EAS works too (`eas build --profile preview --platform android`), and `eas.json`
+carries `development`, `preview` and `production` profiles.
 
 ### `android/` and `ios/` are generated
 

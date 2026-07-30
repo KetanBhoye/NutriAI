@@ -167,12 +167,12 @@ newest release carrying that asset name — so publishing a release is all it
 takes to change what the link hands out.
 
 ```bash
-cd mobile/android && ./gradlew assembleRelease
-cp app/build/outputs/apk/release/app-release.apk /tmp/NutriAI.apk
-
-gh release create v1.0.0 /tmp/NutriAI.apk \
-  --repo KetanBhoye/NutriAI --title "NutriAI v1.0.0" --notes "..."
+cd mobile && npm run release -- 1.0.1
 ```
+
+That one command tests, bumps the version, builds, checks the APK is signed
+with the release key, and publishes the GitHub release the link resolves to.
+See [mobile/README.md](mobile/README.md#shipping-a-new-version).
 
 **Keep the asset name `NutriAI.apk` across releases** or the permalink breaks.
 Set `APK_DOWNLOAD_URL` to move to object storage or a Railway volume later
