@@ -9,11 +9,36 @@ import { colors, fonts, type } from '@/theme';
 type Status = 'checking' | 'unavailable' | 'needs-permission' | 'ready';
 
 /** Apple Health / Health Connect sync, as a section embedded in the You tab. */
+/** "exercise_minutes" → "exercise minutes". */
+function readableMetric(key: string): string {
+  return key.replace(/_/g, ' ').replace(' kcal', '').replace(' km', '').replace(' kg', '');
+}
+
+/**
+ * Something a person can act on.
+ *
+ * The API returns Zod's raw issue array as its error message, so rendering
+ * `e.message` put a wall of JSON on the screen — `{"code":"too_big",...}` —
+ * which tells the user nothing and looks broken.
+ */
+function humanError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.trim().startsWith('[') || raw.trim().startsWith('{')) {
+    return "Your health app sent a reading NutriAI couldn't accept. Nothing was saved — try again, and tell us if it keeps happening.";
+  }
+  if (/network|timeout|fetch/i.test(raw)) {
+    return "Couldn't reach NutriAI. Check your connection and try again.";
+  }
+  return raw;
+}
+
 export function HealthSyncSection() {
   const [status, setStatus] = useState<Status>('checking');
   const [reading, setReading] = useState<DailyHealth | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  /** Failures are styled as failures — the same slot in green read as success. */
+  const [failed, setFailed] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,7 +78,8 @@ export function HealthSyncSection() {
       const r = await health.getDailyHealth(new Date());
       setReading(r);
     } catch (e) {
-      setMessage((e as Error).message);
+      setFailed(true);
+      setMessage(humanError(e));
     } finally {
       setBusy(false);
     }
@@ -62,13 +88,25 @@ export function HealthSyncSection() {
   const sync = async () => {
     setBusy(true);
     setMessage(null);
+    setFailed(false);
     try {
-      const { reading: r, posted } = await syncToday();
+      const { reading: r, posted, skipped } = await syncToday();
       setReading(r);
       setLastSync(new Date().toLocaleTimeString());
-      setMessage(posted ? 'Synced to NutriAI ✓' : 'No metrics available to sync yet.');
+      if (!posted) {
+        setMessage('No metrics available to sync yet.');
+        return;
+      }
+      // Say which readings were ignored rather than quietly dropping them —
+      // a number your health app is showing you should not vanish in silence.
+      setMessage(
+        skipped.length
+          ? `Synced ✓ — ignored ${skipped.map(readableMetric).join(' and ')}, which your health app reported an impossible value for.`
+          : 'Synced to NutriAI ✓'
+      );
     } catch (e) {
-      setMessage((e as Error).message);
+      setFailed(true);
+      setMessage(humanError(e));
     } finally {
       setBusy(false);
     }
@@ -113,7 +151,7 @@ export function HealthSyncSection() {
         </>
       )}
 
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      {message ? <Text style={[styles.message, failed && styles.messageFailed]}>{message}</Text> : null}
     </View>
   );
 }
@@ -139,5 +177,6 @@ const styles = StyleSheet.create({
   cardText: { color: colors.textDim, fontSize: 14, lineHeight: 20 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
   lastSync: { ...type.figureSmall, fontSize: 12, color: colors.textDim, textAlign: 'center', marginTop: 10 },
-  message: { color: colors.accent, fontSize: 13, textAlign: 'center', marginTop: 12 },
+  message: { color: colors.accent, fontSize: 13, textAlign: 'center', marginTop: 12, lineHeight: 18 },
+  messageFailed: { color: colors.danger },
 });

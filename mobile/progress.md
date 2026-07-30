@@ -214,6 +214,25 @@ untouched and run on either platform. `npm run e2e:smoke` needs no account;
 the rest take credentials via `-e EMAIL=... -e PASSWORD=...` and must clean up
 after themselves, because they run against a real account on a real backend.
 
+## A health reading can be impossible; treat it as broken, not big
+
+Apple Health reported **4,980 exercise minutes** for a day that contains 1,440
+— overlapping watch and phone samples summed twice, most likely. The endpoint
+validates the payload as a unit, so that one number 400'd the whole sync and
+the steps, energy, distance and weight went down with it. `syncToday` now
+checks each metric against the same per-day maximum the API enforces and omits
+anything impossible, reporting it back as `skipped`.
+
+**Don't clamp to the maximum.** 1,440 would claim a full 24 hours of exercise —
+a fabrication, where dropping it is merely a gap. The app says which readings it
+ignored rather than silently discarding a number the user can see in their
+health app.
+
+The screen showed the failure as a wall of raw Zod JSON, in the same green the
+success message uses, because `ApiError.message` carries the server's
+`parsed.error.message` verbatim. Errors now get human copy and the danger
+colour — **never render an API error message straight to a user.**
+
 ## `POST /api/activity` is `.strict()` — send only what you mean
 
 The endpoint rejects unknown keys rather than ignoring them (deliberately: a

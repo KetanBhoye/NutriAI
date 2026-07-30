@@ -104,6 +104,59 @@ describe('syncToday', () => {
     expect((await syncToday()).reading.steps).toBe(8200);
   });
 
+  it('drops an impossible reading instead of failing the whole sync', async () => {
+    // Seen in the wild: Apple Health reported 4,980 exercise minutes for a day
+    // that contains 1,440. The endpoint validates the payload as a unit, so
+    // this used to take the steps, energy, distance and weight down with it.
+    getDailyHealth.mockResolvedValue(reading({ steps: 4142, exerciseMinutes: 4980, weightKg: 70.2 }));
+
+    const result = await syncToday();
+
+    expect(result.posted).toBe(true);
+    expect(result.skipped).toEqual(['exercise_minutes']);
+    const body = bodyOf(apiCall.mock.calls[0]!);
+    expect(body).toMatchObject({ steps: 4142, weight_kg: 70.2 });
+    expect('exercise_minutes' in body).toBe(false);
+  });
+
+  it('does not clamp an impossible value to the maximum', async () => {
+    // 1,440 would claim a full 24 hours of exercise — a fabrication, not a
+    // measurement. Better to have no figure than a made-up one.
+    getDailyHealth.mockResolvedValue(reading({ steps: 100, exerciseMinutes: 4980 }));
+
+    await syncToday();
+
+    expect(bodyOf(apiCall.mock.calls[0]!).exercise_minutes).toBeUndefined();
+  });
+
+  it('keeps a value that sits exactly on the limit', async () => {
+    // 1440 is a real, if absurd, day. The boundary belongs to the good side.
+    getDailyHealth.mockResolvedValue(reading({ exerciseMinutes: 1440 }));
+
+    await syncToday();
+
+    expect(bodyOf(apiCall.mock.calls[0]!).exercise_minutes).toBe(1440);
+  });
+
+  it('rejects negatives and NaN, which no metric can be', async () => {
+    getDailyHealth.mockResolvedValue(reading({ steps: -5, activeEnergyKcal: Number.NaN, distanceKm: 3.05 }));
+
+    const result = await syncToday();
+
+    expect(result.skipped).toEqual(['steps', 'active_energy_kcal']);
+    expect(bodyOf(apiCall.mock.calls[0]!)).toMatchObject({ distance_km: 3.05 });
+  });
+
+  it('sends nothing when every reading is implausible', async () => {
+    getDailyHealth.mockResolvedValue(reading({ steps: 999_999, exerciseMinutes: 4980 }));
+
+    const result = await syncToday();
+
+    expect(result.posted).toBe(false);
+    expect(apiCall).not.toHaveBeenCalled();
+    expect(result.skipped).toEqual(['steps', 'exercise_minutes']);
+  });
+
   it('lets a failed request surface rather than reporting success', async () => {
     getDailyHealth.mockResolvedValue(reading({ steps: 8200 }));
     apiCall.mockRejectedValue(new Error('offline'));

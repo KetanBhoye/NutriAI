@@ -130,6 +130,10 @@ const config: ExpoConfig = {
     // Must come last: strips the aps-environment entitlement that
     // expo-notifications adds. See the plugin for why.
     './plugins/withoutPushEntitlement',
+    // Puts the signing team into the generated Xcode project, so a device
+    // build doesn't stop to ask for it (and doesn't lose it on the next
+    // prebuild). Same reasoning as withReleaseSigning on Android.
+    './plugins/withIosSigningTeam',
   ],
   extra: {
     apiUrl: API_URL,
