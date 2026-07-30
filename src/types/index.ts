@@ -142,9 +142,10 @@ export interface UpdateEntryParams {
   entry_id: string;
   food_name?: string;
   calories?: number;
-  protein_g?: number;
-  carbs_g?: number;
-  fat_g?: number;
+  /** `null` clears the macro; omitting it leaves the stored value alone. */
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
   meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
   /** Portion size. The mobile app records this in grams (`unit: 'g'`). */
   quantity?: number;

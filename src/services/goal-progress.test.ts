@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDeficitSeries,
   buildGlidePath,
+  planProgress,
   weeklyDeficit,
   type WeighIn,
 } from './goal-progress.js';
@@ -175,5 +176,106 @@ describe('weeklyDeficit', () => {
     const [week] = weeklyDeficit(days);
     expect(week!.days_logged).toBe(4);
     expect(week!.total_deficit).toBe(2400);
+  });
+});
+
+describe('planProgress', () => {
+  /** Daily readings starting `from`, moving `perDay` kg each day. */
+  const series = (from: string, start: number, perDay: number, days: number): WeighIn[] =>
+    Array.from({ length: days }, (_, i) => {
+      const d = new Date(Date.UTC(2026, 0, 1));
+      const [y, m, day] = from.split('-').map(Number);
+      d.setUTCFullYear(y!, (m ?? 1) - 1, (day ?? 1) + i);
+      return {
+        recorded_date: d.toISOString().split('T')[0]!,
+        weight_kg: Math.round((start + perDay * i) * 100) / 100,
+      };
+    });
+
+  it('reads the baseline off the plan line for the day', () => {
+    // 42-day plan losing 2.7 kg; three weeks in is half of it.
+    const p = planProgress(CUT, [], '2026-08-09');
+    expect(p.baseline_kg).toBeCloseTo(69.35, 2);
+    expect(p.days_elapsed).toBe(21);
+    expect(p.days_remaining).toBe(21);
+  });
+
+  it('has nothing to compare without a weigh-in', () => {
+    const p = planProgress(CUT, [], '2026-08-09');
+    expect(p.actual_kg).toBeNull();
+    expect(p.status).toBe('empty');
+    expect(p.suggested_calorie_delta).toBeNull();
+  });
+
+  it('smooths the current weight over the last week of readings', () => {
+    const weighIns: WeighIn[] = [
+      { recorded_date: '2026-08-06', weight_kg: 69.6 },
+      { recorded_date: '2026-08-08', weight_kg: 69.2 },
+      // A single salty day shouldn't move the verdict on its own.
+      { recorded_date: '2026-08-09', weight_kg: 70.3 },
+    ];
+    const p = planProgress(CUT, weighIns, '2026-08-09');
+
+    expect(p.readings_used).toBe(3);
+    expect(p.actual_kg).toBeCloseTo(69.7, 2);
+  });
+
+  it('flags being behind, and being ahead, in the direction of the goal', () => {
+    const behind = planProgress(CUT, [{ recorded_date: '2026-08-09', weight_kg: 70.5 }], '2026-08-09');
+    expect(behind.status).toBe('behind');
+    expect(behind.delta_kg).toBeCloseTo(1.15, 2);
+
+    const ahead = planProgress(CUT, [{ recorded_date: '2026-08-09', weight_kg: 68.5 }], '2026-08-09');
+    expect(ahead.status).toBe('ahead');
+    expect(ahead.delta_kg).toBeCloseTo(-0.85, 2);
+  });
+
+  it('fits the trend rate from recent readings', () => {
+    // 0.1 kg/day down = 0.7 kg/week.
+    const p = planProgress(CUT, series('2026-07-26', 70.4, -0.1, 15), '2026-08-09');
+    expect(p.actual_rate_kg_per_week).toBeCloseTo(-0.7, 2);
+  });
+
+  it('refuses a rate from readings that span less than a week', () => {
+    const p = planProgress(CUT, series('2026-08-07', 70.4, -0.1, 3), '2026-08-09');
+    expect(p.actual_rate_kg_per_week).toBeNull();
+    expect(p.suggested_calorie_delta).toBeNull();
+  });
+
+  it('projects the goal date from the measured rate', () => {
+    const p = planProgress(CUT, series('2026-07-26', 70.4, -0.1, 15), '2026-08-09');
+    expect(p.projected_goal_date).not.toBeNull();
+    // Losing faster than the plan needs lands early.
+    expect(p.days_off_plan!).toBeLessThan(0);
+  });
+
+  it('has no goal date when the trend moves away from the goal', () => {
+    const p = planProgress(CUT, series('2026-07-26', 68.5, 0.1, 15), '2026-08-09');
+    expect(p.actual_rate_kg_per_week).toBeGreaterThan(0);
+    expect(p.projected_goal_date).toBeNull();
+  });
+
+  it('suggests eating less when the trend is short of what the plan needs', () => {
+    // Flat weight with 2.5 kg still to lose in three weeks.
+    const p = planProgress(CUT, series('2026-07-26', 70.5, 0, 15), '2026-08-09');
+    expect(p.suggested_calorie_delta!).toBeLessThan(0);
+  });
+
+  it('suggests nothing while the trend already matches the plan', () => {
+    // Plan needs 0.45 kg/week; match it and land on the baseline.
+    const p = planProgress(CUT, series('2026-07-26', 70.0, -0.064, 15), '2026-08-09');
+    expect(p.suggested_calorie_delta).toBe(0);
+  });
+
+  it('never suggests a swing bigger than 400 kcal', () => {
+    const p = planProgress(CUT, series('2026-07-26', 74, 0.2, 15), '2026-08-09');
+    expect(p.suggested_calorie_delta).toBe(-400);
+  });
+
+  it('stops suggesting once the plan has run out of days', () => {
+    const p = planProgress(CUT, series('2026-08-17', 69.5, -0.05, 14), '2026-08-30');
+    expect(p.days_remaining).toBe(0);
+    expect(p.required_rate_kg_per_week).toBeNull();
+    expect(p.suggested_calorie_delta).toBeNull();
   });
 });

@@ -42,7 +42,7 @@ import { sendReminderNow } from '../services/reminders.js';
 import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
 import { GoalPlanRepository } from '../repositories/goal-plan.repository.js';
 import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-activity.repository.js';
-import { buildDeficitSeries, buildGlidePath, weeklyDeficit } from '../services/goal-progress.js';
+import { buildDeficitSeries, buildGlidePath, planProgress, weeklyDeficit } from '../services/goal-progress.js';
 import { DailyActivityRepository } from '../repositories/daily-activity.repository.js';
 import { extractBearerToken, verifyBearerToken } from '../auth/token-auth.js';
 
@@ -217,9 +217,12 @@ const entryUpdateSchema = z
   .object({
     food_name: z.string().min(1).optional(),
     calories: z.number().int().min(0).optional(),
-    protein_g: z.number().min(0).optional(),
-    carbs_g: z.number().min(0).optional(),
-    fat_g: z.number().min(0).optional(),
+    // Nullable: clients clear a macro by sending null. Rejecting null failed the
+    // *whole* patch, so editing the calories of an entry logged without macros
+    // 400'd and the edit was silently lost.
+    protein_g: z.number().min(0).nullable().optional(),
+    carbs_g: z.number().min(0).nullable().optional(),
+    fat_g: z.number().min(0).nullable().optional(),
     meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
     quantity: z.number().positive().max(10000).optional(),
     unit: z.string().min(1).max(20).optional(),
@@ -812,8 +815,20 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const activityRepo = new ActivityRepo(env.DB);
       const activity = await activityRepo.listRecent(userId, 60);
 
+      // Every weigh-in inside the plan (or the recent past when there's no
+      // plan), so the app can plot the day-to-day line against the baseline
+      // rather than only the weekly markers the glide path exposes.
+      const today = new Date().toISOString().split('T')[0]!;
+      const windowStart =
+        plan?.start_date ?? new Date(Date.now() - 90 * 86_400_000).toISOString().split('T')[0]!;
+      const dailyWeights = weighIns
+        .filter((row) => row.weight_kg !== null && row.recorded_date >= windowStart)
+        .map((row) => ({ recorded_date: row.recorded_date, weight_kg: row.weight_kg! }));
+
       res.json({
         plan,
+        weigh_ins: dailyWeights,
+        progress: plan ? planProgress(plan, weighIns, today) : null,
         macros: {
           calories: prefs?.daily_calorie_goal ?? null,
           protein_g: prefs?.daily_protein_goal_g ?? null,
