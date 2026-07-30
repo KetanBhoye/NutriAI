@@ -14,9 +14,11 @@ import {
   newPendingId,
   refreshPendingCount,
   subscribePending,
+  subscribeRejections,
 } from '@/api/queue';
 import type { EntriesResponse } from '@/api/entries';
 import { cached, readCache } from '@/cache';
+import { subscribeGoalsChanged } from '@/goalsBus';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { capitalize } from '@/format';
 import { defaultPortion, formatGrams, toGrams, type Portion } from '@/portion';
@@ -180,20 +182,28 @@ export default function Today() {
     load(viewDate);
   }, [viewDate, load]);
 
-  useEffect(() => {
-    cached('goals', () => goalsApi.getGoals())
-      .then(({ data: g }) => {
-        if (g.macros.calories) {
-          setGoals({
-            daily_calorie_goal: g.macros.calories,
-            daily_protein_goal_g: g.macros.protein_g,
-            daily_carbs_goal_g: g.macros.carbs_g,
-            daily_fat_goal_g: g.macros.fat_g,
-          });
-        }
-      })
-      .catch(() => {});
+  const loadGoals = useCallback(async () => {
+    try {
+      const { data: g } = await cached('goals', () => goalsApi.getGoals());
+      if (g.macros.calories) {
+        setGoals({
+          daily_calorie_goal: g.macros.calories,
+          daily_protein_goal_g: g.macros.protein_g,
+          daily_carbs_goal_g: g.macros.carbs_g,
+          daily_fat_goal_g: g.macros.fat_g,
+        });
+      }
+    } catch {
+      // Keep whatever targets are already on screen.
+    }
   }, []);
+
+  // This tab stays mounted while you edit the plan on another one, so re-read
+  // the targets when they change rather than holding the ones from launch.
+  useEffect(() => {
+    void loadGoals();
+    return subscribeGoalsChanged(() => void loadGoals());
+  }, [loadGoals]);
 
   /**
    * Drains the queue and, if anything actually synced, re-reads the day so the
@@ -212,6 +222,24 @@ export default function Today() {
     void refreshPendingCount().then(() => reconcile());
     return unsub;
   }, []);
+
+  // A write the server refused is dropped from the queue, so the optimistic row
+  // is about to be replaced by the server's version. Say so and re-read, rather
+  // than leaving the edit on screen until it quietly reverts on the next load.
+  useEffect(
+    () =>
+      subscribeRejections((kind, message) => {
+        console.warn(`Rejected ${kind}:`, message);
+        Alert.alert(
+          "That didn't save",
+          kind === 'delete'
+            ? "The server wouldn't delete that entry."
+            : "The server wouldn't accept that change, so it's been undone."
+        );
+        void load(viewDate);
+      }),
+    [load, viewDate]
+  );
 
   // Retry whenever the app comes back to the foreground — that's the most
   // likely moment for connectivity to have returned.

@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { dashboardApi, goalsApi } from '@/api';
 import { useCachedResource } from '@/useCachedResource';
 import { writeCache } from '@/cache';
+import { subscribeGoalsChanged } from '@/goalsBus';
 import { toLocalISODate } from '@/dates';
 import { colors, fonts, type } from '@/theme';
 import { Button, Card, EmptyState, Screen, SkeletonCard, StaleNotice, StatTile } from '@/components/ui';
@@ -56,6 +57,11 @@ export default function Trends() {
   const report = useCachedResource('insights.weekly', () => dashboardApi.getWeeklyInsights(), {
     errorMessage: "Couldn't load your weekly report.",
   });
+
+  // The goal line has to move when the plan does, and this tab stays mounted
+  // while the plan is edited on another one.
+  const refreshGoals = goals.refresh;
+  useEffect(() => subscribeGoalsChanged(() => void refreshGoals()), [refreshGoals]);
 
   const [refreshingReport, setRefreshingReport] = useState(false);
   const regenerateReport = async () => {

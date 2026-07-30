@@ -87,5 +87,8 @@ export function useCachedResource<T>(
     };
   }, [key, load]);
 
-  return { data, loading, refreshing, stale, error, refresh: () => load(true) };
+  // Stable so callers can use it as an effect dependency without re-running.
+  const refresh = useCallback(() => load(true), [load]);
+
+  return { data, loading, refreshing, stale, error, refresh };
 }

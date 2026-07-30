@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { api, clearSession, loadStoredCookie, setUnauthorizedHandler } from './api';
 import { clearCache } from './cache';
 
@@ -31,10 +31,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = async () => {
+  // Stable identity: screens subscribe to goal changes with this as a
+  // dependency, and a fresh function each render would re-subscribe forever.
+  const refreshUser = useCallback(async () => {
     const me = await api<{ user: User } | User>('/api/me');
     setUser((me as { user?: User }).user ?? (me as User));
-  };
+  }, []);
 
   // On launch: if we have a stored session cookie, confirm it's still valid.
   useEffect(() => {

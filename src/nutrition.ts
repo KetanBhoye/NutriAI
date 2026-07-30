@@ -57,6 +57,21 @@ export function defaultRate(goal: Goal): number {
   return opts.length ? opts[Math.min(1, opts.length - 1)]!.kg : 0;
 }
 
+/**
+ * The offered rate closest to one a saved plan implies. A plan's own pace is a
+ * continuous number (goal weight over target date), so it rarely equals a pill
+ * exactly — snapping keeps the editor showing the pace you actually chose
+ * instead of silently falling back to the default.
+ */
+export function nearestRate(goal: Goal, rateKgPerWeek: number): number {
+  const opts = RATE_OPTIONS[goal];
+  if (!opts.length) return 0;
+  if (!Number.isFinite(rateKgPerWeek) || rateKgPerWeek <= 0) return defaultRate(goal);
+  return opts.reduce((best, o) =>
+    Math.abs(o.kg - rateKgPerWeek) < Math.abs(best.kg - rateKgPerWeek) ? o : best
+  ).kg;
+}
+
 export const GOALS: Record<
   Goal,
   { label: string; blurb: string; dir: -1 | 0 | 1; proteinPerKg: number; fatPct: number }

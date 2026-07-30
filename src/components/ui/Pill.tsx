@@ -9,7 +9,7 @@ interface PillOption<T extends string> {
 
 interface PillGroupProps<T extends string> {
   options: PillOption<T>[];
-  value: T;
+  value: T | null | undefined;
   onChange: (value: T) => void;
   columns?: number;
 }

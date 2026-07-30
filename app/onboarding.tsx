@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '@/auth';
 import { ApiError, onboardingApi } from '@/api';
+import { emitGoalsChanged } from '@/goalsBus';
 import { addDays, todayISO } from '@/dates';
 import { Button, OptionRow, PillGroup, Screen, TextField } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
@@ -169,6 +170,7 @@ export default function Onboarding() {
         target_weight_kg: targetWeightN,
         target_date: targetDate,
       });
+      emitGoalsChanged();
       await refreshUser();
     } catch (e) {
       setError(e instanceof ApiError && e.status !== 0 ? e.message : "Couldn't save. Check your connection and try again.");

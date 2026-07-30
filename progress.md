@@ -153,6 +153,86 @@ generic 400 → "couldn't save". Both call sites (`app/onboarding.tsx`,
 way. `finish()` in onboarding also rejects non-finite targets so a shape
 mismatch fails loudly rather than as a connection error.
 
+## Goal changes have to be broadcast (`src/goalsBus.ts`)
+
+The tab navigator keeps every tab mounted, so Today, Trends and You each read
+the targets once and then kept showing them for the whole session — editing the
+plan appeared to do nothing everywhere except the Plan tab. Any successful write
+to the plan or the macro targets must call `emitGoalsChanged()`; subscribers
+re-read (`app/(tabs)/index.tsx`, `dashboard.tsx`, and `_layout.tsx`, which
+refreshes `/api/me` for the You tab and re-schedules the reminder).
+
+The Plan editor also must not recalculate on open. It now opens with **nothing
+selected** — activity, goal and pace are all `null`, mirroring onboarding from
+blank — so there is nothing to recalculate from and the saved targets stay
+untouched until a real choice is made. `editMacros` is null until an activity
+level, a goal and (unless the goal is "maintain") a pace have all been picked;
+that null is what gates the recompute effect, the AI-refine button, and Save on
+a first-ever plan. Don't reintroduce defaults here: pre-selecting the controls
+is exactly what silently overwrote people's plans. Picking a goal clears the
+pace rather than defaulting it, since the pace options differ per goal.
+
+## Reminder copy can't quote a day's totals on a repeating trigger
+
+The OS fixes notification text at scheduling time, so the old `DAILY` trigger
+re-delivered one day's calories forever — that's the reminder disagreeing with
+the app. `src/notifications/reminders.ts` now schedules 14 one-shot `DATE`
+notifications and re-arms them on launch, foreground, backgrounding and any goal
+change. Only today's carries live totals; later ones quote the target, which
+stays true on any day. The cost is that reminders lapse if the app isn't opened
+for two weeks.
+
+## `PATCH /api/entries/:id` rejects nulls — and the queue drops 4xx
+
+Editing an entry sent `protein_g: null` for any macro left blank, which zod
+refused (the fields are `optional()`, not `nullable()`), so the whole patch
+400'd. `flush()` drops 4xx by design, so the edit vanished without a word and
+the old numbers came back on the next refresh. Three changes, all worth
+keeping:
+
+- `EntryDetailModal` omits a blank macro instead of sending null, and only
+  sends null when the entry had a value the user actually cleared. `quantity`
+  is omitted unless it's positive — the API requires `positive()`.
+- The API accepts `null` for the three macros (clear the value); the repository
+  already wrote NULL correctly.
+- `subscribeRejections()` in `src/api/queue.ts` reports dropped 4xx writes.
+  Today alerts and re-reads, so a refused write is visible rather than a silent
+  revert. **Any new queue consumer should subscribe.**
+
+## The plan adapts to the trend, not to the last weigh-in
+
+`planProgress()` (backend `src/services/goal-progress.ts`, returned as
+`progress` by `GET /api/goals`) compares the plan's baseline for *today*
+against a smoothed current weight, fits a rate over the last 28 days of
+weigh-ins, projects where that lands on the target date, and derives the daily
+calorie change that would close the gap. Rules that matter:
+
+- Never judge on a single reading. The current weight is a 7-day mean and the
+  rate is a least-squares fit — a plan that reacted to one salty day would say
+  something different every morning.
+- No rate at all from readings spanning under 7 days; no suggestion with under
+  7 days of plan left; suggestions clamp to ±400 kcal and round to 0 below
+  50 kcal (inside the food log's own error).
+- The suggestion is **offered**, never auto-applied. `applySuggestion()` in
+  `app/(tabs)/goals.tsx` only moves the calorie target (and rebalances macros
+  around it); plan weights and dates stay put.
+
+The Plan tab shows `WeightTrendChart` (daily weigh-ins, 7-day trend line, plan
+baseline + tolerance band, today marker, projected finish) and `ProgressFlag`
+(the verdict, the four rates, the suggestion). `GlideChart` is kept only as the
+fallback for payloads cached before `weigh_ins` existed.
+
+## Keyboard handling inside `Sheet` on Android
+
+`adjustResize` resizes the activity's window, not the separate window a
+transparent `Modal` lives in, so `KeyboardAvoidingView` had nothing to react to
+and `behavior="height"` measured the whole screen — the sheet jumped and the
+keyboard flickered while typing in the food search. `Sheet` now measures the
+keyboard itself (`keyboardDidShow`/`Hide`, Android only) and pads the sheet by
+that height, keeps `KeyboardAvoidingView` for iOS only, and dismisses the
+keyboard before closing so Android never tears down a focused `TextInput` with
+its window. Don't reintroduce `behavior="height"` here.
+
 ## UI conventions
 
 - **Navigator headers are off app-wide** (`app/(tabs)/_layout.tsx`

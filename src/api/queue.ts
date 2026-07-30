@@ -74,6 +74,23 @@ export function subscribePending(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Writes the server refused. Dropping a 4xx is right — retrying can't fix it —
+ * but doing it silently meant a rejected edit just reappeared with its old
+ * values on the next refresh, looking like the app had ignored the save.
+ */
+type RejectionListener = (kind: QueuedOp['kind'], message: string) => void;
+const rejectionListeners = new Set<RejectionListener>();
+
+export function subscribeRejections(listener: RejectionListener): () => void {
+  rejectionListeners.add(listener);
+  return () => rejectionListeners.delete(listener);
+}
+
+function notifyRejected(kind: QueuedOp['kind'], message: string): void {
+  for (const l of rejectionListeners) l(kind, message);
+}
+
 export async function refreshPendingCount(): Promise<void> {
   notify((await read()).length);
 }
@@ -159,10 +176,14 @@ export async function flush(): Promise<number> {
       } catch (e) {
         const status = e instanceof ApiError ? e.status : 0;
         // 4xx will never succeed on retry (and a 404 delete is already the
-        // outcome we wanted) — drop it rather than wedging the queue.
+        // outcome we wanted) — drop it rather than wedging the queue, but say
+        // so: the row is about to snap back to the server's version.
         if (status >= 400 && status < 500) {
           ops = ops.slice(1);
           await write(ops);
+          if (!(next.kind === 'delete' && status === 404)) {
+            notifyRejected(next.kind, e instanceof ApiError ? e.message : 'The server rejected that change.');
+          }
           continue;
         }
         // Network or 5xx: stop here so ordering is preserved, try again later.

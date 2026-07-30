@@ -79,8 +79,41 @@ export interface DailyActivity {
   weight_kg?: number | null;
 }
 
+export interface WeighIn {
+  recorded_date: string;
+  weight_kg: number;
+}
+
+/**
+ * The plan measured against what actually happened. Computed server-side (see
+ * `src/services/goal-progress.ts`) so the app and the coach can't disagree
+ * about whether you're on track.
+ */
+export interface PlanProgress {
+  baseline_kg: number | null;
+  actual_kg: number | null;
+  readings_used: number;
+  /** Positive is always *behind*, whichever way the goal points. */
+  delta_kg: number | null;
+  status: GlideWeek['status'];
+  planned_rate_kg_per_week: number;
+  actual_rate_kg_per_week: number | null;
+  required_rate_kg_per_week: number | null;
+  projected_kg_at_target: number | null;
+  projected_goal_date: string | null;
+  days_off_plan: number | null;
+  /** Daily calorie change that would close the gap. Negative means eat less. */
+  suggested_calorie_delta: number | null;
+  days_elapsed: number;
+  days_remaining: number;
+  headline: string;
+}
+
 export interface GoalsPayload {
   plan: GoalPlan | null;
+  /** Every weigh-in inside the plan window, for the daily trend chart. */
+  weigh_ins?: WeighIn[];
+  progress?: PlanProgress | null;
   macros: {
     calories: number | null;
     protein_g: number | null;

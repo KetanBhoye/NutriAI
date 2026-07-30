@@ -3,8 +3,11 @@ import Feather from '@expo/vector-icons/Feather';
 import { colors } from '@/theme';
 import { useHealthAutoSync } from '@/health/useHealthAutoSync';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { scheduleDailyReminder } from '@/notifications/reminders';
+import { useAuth } from '@/auth';
+import { subscribeGoalsChanged } from '@/goalsBus';
 
 // Show reminders even while the app is open, rather than silently dropping them.
 Notifications.setNotificationHandler({
@@ -19,12 +22,34 @@ Notifications.setNotificationHandler({
 export default function TabsLayout() {
   // Only reached once signed in, so there's always a session to sync against.
   useHealthAutoSync(true);
+  const { refreshUser } = useAuth();
 
   // The OS fixes the notification text when it's scheduled, so refresh it on
   // each launch to reflect the current day's log.
   useEffect(() => {
     void scheduleDailyReminder();
   }, []);
+
+  // Backgrounding is the last moment before the reminder can fire, so it's
+  // where the day's totals are freshest — re-scheduling here is what keeps the
+  // notification's numbers matching the app's.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'active') void scheduleDailyReminder();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Editing the plan changes the calorie target the reminder counts against,
+  // and the target the You tab shows from /api/me.
+  useEffect(
+    () =>
+      subscribeGoalsChanged(() => {
+        void scheduleDailyReminder();
+        void refreshUser().catch(() => {});
+      }),
+    [refreshUser]
+  );
 
   return (
     <Tabs

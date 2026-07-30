@@ -2,7 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { goalsApi, onboardingApi, profileApi } from '@/api';
 import { cached, readCache } from '@/cache';
-import { Button, Card, EmptyState, PillGroup, Screen, SkeletonCard, StaleNotice, StatTile, TextField } from '@/components/ui';
+import { emitGoalsChanged } from '@/goalsBus';
+import {
+  Button,
+  Card,
+  EmptyState,
+  OptionRow,
+  PillGroup,
+  Screen,
+  SkeletonCard,
+  StaleNotice,
+  StatTile,
+  TextField,
+} from '@/components/ui';
 import { colors, fonts, statusColor, type } from '@/theme';
 import { addDays, todayISO } from '@/dates';
 import {
@@ -15,10 +27,12 @@ import {
   calcTDEE,
   computeMacros,
   dailyDelta,
-  defaultRate,
+  nearestRate,
 } from '@/nutrition';
 import { GoalsPayload, ProfileBasics } from '@/types';
 import { GlideChart } from '@/features/goals/GlideChart';
+import { WeightTrendChart } from '@/features/goals/WeightTrendChart';
+import { ProgressFlag } from '@/features/goals/ProgressFlag';
 import { StepsChart } from '@/features/goals/StepsChart';
 
 const STATUS_LABEL = { ahead: 'AHEAD', on: 'ON PACE', watch: 'WATCH', behind: 'BEHIND', empty: '—' } as const;
@@ -59,12 +73,21 @@ export default function Plan() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   const [profile, setProfile] = useState<ProfileBasics | null>(null);
-  const [editGoal, setEditGoal] = useState<Goal>('cut');
-  const [editRate, setEditRate] = useState<number>(defaultRate('cut'));
+  /**
+   * The editor's choices all start empty, exactly as they do in onboarding.
+   * Pre-selecting them meant the screen recalculated a plan the moment it
+   * opened and overwrote the saved targets with one nobody had asked for. With
+   * nothing selected there is nothing to recalculate *from*, so the saved
+   * numbers stay put until a real choice is made.
+   */
+  const [editGoal, setEditGoal] = useState<Goal | null>(null);
+  const [editRate, setEditRate] = useState<number | null>(null);
+  const [editActivity, setEditActivity] = useState<ActivityLevel | null>(null);
+  /** A measurement rather than a choice, so this one is prefilled. */
   const [editWeight, setEditWeight] = useState(70);
-  const [editActivity, setEditActivity] = useState<ActivityLevel>('light');
   const [editTargetWeight, setEditTargetWeight] = useState<number | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
@@ -81,26 +104,35 @@ export default function Plan() {
 
   const canCompute = !!profile?.height_cm && !!profile?.age && !!profile?.gender;
 
+  /** Maintenance, once an activity level has been chosen. */
   const editTdee = useMemo(() => {
-    if (!canCompute || !profile) return null;
+    if (!canCompute || !profile || !editActivity) return null;
     const bmr = calcBMR(editWeight, profile.height_cm!, profile.age!, profile.gender!);
     return calcTDEE(bmr, editActivity);
   }, [canCompute, profile, editWeight, editActivity]);
 
-  const editMacros = useMemo(
-    () => (editTdee ? computeMacros(editTdee, editWeight, editGoal, editRate) : null),
-    [editTdee, editWeight, editGoal, editRate]
-  );
+  /**
+   * A goal needs a pace before it implies any numbers — except "maintain",
+   * which has no pace to pick. Until both are chosen this stays null and the
+   * saved targets are what the screen shows.
+   */
+  const editMacros = useMemo(() => {
+    if (!editTdee || !editGoal) return null;
+    if (editGoal !== 'maintain' && editRate === null) return null;
+    return computeMacros(editTdee, editWeight, editGoal, editRate ?? 0);
+  }, [editTdee, editWeight, editGoal, editRate]);
 
-  const editDelta = editGoal === 'maintain' ? 0 : dailyDelta(editRate);
-  const editRateOptions = RATE_OPTIONS[editGoal];
+  const editDelta = editGoal === 'maintain' || editRate === null ? 0 : dailyDelta(editRate);
+  const editRateOptions = editGoal ? RATE_OPTIONS[editGoal] : [];
 
-  // Push the auto-computed plan into the form whenever the smart controls change.
+  // Push the computed plan into the form. `editMacros` is null until the user
+  // has actually chosen an activity level, a goal and a pace, so this cannot
+  // fire off pre-selected values the way it used to.
   useEffect(() => {
-    if (!canCompute || !editMacros) return;
+    if (!canCompute || !editMacros || !editGoal) return;
     const goalW = editGoal === 'maintain' ? editWeight : (editTargetWeight ?? editWeight);
     let targetDate: string;
-    if (editGoal !== 'maintain' && editTargetWeight && editRate > 0) {
+    if (editGoal !== 'maintain' && editTargetWeight && editRate) {
       const weeks = Math.max(1, Math.abs(editTargetWeight - editWeight) / editRate);
       targetDate = addDays(todayISO(), Math.round(weeks * 7));
     } else {
@@ -109,7 +141,10 @@ export default function Plan() {
     setForm((f) => ({
       ...f,
       start_weight_kg: editWeight,
-      start_date: todayISO(),
+      // Re-baseline the start only for a brand-new plan. Moving an existing
+      // plan's start date to today would throw away the glide path you've been
+      // weighing in against.
+      start_date: data?.plan ? f.start_date : todayISO(),
       goal_weight_kg: goalW,
       target_date: targetDate,
       daily_calorie_goal: editMacros.calories,
@@ -117,37 +152,64 @@ export default function Plan() {
       daily_carbs_goal_g: editMacros.carbs_g,
       daily_fat_goal_g: editMacros.fat_g,
     }));
-  }, [canCompute, editGoal, editRate, editWeight, editTargetWeight, editMacros]);
+  }, [canCompute, editGoal, editRate, editWeight, editTargetWeight, editMacros, data?.plan]);
 
+  /**
+   * Picking a goal clears the pace rather than defaulting it: the pace options
+   * differ per goal, and carrying one over would be a selection the user never
+   * made — the whole complaint about this screen.
+   */
   const pickEditGoal = (g: Goal) => {
     setEditGoal(g);
-    setEditRate(defaultRate(g));
+    setEditRate(null);
     setAiNote(null);
   };
 
   const openEditor = async (payload: GoalsPayload | null) => {
     setEditing(true);
     setAiNote(null);
+    // Every choice starts empty, for a new plan and an existing one alike.
+    setEditGoal(null);
+    setEditRate(null);
+    setEditActivity(null);
+    setEditTargetWeight(null);
+    const plan = payload?.plan;
+    if (plan) {
+      // Seed the form from the plan that's actually saved, so the editor opens
+      // showing the current plan rather than a freshly calculated one.
+      setForm((f) => ({
+        ...f,
+        ...plan,
+        daily_calorie_goal: payload!.macros.calories ?? f.daily_calorie_goal,
+        daily_protein_goal_g: payload!.macros.protein_g ?? f.daily_protein_goal_g,
+        daily_carbs_goal_g: payload!.macros.carbs_g ?? f.daily_carbs_goal_g,
+        daily_fat_goal_g: payload!.macros.fat_g ?? f.daily_fat_goal_g,
+      }));
+    }
     const p = await profileApi.getProfile();
     setProfile(p);
-    const plan = payload?.plan;
+    // The weight is a fact about today, not a choice, so it's prefilled from
+    // the latest weigh-in. Everything else waits to be picked.
     setEditWeight(payload?.latest_weight ?? plan?.start_weight_kg ?? 70);
-    setEditActivity(p?.activity_level ?? 'light');
-    if (plan) {
-      const g: Goal =
-        plan.goal_weight_kg < plan.start_weight_kg ? 'cut' : plan.goal_weight_kg > plan.start_weight_kg ? 'lean_bulk' : 'maintain';
-      setEditGoal(g);
-      setEditTargetWeight(plan.goal_weight_kg === plan.start_weight_kg ? null : plan.goal_weight_kg);
-      setEditRate(defaultRate(g));
-    } else {
-      setEditGoal('cut');
-      setEditTargetWeight(null);
-      setEditRate(defaultRate('cut'));
-    }
   };
 
+  /** What the plan currently implies, shown as context beside the empty choices. */
+  const savedShape = useMemo(() => {
+    const plan = data?.plan;
+    if (!plan) return null;
+    const goal: Goal =
+      plan.goal_weight_kg < plan.start_weight_kg
+        ? 'cut'
+        : plan.goal_weight_kg > plan.start_weight_kg
+          ? 'lean_bulk'
+          : 'maintain';
+    const days = (Date.parse(plan.target_date) - Date.parse(plan.start_date)) / 86_400_000;
+    const implied = days > 0 ? (Math.abs(plan.goal_weight_kg - plan.start_weight_kg) / days) * 7 : 0;
+    return { goal, rate: nearestRate(goal, implied) };
+  }, [data?.plan]);
+
   const refineWithAI = async () => {
-    if (!editTdee || !editMacros || !profile) return;
+    if (!editTdee || !editMacros || !profile || !editGoal || !editActivity) return;
     setAiBusy(true);
     setAiNote(null);
     try {
@@ -265,6 +327,9 @@ export default function Plan() {
       await goalsApi.saveGoals(form);
       setEditing(false);
       await load();
+      // Today, Trends, You and the daily reminder all hold their own copy of
+      // the targets; tell them the numbers moved.
+      emitGoalsChanged();
     } catch {
       setError("Couldn't save. Check your connection.");
     } finally {
@@ -272,9 +337,52 @@ export default function Plan() {
     }
   };
 
-  const current = useMemo(() => {
+  /**
+   * Applies the adaptive suggestion: only the calorie target moves, and the
+   * macros move with it so protein doesn't quietly become a bigger share of a
+   * smaller budget. The plan's weights and dates are untouched — the point is
+   * to still hit the plan, not to redraw it.
+   */
+  const applySuggestion = async (calories: number) => {
+    if (!data?.plan) return;
+    setApplying(true);
+    setError(null);
+    try {
+      const protein = form.daily_protein_goal_g ?? data.macros.protein_g;
+      const fat = Math.round((calories * 0.25) / 9);
+      await goalsApi.saveGoals({
+        ...form,
+        ...data.plan,
+        daily_calorie_goal: calories,
+        daily_protein_goal_g: protein,
+        daily_fat_goal_g: fat,
+        daily_carbs_goal_g: Math.max(0, Math.round((calories - (protein ?? 0) * 4 - fat * 9) / 4)),
+      });
+      await load();
+      emitGoalsChanged();
+    } catch {
+      setError("Couldn't update your target. Check your connection.");
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  /** Leaves the editor with the saved plan intact, discarding any tweaks. */
+  const cancelEdit = () => {
+    setEditing(false);
+    setAiNote(null);
+    if (data) apply(data);
+  };
+
+  /**
+   * The pace flag. Prefers the server's trend-based verdict and falls back to
+   * the last weekly marker, so a cached payload from before `progress` existed
+   * still shows something.
+   */
+  const paceStatus = useMemo(() => {
+    if (data?.progress) return data.progress.status;
     const logged = data?.glide_path.filter((w) => w.actual_kg !== null) ?? [];
-    return logged.length ? logged[logged.length - 1] : null;
+    return logged.length ? logged[logged.length - 1]!.status : null;
   }, [data]);
 
   const remaining = useMemo(() => {
@@ -356,9 +464,22 @@ export default function Plan() {
           <View style={styles.readouts}>
             <StatTile label="Current" value={data.latest_weight?.toFixed(1) ?? '—'} unit="kg" />
             <StatTile label="Remaining" value={remaining?.toFixed(1) ?? '—'} unit="kg" color={colors.cyan} />
-            <StatTile label="Pace" value={current ? STATUS_LABEL[current.status] : '—'} color={current ? statusColor[current.status] : undefined} />
+            <StatTile
+              label="Pace"
+              value={paceStatus ? STATUS_LABEL[paceStatus] : '—'}
+              color={paceStatus ? statusColor[paceStatus] : undefined}
+            />
             <StatTile label="Steps today" value={stepsToday?.toLocaleString() ?? '—'} />
           </View>
+
+          {data.progress ? (
+            <ProgressFlag
+              progress={data.progress}
+              calorieGoal={data.macros.calories}
+              onApply={applySuggestion}
+              applying={applying}
+            />
+          ) : null}
 
           <Card style={styles.logCard}>
             <View style={styles.grid2}>
@@ -383,14 +504,21 @@ export default function Plan() {
             {logMsg ? <Text style={styles.logMsg}>{logMsg}</Text> : null}
           </Card>
 
+          {/* Daily weigh-ins against the plan line. Falls back to the weekly
+              glide path for payloads cached before the daily series existed. */}
           <View style={styles.chartWrap} onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}>
-            {data.glide_path.length ? (
-              <GlideChart
-                weeks={data.glide_path}
-                tolerance={data.plan!.tolerance_kg}
+            {data.weigh_ins?.length ? (
+              <WeightTrendChart
+                plan={data.plan!}
+                weighIns={data.weigh_ins}
+                progress={data.progress}
                 width={chartWidth}
               />
-            ) : null}
+            ) : data.glide_path.length ? (
+              <GlideChart weeks={data.glide_path} tolerance={data.plan!.tolerance_kg} width={chartWidth} />
+            ) : (
+              <EmptyState message="Log your weight for a few days and the trend against your plan appears here." />
+            )}
           </View>
 
           <StepsChart activity={data.activity} goal={data.plan!.daily_step_goal} />
@@ -430,7 +558,10 @@ export default function Plan() {
       ) : (
         <View>
           <Text style={styles.h1}>{data.plan ? 'Edit plan' : 'Set your plan'}</Text>
-          <Text style={styles.sub}>Pick a goal and pace — I'll recalculate your targets, just like setup.</Text>
+          <Text style={styles.sub}>
+            Same questions as setup, starting from blank. Your current targets stay exactly as they are until
+            you choose something.
+          </Text>
 
           {canCompute ? (
             <Card style={{ marginTop: 16 }}>
@@ -443,32 +574,69 @@ export default function Plan() {
                   onChangeText={(v) => setEditWeight(Number(v) || 0)}
                 />
               </View>
-              <Text style={styles.label}>Activity</Text>
-              <PillGroup
-                columns={2}
-                options={(Object.keys(ACTIVITY) as ActivityLevel[]).map((k) => ({ value: k, label: ACTIVITY[k].label }))}
-                value={editActivity}
-                onChange={setEditActivity}
-              />
-              <Text style={styles.maintLine}>Maintenance ≈ {editTdee?.toLocaleString()} kcal/day</Text>
 
-              <Text style={styles.formH}>Goal</Text>
-              <PillGroup
-                columns={2}
-                options={(Object.keys(GOALS) as Goal[]).map((k) => ({ value: k, label: GOALS[k].label }))}
-                value={editGoal}
-                onChange={pickEditGoal}
-              />
+              <Text style={styles.formH}>How active are you?</Text>
+              <View style={styles.optionList}>
+                {(Object.keys(ACTIVITY) as ActivityLevel[]).map((k) => (
+                  <OptionRow
+                    key={k}
+                    title={ACTIVITY[k].label}
+                    hint={ACTIVITY[k].hint}
+                    value={savedShape && profile?.activity_level === k ? 'current' : undefined}
+                    selected={editActivity === k}
+                    onPress={() => setEditActivity(k)}
+                  />
+                ))}
+              </View>
+              <Text style={styles.maintLine}>
+                {editTdee
+                  ? `Maintenance ≈ ${editTdee.toLocaleString()} kcal/day`
+                  : 'Pick an activity level to see your maintenance calories.'}
+              </Text>
+
+              <Text style={styles.formH}>Pick your goal</Text>
+              <View style={styles.optionList}>
+                {(Object.keys(GOALS) as Goal[]).map((k) => (
+                  <OptionRow
+                    key={k}
+                    title={GOALS[k].label}
+                    hint={GOALS[k].blurb}
+                    // The kcal preview needs a maintenance figure, so it only
+                    // appears once an activity level has been chosen.
+                    value={
+                      editTdee
+                        ? `${computeMacros(editTdee, editWeight, k).calories.toLocaleString()} kcal`
+                        : savedShape?.goal === k
+                          ? 'current'
+                          : undefined
+                    }
+                    selected={editGoal === k}
+                    onPress={() => pickEditGoal(k)}
+                  />
+                ))}
+              </View>
 
               {editRateOptions.length ? (
                 <>
                   <Text style={styles.formH}>
-                    Pace <Text style={styles.deltaHint}>≈ {editDelta} kcal/day {editGoal === 'cut' ? 'deficit' : 'surplus'}</Text>
+                    How fast?{' '}
+                    {editRate !== null ? (
+                      <Text style={styles.deltaHint}>
+                        ≈ {editDelta} kcal/day {editGoal === 'cut' ? 'deficit' : 'surplus'}
+                      </Text>
+                    ) : null}
                   </Text>
                   <PillGroup
                     columns={3}
-                    options={editRateOptions.map((r) => ({ value: String(r.kg), label: r.label, tag: r.tag }))}
-                    value={String(editRate)}
+                    options={editRateOptions.map((r) => ({
+                      value: String(r.kg),
+                      label: r.label,
+                      tag:
+                        editTdee && editGoal
+                          ? `${computeMacros(editTdee, editWeight, editGoal, r.kg).calories.toLocaleString()} kcal`
+                          : r.tag,
+                    }))}
+                    value={editRate !== null ? String(editRate) : null}
                     onChange={(v) => setEditRate(Number(v))}
                   />
                   <View style={styles.fieldGroupSpacer} />
@@ -483,6 +651,11 @@ export default function Plan() {
               ) : null}
 
               <Text style={styles.formH}>Your daily targets</Text>
+              <Text style={styles.targetsNote}>
+                {editMacros
+                  ? 'Recalculated from your choices above.'
+                  : 'Your current targets — choose an activity level, a goal and a pace to recalculate them.'}
+              </Text>
               <View style={styles.targets}>
                 <TargetCard label="Calories" value={form.daily_calorie_goal ?? '—'} stripe={colors.cyan} />
                 <TargetCard label="Protein" value={form.daily_protein_goal_g ?? '—'} unit="g" stripe={colors.accent} />
@@ -490,11 +663,13 @@ export default function Plan() {
                 <TargetCard label="Fat" value={form.daily_fat_goal_g ?? '—'} unit="g" stripe={colors.purple} />
               </View>
 
+              {/* The coach refines the numbers your choices produced, so it
+                  has nothing to work from until they've been made. */}
               <Button
                 title={aiBusy ? 'Thinking…' : '✨ Refine with AI coach'}
                 variant="ghost"
                 onPress={refineWithAI}
-                disabled={aiBusy}
+                disabled={aiBusy || !editMacros}
                 style={{ marginTop: 14 }}
               />
               {aiNote ? (
@@ -565,9 +740,16 @@ export default function Plan() {
 
               <View style={styles.row}>
                 {data.plan ? (
-                  <Button title="Cancel" variant="ghost" onPress={() => setEditing(false)} style={styles.flex1} />
+                  <Button title="Cancel" variant="ghost" onPress={cancelEdit} style={styles.flex1} />
                 ) : null}
-                <Button title={saving ? 'Saving…' : 'Save plan'} onPress={save} disabled={!planValid || saving} style={styles.flex2} />
+                {/* A first plan has no saved targets to fall back on, so it
+                    can't be saved until the choices have produced some. */}
+                <Button
+                  title={saving ? 'Saving…' : 'Save plan'}
+                  onPress={save}
+                  disabled={!planValid || saving || (!data.plan && !editMacros)}
+                  style={styles.flex2}
+                />
               </View>
             </Card>
           ) : (
@@ -651,7 +833,7 @@ export default function Plan() {
 
                 <View style={styles.row}>
                   {data.plan ? (
-                    <Button title="Cancel" variant="ghost" onPress={() => setEditing(false)} style={styles.flex1} />
+                    <Button title="Cancel" variant="ghost" onPress={cancelEdit} style={styles.flex1} />
                   ) : null}
                   <Button title={saving ? 'Saving…' : 'Save plan'} onPress={save} disabled={!planValid || saving} style={styles.flex2} />
                 </View>
@@ -711,6 +893,9 @@ const styles = StyleSheet.create({
   wdays: { color: colors.textDim, fontSize: 12 },
   footnote: { color: colors.textDim, fontSize: 12, marginTop: 12, lineHeight: 17 },
   label: { color: colors.textDim, fontSize: 12, marginTop: 8, marginBottom: 6 },
+  /** Stacked choices, matching onboarding's spacing. */
+  optionList: { gap: 8 },
+  targetsNote: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: -2, marginBottom: 10 },
   /** Gap between a PillGroup and a following labelled field. */
   fieldGroupSpacer: { height: 14 },
   maintLine: { color: colors.accent, fontSize: 13, marginTop: 8 },

@@ -47,8 +47,8 @@ export function RemindersCard() {
       {message ? <Text style={styles.message}>{message}</Text> : null}
 
       <Text style={styles.note}>
-        Reminders are scheduled on this device, so they work without an account or a server — but the wording
-        reflects your log as of the last time you opened the app.
+        Reminders are scheduled on this device, so they work without an account or a server. Today's nudge
+        quotes what you've logged as of the last time you opened the app; later ones just quote your target.
       </Text>
     </Card>
   );
