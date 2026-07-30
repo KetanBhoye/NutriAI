@@ -115,6 +115,7 @@ Server starts at `http://localhost:8787` by default.
 | `ADMIN_PASSWORD` | `admin123456` | Seeded admin password (change in production) |
 | `SESSION_TTL_HOURS` | `168` | Web session lifetime |
 | `BASE_URL` | `http://localhost:<PORT>` | Public server URL for OAuth metadata |
+| `APK_DOWNLOAD_URL` | latest GitHub release asset | Where `/download` redirects — see below |
 
 ## Mobile app (iOS + Android)
 
@@ -155,6 +156,37 @@ A few things that bite people, all expanded in the app's own README:
 - `mobile/` and `nutriai-mobile/` are both excluded from this repo's
   `tsconfig.json`, `vitest.config.ts`, `biome.json` and `.railwayignore`, so
   neither affects the server build or the Railway image.
+
+## Sharing the Android build
+
+`GET /download` redirects to the current APK, so there's one short link to hand
+out: **`https://<your-host>/download`**.
+
+It redirects rather than serving the file. The APK is ~86 MB and changes every
+build; baking it into the deployment image would bloat every deploy and force a
+redeploy just to ship a new app version. The default target is GitHub's
+`releases/latest/download/NutriAI.apk` permalink, which always resolves to the
+newest release carrying that asset name — so publishing a release is all it
+takes to change what the link hands out.
+
+```bash
+cd nutriai-mobile/android && ./gradlew assembleRelease
+cp app/build/outputs/apk/release/app-release.apk /tmp/NutriAI.apk
+
+gh release create v1.0.0 /tmp/NutriAI.apk \
+  --repo KetanBhoye/NutriAI --title "NutriAI v1.0.0" --notes "..."
+```
+
+**Keep the asset name `NutriAI.apk` across releases** or the permalink breaks.
+Set `APK_DOWNLOAD_URL` to move to object storage or a Railway volume later
+without invalidating a link people already have.
+
+Before sharing a build, check the two things that bite:
+
+- It must be signed with the **same keystore** as any previous build, or
+  installing over the top fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+- Google Sign-In matches the signing certificate's SHA-1, so a release build
+  needs its own Android OAuth client registered. Email/password is unaffected.
 
 ## API surface the app depends on
 

@@ -125,6 +125,11 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
 
   const publicDir = resolve(process.cwd(), 'public');
 
+  /** Where /download sends people. Overridable so the link can outlive GitHub. */
+  const apkDownloadUrl =
+    process.env.APK_DOWNLOAD_URL ??
+    'https://github.com/KetanBhoye/NutriAI/releases/latest/download/NutriAI.apk';
+
   // The app is the product: root opens NutriAI. This must run BEFORE the static
   // middleware, otherwise static serves public/index.html (the old MCP landing
   // page) as the directory index at "/". We keep the static index enabled so
@@ -138,6 +143,24 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
 
   app.get('/info', (_req, res) => {
     res.sendFile(resolve(publicDir, 'index.html'));
+  });
+
+  /**
+   * A short, memorable link for the Android build: nutriai.example/download.
+   *
+   * It redirects rather than serving the file. The APK is ~86 MB and changes
+   * every build — baking it into the deployment image would bloat every deploy
+   * and force a redeploy just to ship a new app version. GitHub's
+   * `releases/latest/download/<asset>` permalink always resolves to the newest
+   * release carrying that exact filename, so publishing a release is all it
+   * takes to update what this link hands out.
+   *
+   * Keep the asset name stable across releases or the permalink breaks. Point
+   * APK_DOWNLOAD_URL elsewhere (object storage, a Railway volume) to move off
+   * GitHub without changing the link people have already been given.
+   */
+  app.get('/download', (_req, res) => {
+    res.redirect(302, apkDownloadUrl);
   });
 
   // Cache policy so PWA updates land fast without a reinstall:
