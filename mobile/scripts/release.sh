@@ -118,9 +118,12 @@ gh release create "v$VERSION" "$STAGED" \
   --title "NutriAI v$VERSION (Android)" \
   --notes "Install: https://nutriai-app.up.railway.app/download
 
-Already have NutriAI? Open the app and go to You → App version — it will offer this update and install it for you, keeping all your data.
+Already have NutriAI?
 
-Android 8.0+. Installing the file directly works too; install over the top, no need to uninstall."
+- **Running 1.0.1 or newer:** open the app, go to You → App version, and it will download and install this update for you, keeping all your data.
+- **Running 1.0.0:** install the file below over the top, once. In-app updating starts from 1.0.1 — 1.0.0 shipped before it existed and has nothing to check with.
+
+Android 8.0+. Installing over the top never needs an uninstall, so nothing is lost either way."
 
 git push origin HEAD --tags
 
