@@ -112,6 +112,8 @@ Server starts at `http://localhost:8787` by default.
 | `SESSION_TTL_HOURS` | `168` | Web session lifetime |
 | `BASE_URL` | `http://localhost:<PORT>` | Public server URL for OAuth metadata |
 | `APK_DOWNLOAD_URL` | latest GitHub release asset | Where `/download` redirects — see below |
+| `GITHUB_RELEASES_REPO` | `KetanBhoye/NutriAI` | Repo `/api/app-version` reads releases from |
+| `GITHUB_TOKEN` | _(none)_ | Optional; raises GitHub's 60/hour unauthenticated rate limit |
 
 ## Mobile app (iOS + Android)
 
@@ -177,6 +179,22 @@ See [mobile/README.md](mobile/README.md#shipping-a-new-version).
 **Keep the asset name `NutriAI.apk` across releases** or the permalink breaks.
 Set `APK_DOWNLOAD_URL` to move to object storage or a Railway volume later
 without invalidating a link people already have.
+
+### Apps already installed update themselves
+
+Publishing a release also notifies phones already running the app —
+there's no Play Store to do it. `GET /api/app-version` reports the newest
+published release (version, notes, size, and `/download` as the URL), read from
+GitHub and cached ten minutes. The Android app checks on opening the You tab and
+offers to download and install it; because the signature matches, it installs
+over the top with no data loss.
+
+It's public and never fails loudly: no release, or GitHub unreachable, answers
+`200` with `version: null`, which the app reads as "nothing to install". A `500`
+here would surface an error for something the user never asked for.
+
+iOS can't do this — sideloaded iOS apps cannot replace themselves. See
+[mobile/README.md](mobile/README.md#how-installed-apps-find-out-srcupdates).
 
 Before sharing a build, check the two things that bite:
 

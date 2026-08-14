@@ -229,6 +229,51 @@ consistent. Active energy defaults to kilocalories and distance to meters
 than the TypeScript name. Health Connect on Android was never affected — it
 computes minutes from session start/end times.
 
+## In-app updates are Android-only, and that's not a gap to fill (`src/updates/`)
+
+The app is handed out as an APK from `/download`, so nothing tells an installed
+build that a newer one exists. `src/updates/` does: the You tab asks
+`GET /api/app-version`, and if the published release is newer it downloads the
+APK and hands it to Android's package installer.
+
+**iOS is absent on purpose.** There is no sanctioned way for a sideloaded iOS
+app to replace itself — no `REQUEST_INSTALL_PACKAGES` equivalent, no installer
+intent. Anyone reaching for parity here should reach for `expo-updates` (OTA)
+instead, which ships JS and assets to both platforms inside the existing binary.
+That's a different mechanism, not this one extended.
+
+Four things that are load-bearing:
+
+- **We compare release tags, not `versionCode`.** The versionCode lives inside
+  the APK and reading it would mean downloading 86 MB first. `release.sh` bumps
+  both together and refuses to reuse a tag, so the tag is monotonic and
+  equivalent. `isUpdateAvailable` compares numerically — `1.0.10` is newer than
+  `1.0.9`, which string comparison gets backwards — and refuses downgrades,
+  because a dev build ahead of the published release would otherwise show a
+  button Android silently declines to act on.
+- **The current version comes from `expo-application`**, not `app.config.ts` via
+  `Constants`. It's read from the installed package, which is the number Android
+  itself compares on install; the JS-side copy is a second source of truth and
+  null in some build configurations. Getting it wrong means offering an update
+  to someone who already has it, forever.
+- **A successful download is not necessarily an APK.** `/download` is a 302 to
+  wherever `APK_DOWNLOAD_URL` points, which is the whole point of it — and a
+  misconfigured value, an expired signed URL or a captive portal all arrive as a
+  200 carrying HTML. Android's only feedback would be "App not installed", which
+  names nothing. `updates/verify.ts` checks the status, the size and the ZIP
+  magic bytes first so the app can say what actually happened.
+- **`content://`, not `file://`.** Since Android 7 a `file://` URI handed to
+  another app throws `FileUriExposedException`. `FileSystem.getContentUriAsync`
+  goes through expo-file-system's own FileProvider (whose `file_paths` covers
+  the cache directory, where the download lands), and the intent needs
+  `flags: 1` — `FLAG_GRANT_READ_URI_PERMISSION` — or the installer receives a
+  URI it may not read and fails as though the file were corrupt.
+
+The install itself is not something this code completes: firing the intent hands
+control to the system installer, and if the user confirms, this process is
+replaced by the new build. There is no success callback, so nothing may depend
+on code after `installApk` running.
+
 ## A health reading can be impossible; treat it as broken, not big
 
 Apple Health reported **4,980 exercise minutes** for a day that contains 1,440

@@ -8,6 +8,7 @@ import { colors, fonts, radius, type } from '@/theme';
 import { HealthSyncSection } from '@/features/health/HealthSyncSection';
 import { TokenCard } from '@/components/TokenCard';
 import { RemindersCard } from '@/features/profile/RemindersCard';
+import { UpdateSection } from '@/features/updates/UpdateSection';
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -70,6 +71,11 @@ export default function Profile() {
 
       <Text style={styles.h2}>Connections</Text>
       <TokenCard />
+
+      <Text style={styles.h2}>App version</Text>
+      <Card>
+        <UpdateSection />
+      </Card>
 
       <Text style={styles.h2}>Account</Text>
       <Button title={signingOut ? 'Signing out…' : 'Sign out'} variant="ghost" onPress={onSignOut} disabled={signingOut} />

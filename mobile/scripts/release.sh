@@ -9,6 +9,11 @@
 # a release is the whole update process — no backend deploy, and the link you
 # already gave people keeps working.
 #
+# It also reaches phones that already have the app: GET /api/app-version reads
+# this release, and the app's You tab offers to install it. That comparison is
+# against the *tag*, so the tag has to be a plain three-part version and has to
+# go up — which is what the checks below are for. See mobile/src/updates/.
+#
 # Two things this guards, because both are unrecoverable in their own way:
 #
 #   1. The APK must be signed with the same keystore as every previous build.
@@ -113,7 +118,9 @@ gh release create "v$VERSION" "$STAGED" \
   --title "NutriAI v$VERSION (Android)" \
   --notes "Install: https://nutriai-app.up.railway.app/download
 
-Android 8.0+. If you already have NutriAI, install over the top — no need to uninstall."
+Already have NutriAI? Open the app and go to You → App version — it will offer this update and install it for you, keeping all your data.
+
+Android 8.0+. Installing the file directly works too; install over the top, no need to uninstall."
 
 git push origin HEAD --tags
 

@@ -63,7 +63,20 @@ const config: ExpoConfig = {
      * release` bumps both this and `version` for you.
      */
     versionCode: 1,
-    permissions: HEALTH_CONNECT_PERMISSIONS,
+    permissions: [
+      ...HEALTH_CONNECT_PERMISSIONS,
+      /**
+       * Lets the app install its own updates (see src/updates/). NutriAI is
+       * distributed as an APK from /download rather than through Play, so
+       * nothing else would ever tell a phone a new build exists.
+       *
+       * This is not a silent grant: Android 8+ additionally requires the user
+       * to allow "install unknown apps" for NutriAI specifically, once, at the
+       * first update. Without the permission declared here, that toggle isn't
+       * even offered and the install intent fails with no explanation.
+       */
+      'android.permission.REQUEST_INSTALL_PACKAGES',
+    ],
     // Foreground art sits inside the ~66% safe zone; Android masks the rest.
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',

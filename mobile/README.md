@@ -102,6 +102,7 @@ either through `AuthProvider` or through the small event buses described below.
 | `dates.ts` | local calendar days (never `toISOString()` — see `progress.md`) |
 | `theme.ts` | colours, spacing, and the `type` scale. Use it; don't set `fontFamily` by hand |
 | `health/` | HealthKit + Health Connect behind one interface, plus auto-sync |
+| `updates/` | in-app updates for the Android build — version compare, APK download, install intent |
 | `notifications/reminders.ts` | local daily reminders, scheduled as dated one-shots |
 | `components/ui/` | primitives: `Screen`, `Card`, `Button`, `TextField`, `Sheet`, `PillGroup`, `OptionRow`, `StatTile`, … |
 | `features/<screen>/` | components belonging to one screen, e.g. `features/goals/WeightTrendChart.tsx` |
@@ -203,6 +204,35 @@ gitignored.
 
 EAS works too (`eas build --profile preview --platform android`), and `eas.json`
 carries `development`, `preview` and `production` profiles.
+
+### How installed apps find out (`src/updates/`)
+
+Publishing a release is also what notifies phones already running the app. There
+is no Play Store to do it, so the app asks:
+
+1. `GET /api/app-version` on the backend reports the newest published release —
+   version, notes and size, read from GitHub and cached ten minutes
+   (`src/services/latest-release.ts` in the backend). The `url` it hands back is
+   the backend's own `/download`, so `APK_DOWNLOAD_URL` still moves every
+   installed app, not just new installs.
+2. The You tab checks quietly on open and says nothing unless there's something
+   newer. "Check for updates" forces it.
+3. Tapping update downloads the APK to the cache directory, **verifies it really
+   is one** (a redirect to an error page arrives as a cheerful 200 — see
+   `updates/verify.ts`), and hands it to Android's package installer through a
+   `content://` URI.
+
+Because the signature matches, it installs over the top: no uninstall, no data
+loss. Android asks the user to allow "install unknown apps" for NutriAI once.
+
+Versions are compared as release tags, not `versionCode` — the tag is the only
+version marker GitHub carries, and `release.sh` keeps the two in lockstep. The
+running version is read from `expo-application`, i.e. from the installed package
+itself.
+
+**iOS has no equivalent and cannot.** A sideloaded iOS app can't replace itself;
+those builds update through TestFlight or the App Store. Cross-platform JS-only
+updates would need `expo-updates` (OTA), which is not wired up.
 
 ### `android/` and `ios/` are generated
 

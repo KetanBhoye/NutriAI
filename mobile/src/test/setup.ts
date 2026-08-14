@@ -52,6 +52,34 @@ vi.mock('expo-constants', () => ({
   default: { expoConfig: { extra: { apiUrl: 'https://example.test' } } },
 }));
 
+/**
+ * The in-app updater's native dependencies (src/updates/).
+ *
+ * Importing any of them pulls in expo-modules-core, which reaches for a
+ * `globalThis.expo` the JS runtime only has on a device. The parts of the
+ * updater worth testing — the version comparison and the "is this really an
+ * APK" check — are pure, so stubbing the edges here keeps them reachable.
+ */
+vi.mock('expo-file-system', () => ({
+  cacheDirectory: 'file:///cache/',
+  EncodingType: { Base64: 'base64' },
+  getInfoAsync: async () => ({ exists: false }),
+  makeDirectoryAsync: async () => undefined,
+  deleteAsync: async () => undefined,
+  readAsStringAsync: async () => '',
+  getContentUriAsync: async (uri: string) => `content://${uri}`,
+  createDownloadResumable: () => ({ downloadAsync: async () => undefined }),
+}));
+
+vi.mock('expo-intent-launcher', () => ({
+  startActivityAsync: async () => undefined,
+}));
+
+vi.mock('expo-application', () => ({
+  applicationId: 'app.nutriai.mobile',
+  nativeApplicationVersion: '1.0.0',
+}));
+
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
   AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },

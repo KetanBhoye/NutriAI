@@ -8,6 +8,7 @@ import { registerApiRoutes } from './http/api.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/routes.js';
 import { startDailyReminders } from './services/reminders.js';
+import { getLatestRelease } from './services/latest-release.js';
 import { warmUpVertex } from './services/llm/vertex.js';
 import type { AppEnv } from './db/types.js';
 
@@ -161,6 +162,33 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
    */
   app.get('/download', (_req, res) => {
     res.redirect(302, apkDownloadUrl);
+  });
+
+  /**
+   * What the newest Android build is, for the app's own update check.
+   *
+   * Public on purpose: it carries nothing private, and an app that can't reach
+   * it is an app that can never be updated — gating it behind a session would
+   * strand anyone signed out on a build that may be the reason they're stuck.
+   *
+   * `url` is this server's /download, so the redirect stays the single place
+   * that decides where APKs actually come from.
+   */
+  app.get('/api/app-version', async (req, res) => {
+    const release = await getLatestRelease();
+    const host = req.headers.host || `localhost:${config.port}`;
+    const protocol = req.headers['x-forwarded-proto']?.toString() || req.protocol;
+
+    // No usable release is a normal answer, not an error: the app reads it as
+    // "nothing to install" and says nothing to the user.
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({
+      version: release?.version ?? null,
+      notes: release?.notes ?? '',
+      size_bytes: release?.size_bytes ?? null,
+      published_at: release?.published_at ?? null,
+      url: `${protocol}://${host}/download`,
+    });
   });
 
   // Cache policy so PWA updates land fast without a reinstall:
