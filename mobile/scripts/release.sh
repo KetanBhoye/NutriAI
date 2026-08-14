@@ -155,7 +155,11 @@ echo "==> Pushing the commit and tag"
 # on the remote, so pushing afterwards fails with "tag already exists" — the
 # release is fine, but the script exits non-zero on its last line and never
 # prints the summary, which reads exactly like a failed publish.
-git push origin HEAD --tags
+# This tag only — `--tags` pushes every tag in the repo, so a single stale or
+# divergent one (an old release tag that differs from the remote) rejects the
+# push and blocks a release that has nothing to do with it.
+git push origin HEAD
+git push origin "v$VERSION"
 
 echo "==> Publishing the GitHub release"
 gh release create "v$VERSION" "$STAGED" \
