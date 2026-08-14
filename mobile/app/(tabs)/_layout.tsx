@@ -5,7 +5,7 @@ import { useHealthAutoSync } from '@/health/useHealthAutoSync';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { scheduleDailyReminder } from '@/notifications/reminders';
+import { initialiseReminders, scheduleDailyReminder } from '@/notifications/reminders';
 import { useAuth } from '@/auth';
 import { subscribeGoalsChanged } from '@/goalsBus';
 
@@ -25,9 +25,10 @@ export default function TabsLayout() {
   const { refreshUser } = useAuth();
 
   // The OS fixes the notification text when it's scheduled, so refresh it on
-  // each launch to reflect the current day's log.
+  // each launch to reflect the current day's log. On a first run this also
+  // asks for notification permission, because reminders default to on.
   useEffect(() => {
-    void scheduleDailyReminder();
+    void initialiseReminders();
   }, []);
 
   // Backgrounding is the last moment before the reminder can fire, so it's

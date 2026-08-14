@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Button, Card } from '@/components/ui';
 import { colors, type } from '@/theme';
 import { remindersEnabled, sendPreviewReminder, setRemindersEnabled } from '@/notifications/reminders';
+import { MEAL_SLOTS } from '@/notifications/copy';
 
 export function RemindersCard() {
   const [enabled, setEnabled] = useState(false);
@@ -28,8 +29,10 @@ export function RemindersCard() {
     <Card>
       <View style={styles.row}>
         <View style={styles.text}>
-          <Text style={styles.title}>Daily log reminder</Text>
-          <Text style={styles.sub}>A nudge at 8pm if you still have calories left to log.</Text>
+          <Text style={styles.title}>Meal reminders</Text>
+          <Text style={styles.sub}>
+            A nudge at each meal, and a catch-up if one didn't get logged.
+          </Text>
         </View>
         <Switch
           testID="reminder-toggle"
@@ -42,14 +45,28 @@ export function RemindersCard() {
       </View>
 
       {enabled ? (
-        <Button title="Send a sample" variant="ghost" onPress={sendPreviewReminder} style={styles.sample} />
+        <>
+          <View style={styles.times}>
+            {MEAL_SLOTS.map((slot) => (
+              <View key={slot.meal} style={styles.timeRow}>
+                <Text style={styles.timeMeal}>
+                  {slot.meal[0]!.toUpperCase() + slot.meal.slice(1)}
+                </Text>
+                <Text style={styles.timeAt}>{slot.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          <Button title="Send a sample" variant="ghost" onPress={sendPreviewReminder} style={styles.sample} />
+        </>
       ) : null}
 
       {message ? <Text style={styles.message}>{message}</Text> : null}
 
       <Text style={styles.note}>
-        Reminders are scheduled on this device, so they work without an account or a server. Today's nudge
-        quotes what you've logged as of the last time you opened the app; later ones just quote your target.
+        A meal you've already logged doesn't get a reminder. Reminders are scheduled on this device,
+        so they work without a server — today's quote what you've logged as of the last time you
+        opened the app.
       </Text>
     </Card>
   );
@@ -60,6 +77,15 @@ const styles = StyleSheet.create({
   text: { flex: 1 },
   title: { ...type.subheading, color: colors.text },
   sub: { ...type.caption, color: colors.textDim, marginTop: 2 },
+  times: {
+    marginTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+  },
+  timeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
+  timeMeal: { ...type.caption, color: colors.text, fontSize: 13 },
+  timeAt: { ...type.figureSmall, fontSize: 13, color: colors.accent },
   sample: { marginTop: 14 },
   message: { ...type.caption, color: colors.warn, marginTop: 12 },
   note: { ...type.caption, fontSize: 11.5, color: colors.textDim, marginTop: 12, lineHeight: 16 },

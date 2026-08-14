@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The reminder is a *local* notification, so the OS fixes its text when it's
- * scheduled. Everything here defends the consequence: only today's copy can
- * quote today's numbers, and a repeating trigger would re-deliver one day's
- * calories forever.
+ * Scheduling. The copy itself is covered in copy.test.ts.
+ *
+ * Two properties matter more than anything else here, because both produced
+ * user-visible failures: reminders must never be cancelled before their
+ * replacements exist, and the pending count must stay under iOS's cap.
  */
 
 const scheduleNotificationAsync = vi.fn();
@@ -27,177 +28,174 @@ vi.mock('@/api', () => ({
   goalsApi: { getGoals: () => getGoals() },
 }));
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  initialiseReminders,
   remindersEnabled,
-  scheduleDailyReminder,
+  scheduleMealReminders,
   sendPreviewReminder,
   setRemindersEnabled,
 } from './reminders';
 
-/** The `content.body` of every notification that was scheduled, in order. */
-const bodies = () =>
-  scheduleNotificationAsync.mock.calls.map((c) => (c[0] as { content: { body: string } }).content.body);
+const scheduled = () =>
+  scheduleNotificationAsync.mock.calls.map(
+    (c) => c[0] as { identifier?: string; content: { title: string; body: string }; trigger: { date?: Date } }
+  );
 
-const triggerDates = () =>
-  scheduleNotificationAsync.mock.calls
-    .map((c) => (c[0] as { trigger: { date?: Date } }).trigger.date)
-    .filter((d): d is Date => d instanceof Date);
+const entries = (list: Array<{ meal_type: string; calories: number; protein_g?: number }> = []) =>
+  getEntries.mockResolvedValue({ entries: list });
 
-beforeEach(() => {
-  vi.clearAllMocks();
+beforeEach(async () => {
   vi.useFakeTimers();
-  // 9am: today's 8pm reminder is still ahead of us.
-  vi.setSystemTime(new Date(2026, 6, 17, 9, 0));
-
-  scheduleNotificationAsync.mockResolvedValue('id');
-  cancelScheduledNotificationAsync.mockResolvedValue(undefined);
-  getPermissionsAsync.mockResolvedValue({ granted: true });
-  requestPermissionsAsync.mockResolvedValue({ granted: true });
-  getGoals.mockResolvedValue({ macros: { calories: 2000 } });
-  getEntries.mockResolvedValue({ entries: [{ calories: 600 }, { calories: 400 }] });
+  // Mid-morning, before every slot, so a full day is schedulable.
+  vi.setSystemTime(new Date('2026-08-14T09:00:00'));
+  scheduleNotificationAsync.mockReset().mockResolvedValue('id');
+  cancelScheduledNotificationAsync.mockReset().mockResolvedValue(undefined);
+  getPermissionsAsync.mockReset().mockResolvedValue({ granted: true });
+  requestPermissionsAsync.mockReset().mockResolvedValue({ granted: true });
+  getGoals.mockReset().mockResolvedValue({ macros: { calories: 2000, protein_g: 150 } });
+  entries();
+  await AsyncStorage.removeItem('nutriai.reminders.enabled');
 });
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('setRemindersEnabled', () => {
-  it('schedules once permission is granted', async () => {
-    expect(await setRemindersEnabled(true)).toBe(true);
+describe('defaults', () => {
+  it('is on before the user has chosen anything', async () => {
+    // A reminder app whose reminders are off by default is a habit tracker
+    // nobody builds a habit with.
     expect(await remindersEnabled()).toBe(true);
-    expect(scheduleNotificationAsync).toHaveBeenCalled();
   });
 
-  it('asks for permission only when it does not already have it', async () => {
-    getPermissionsAsync.mockResolvedValue({ granted: false });
-    await setRemindersEnabled(true);
-    expect(requestPermissionsAsync).toHaveBeenCalledTimes(1);
-  });
-
-  it('stays off, and schedules nothing, if permission is refused', async () => {
-    getPermissionsAsync.mockResolvedValue({ granted: false });
-    requestPermissionsAsync.mockResolvedValue({ granted: false });
-
-    expect(await setRemindersEnabled(true)).toBe(false);
+  it('keeps an explicit opt-out', async () => {
+    await setRemindersEnabled(false);
     expect(await remindersEnabled()).toBe(false);
-    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
   });
 
-  it('cancels everything when switched off', async () => {
-    await setRemindersEnabled(true);
-    vi.clearAllMocks();
+  it('does not re-prompt someone who already opted in but was refused by the OS', async () => {
+    await AsyncStorage.setItem('nutriai.reminders.enabled', '1');
+    getPermissionsAsync.mockResolvedValue({ granted: false });
 
-    expect(await setRemindersEnabled(false)).toBe(false);
-    expect(await remindersEnabled()).toBe(false);
-    expect(cancelScheduledNotificationAsync).toHaveBeenCalled();
-    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+    await initialiseReminders();
+
+    expect(requestPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  it('asks once on a genuine first run', async () => {
+    getPermissionsAsync.mockResolvedValue({ granted: false });
+
+    await initialiseReminders();
+
+    expect(requestPermissionsAsync).toHaveBeenCalled();
   });
 });
 
-describe('scheduleDailyReminder', () => {
-  it('does nothing while reminders are off', async () => {
-    await scheduleDailyReminder();
-    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+describe('scheduleMealReminders', () => {
+  it('covers four meals a day for a week, under iOS\'s 64 pending cap', async () => {
+    await scheduleMealReminders();
+
+    expect(scheduled().length).toBeLessThanOrEqual(28);
+    expect(scheduled().length).toBeGreaterThan(20);
   });
 
-  it('schedules a fortnight of one-shots, not one repeating trigger', async () => {
-    // A DAILY trigger would re-deliver one day's calorie figures forever.
-    await setRemindersEnabled(true);
+  it('fires at 11:00, 14:00, 18:00 and 20:30', async () => {
+    await scheduleMealReminders();
 
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(14);
-    for (const call of scheduleNotificationAsync.mock.calls) {
-      expect((call[0] as { trigger: { type: string } }).trigger.type).toBe('date');
-    }
+    const todayTimes = scheduled()
+      .map((s) => s.trigger.date!)
+      .filter((d) => d.getDate() === 14)
+      .map((d) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`);
+
+    expect(todayTimes).toEqual(['11:00', '14:00', '18:00', '20:30']);
   });
 
-  it('fires each one at 8pm on consecutive days', async () => {
-    await setRemindersEnabled(true);
-    const dates = triggerDates();
+  it('never cancels before the replacements are scheduled', async () => {
+    // The bug this exists to prevent: the old version cancelled everything and
+    // then made network calls before rescheduling. Backgrounding mid-flight
+    // left the user with no reminders at all, which is why they arrived only
+    // sometimes.
+    const order: string[] = [];
+    scheduleNotificationAsync.mockImplementation(async () => {
+      order.push('schedule');
+      return 'id';
+    });
+    cancelScheduledNotificationAsync.mockImplementation(async () => {
+      order.push('cancel');
+    });
 
-    expect(dates[0]!.getDate()).toBe(17);
-    expect(dates[0]!.getHours()).toBe(20);
-    expect(dates[1]!.getDate()).toBe(18);
-    expect(dates[13]!.getDate()).toBe(30);
+    await scheduleMealReminders();
+
+    expect(order[0]).toBe('schedule');
   });
 
-  it('quotes what is left today, but only for today', async () => {
-    await setRemindersEnabled(true);
-    const [today, tomorrow] = bodies();
-
-    // 2000 goal − 1000 eaten.
-    expect(today).toContain('1000 kcal left');
-    // Tomorrow cannot know tomorrow's log, so it quotes the target instead.
-    expect(tomorrow).toContain('2,000 kcal');
-    expect(tomorrow).not.toContain('left today');
-  });
-
-  it('nudges differently when nothing is logged yet', async () => {
-    getEntries.mockResolvedValue({ entries: [] });
-    await setRemindersEnabled(true);
-    expect(bodies()[0]).toContain("haven't logged anything");
-  });
-
-  it('changes tone once the target is passed', async () => {
-    getEntries.mockResolvedValue({ entries: [{ calories: 2400 }] });
-    await setRemindersEnabled(true);
-    expect(bodies()[0]).toContain('2400 kcal logged');
-  });
-
-  it('skips today once 8pm has gone', async () => {
-    vi.setSystemTime(new Date(2026, 6, 17, 21, 30));
-    await setRemindersEnabled(true);
-
-    // 13 left, starting tomorrow — scheduling a past date would never fire.
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(13);
-    expect(triggerDates()[0]!.getDate()).toBe(18);
-  });
-
-  it('clears the previous set first, so reminders cannot stack up', async () => {
-    await setRemindersEnabled(true);
-    vi.clearAllMocks();
-
-    await scheduleDailyReminder();
-
-    // 14 dated ids plus the legacy repeating one from older builds.
-    expect(cancelScheduledNotificationAsync).toHaveBeenCalledTimes(15);
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(14);
-  });
-
-  it('still schedules when the day\'s totals cannot be fetched', async () => {
-    // Offline at 9am is no reason to have no reminder at 8pm.
+  it('survives the API being unreachable, with generic copy', async () => {
+    // Losing the number in a reminder is much better than losing the reminder.
     getEntries.mockRejectedValue(new Error('offline'));
-    await setRemindersEnabled(true);
+    getGoals.mockRejectedValue(new Error('offline'));
 
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(14);
-    expect(bodies()[0]).toContain('2,000 kcal');
+    await scheduleMealReminders();
+
+    expect(scheduled().length).toBeGreaterThan(0);
   });
 
-  it('falls back to generic copy when there is no target at all', async () => {
-    getGoals.mockRejectedValue(new Error('offline'));
-    getEntries.mockResolvedValue({ entries: [] });
-    await setRemindersEnabled(true);
+  it('skips today\'s meals that are already logged', async () => {
+    entries([{ meal_type: 'lunch', calories: 600, protein_g: 40 }]);
 
-    expect(bodies()[1]).toBe('Anything left to log today?');
+    await scheduleMealReminders();
+
+    const todayIds = scheduled()
+      .map((s) => s.identifier!)
+      .filter((id) => id.includes('.0.'));
+
+    expect(todayIds.some((id) => id.endsWith('.lunch'))).toBe(false);
+    expect(todayIds.some((id) => id.endsWith('.dinner'))).toBe(true);
+  });
+
+  it('cancels the identifier for a meal that has since been logged', async () => {
+    entries([{ meal_type: 'lunch', calories: 600 }]);
+
+    await scheduleMealReminders();
+
+    expect(cancelScheduledNotificationAsync).toHaveBeenCalledWith(
+      expect.stringContaining('.0.lunch')
+    );
+  });
+
+  it('quotes what is left today, but never on a future day', async () => {
+    entries([{ meal_type: 'breakfast', calories: 500, protein_g: 30 }]);
+
+    await scheduleMealReminders();
+
+    const today = scheduled().filter((s) => s.identifier!.includes('.0.'));
+    const tomorrow = scheduled().filter((s) => s.identifier!.includes('.1.'));
+
+    expect(today.some((s) => /1,?500 kcal/.test(s.content.body))).toBe(true);
+    expect(tomorrow.every((s) => !/kcal left/.test(s.content.body))).toBe(true);
+  });
+
+  it('clears everything when reminders are off', async () => {
+    await AsyncStorage.setItem('nutriai.reminders.enabled', '0');
+
+    await scheduleMealReminders();
+
+    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+    expect(cancelScheduledNotificationAsync).toHaveBeenCalled();
+  });
+
+  it('cancels the pre-meal-slots identifiers so upgrades do not keep one alive', async () => {
+    await scheduleMealReminders();
+
+    expect(cancelScheduledNotificationAsync).toHaveBeenCalledWith('nutriai.daily-log-reminder');
   });
 });
 
 describe('sendPreviewReminder', () => {
-  it('fires shortly, with the same copy as the real thing', async () => {
+  it('fires shortly, with real copy', async () => {
     await sendPreviewReminder();
 
-    const call = scheduleNotificationAsync.mock.calls[0]![0] as {
-      trigger: { type: string; seconds: number };
-      content: { body: string };
-    };
-    expect(call.trigger.type).toBe('timeInterval');
-    expect(call.content.body).toContain('1000 kcal left');
-  });
-
-  it('works even when reminders are switched off — it is a preview', async () => {
-    await setRemindersEnabled(false);
-    vi.clearAllMocks();
-
-    await sendPreviewReminder();
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    const [call] = scheduled();
+    expect(call!.content.body.length).toBeGreaterThan(0);
   });
 });

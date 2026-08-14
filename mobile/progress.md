@@ -431,6 +431,48 @@ a first-ever plan. Don't reintroduce defaults here: pre-selecting the controls
 is exactly what silently overwrote people's plans. Picking a goal clears the
 pace rather than defaulting it, since the pace options differ per goal.
 
+## Reminders vanished because we cancelled before we could reschedule
+
+Reported as "sometimes they come, sometimes they don't". The cause was in our
+code, not the OS.
+
+`scheduleDailyReminder()` cancelled every pending notification and *then* made
+two network calls to rebuild the copy before rescheduling — and it ran on every
+backgrounding, which is exactly when the OS is about to suspend the process.
+Lose that race and the user has no reminders at all until they next open the
+app.
+
+The rule that fixes it: **nothing is cancelled until its replacement exists.**
+Today's totals are read first, identifiers are stable per `(dayOffset, meal)`,
+and `scheduleNotificationAsync` replaces a notification with the same
+identifier — so re-arming is idempotent and never opens a gap. Stale
+identifiers are cancelled last, after everything wanted is in place. There's a
+test asserting the first OS call is a schedule and not a cancel.
+
+Other things worth not undoing:
+
+- **Four slots** (`copy.ts`): breakfast 11:00, lunch 14:00, snack 18:00, dinner
+  20:30. Late rather than early on purpose — a nudge that arrives before you've
+  eaten is a nudge to ignore.
+- **7 days × 4 meals = 28 pending.** iOS silently drops anything past 64
+  pending, so the horizon and the slot count are linked; a fortnight would sit
+  at 56 and leave no headroom.
+- **A logged meal gets no reminder.** `reminderCopy()` returns null for it and
+  the identifier is cancelled. Nagging someone about a meal they already logged
+  is how notification permission gets revoked.
+- **The nudge names the *first* missed meal**, not the most recent — at dinner
+  with only lunch logged, breakfast is the one to chase.
+- **Over budget gets its own line.** Don't cheerfully invite more food, and
+  don't shame them out of logging it either.
+- **Default on** (`remindersEnabled()` is true unless the stored value is
+  `'0'`). An explicit opt-out is sticky; the app never re-prompts someone the OS
+  has already refused, because Android stops showing that dialog anyway.
+
+Still outside our control: aggressive OEM battery management (vivo/iQOO,
+Xiaomi, OPPO) can kill scheduled alarms outright. If a user reports missing
+reminders on one of those, the fix is on the device — exempt NutriAI from
+battery optimisation — not in this file.
+
 ## Reminder copy can't quote a day's totals on a repeating trigger
 
 The OS fixes notification text at scheduling time, so the old `DAILY` trigger
