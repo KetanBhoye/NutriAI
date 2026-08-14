@@ -112,6 +112,13 @@ git add app.config.ts
 git commit -m "Release Android v$VERSION"
 git tag "v$VERSION"
 
+echo "==> Pushing the commit and tag"
+# Before `gh release create`, not after. Creating a release also creates the tag
+# on the remote, so pushing afterwards fails with "tag already exists" — the
+# release is fine, but the script exits non-zero on its last line and never
+# prints the summary, which reads exactly like a failed publish.
+git push origin HEAD --tags
+
 echo "==> Publishing the GitHub release"
 gh release create "v$VERSION" "$STAGED" \
   --repo "$REPO" \
@@ -124,8 +131,6 @@ Already have NutriAI?
 - **Running 1.0.0:** install the file below over the top, once. In-app updating starts from 1.0.1 — 1.0.0 shipped before it existed and has nothing to check with.
 
 Android 8.0+. Installing over the top never needs an uninstall, so nothing is lost either way."
-
-git push origin HEAD --tags
 
 echo
 echo "Done. https://nutriai-app.up.railway.app/download now serves v$VERSION."
