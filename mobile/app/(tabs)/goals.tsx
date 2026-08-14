@@ -32,6 +32,7 @@ import {
   nearestRate,
 } from '@/nutrition';
 import { EXERCISE_KINDS, describeExercise, netExerciseKcal } from '@/exercise';
+import { autoSyncHealth } from '@/health/autoSync';
 import { GoalsPayload, ProfileBasics } from '@/types';
 import { editorTargets } from '@/features/goals/editorTargets';
 import { GlideChart } from '@/features/goals/GlideChart';
@@ -282,6 +283,17 @@ export default function Plan() {
         apply(seed);
         setLoading(false);
       }
+
+      // Push a fresh health reading before reading the plan back.
+      //
+      // "Steps today" here comes from the server, which only knows what the
+      // last sync posted — and auto-sync is throttled to 15 minutes, so this
+      // number could sit a quarter of an hour behind the You tab, which reads
+      // Health Connect directly. Forcing a sync first is what makes the two
+      // screens agree. Failure is ignored: a stale step count is worth far
+      // less than the plan itself.
+      await autoSyncHealth(true).catch(() => {});
+
       const { data: payload, stale: fromCache } = await cached('goals', () => goalsApi.getGoals());
       setStale(fromCache);
       setData(payload);
