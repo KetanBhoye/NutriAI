@@ -50,6 +50,7 @@ describe('checkForUpdate', () => {
       available: true,
       notes: 'Health sync fix.',
       sizeLabel: '86 MB',
+      sizeBytes: 90_000_000,
       url: 'https://nutriai-app.up.railway.app/download',
     });
   });

@@ -2,7 +2,7 @@ import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Application from 'expo-application';
 import { Platform } from 'react-native';
-import { describeDownloadProblem } from './verify';
+import { describeDownloadProblem, describeSpaceProblem } from './verify';
 
 /**
  * Downloading a new APK and handing it to Android's package installer.
@@ -57,11 +57,17 @@ async function clearOldDownloads(): Promise<void> {
 export async function downloadApk(
   url: string,
   version: string,
+  sizeBytes: number | null,
   onProgress?: (fraction: number) => void
 ): Promise<string> {
   if (Platform.OS !== 'android') {
     throw new InstallError('In-app updates are only available on Android.');
   }
+
+  // Before the download, not after: running out of space surfaces only as
+  // Android's "App not installed", by which point the data is already spent.
+  const spaceProblem = describeSpaceProblem(sizeBytes, await FileSystem.getFreeDiskStorageAsync());
+  if (spaceProblem) throw new InstallError(spaceProblem);
 
   await clearOldDownloads();
   const target = `${downloadDir}NutriAI-${version}.apk`;

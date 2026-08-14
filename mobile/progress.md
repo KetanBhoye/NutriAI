@@ -274,6 +274,27 @@ control to the system installer, and if the user confirms, this process is
 replaced by the new build. There is no success callback, so nothing may depend
 on code after `installApk` running.
 
+**And no failure callback either — which is the part that bites.** Android
+reports a failed install to the *user* as the three words "App not installed",
+and to the app as nothing whatsoever. Found by running it: an emulator with
+546 MB free failed with `INSTALL_FAILED_INSUFFICIENT_STORAGE` while the card sat
+on "Opening installer…" under a green success message, claiming an install that
+had already failed.
+
+The only signal available is that we still exist. A successful install replaces
+the process, so regaining the foreground while still in the `installing` phase
+means it didn't happen — that's what `UpdateSection`'s `AppState` effect keys
+on. It cannot say *why* (Android doesn't tell us), so it names the two likely
+causes and makes clear nothing changed.
+
+`describeSpaceProblem` catches the clear-cut version of this before the download
+is paid for, but it is a filter and not a guarantee: 2.5x the APK size is a
+heuristic, and it does *not* catch the 546 MB case above, because Android also
+needs room for dex compilation and the existing install that we can't measure
+from here. Raising the multiplier until that one datum is covered would block
+legitimate updates on healthy devices — so the preflight stays cheap and the
+resume handler is what makes failure honest.
+
 ## A health reading can be impossible; treat it as broken, not big
 
 Apple Health reported **4,980 exercise minutes** for a day that contains 1,440

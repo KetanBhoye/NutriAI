@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import {
   checkForUpdate,
   currentVersion,
@@ -53,6 +53,29 @@ export function UpdateSection() {
     };
   }, []);
 
+  /**
+   * Notice when the install didn't happen.
+   *
+   * A successful install replaces this process, so if we're handed the
+   * foreground back while still in `installing`, it failed or was declined —
+   * Android tells the user "App not installed" and tells the app nothing at
+   * all. Without this the card sits on "Opening installer…" under a green
+   * success message, which is a lie about the state of the world.
+   */
+  useEffect(() => {
+    if (phase !== 'installing') return;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') return;
+      setPhase('idle');
+      setFailed(true);
+      setMessage(
+        "The update wasn't installed. Android will say why — most often there isn't enough free space, " +
+          'or the install was declined. Nothing changed, and you can try again.'
+      );
+    });
+    return () => sub.remove();
+  }, [phase]);
+
   if (!UPDATES_SUPPORTED) {
     return (
       <View>
@@ -96,11 +119,13 @@ export function UpdateSection() {
     setFailed(false);
     setBlocked(false);
     try {
-      const fileUri = await downloadApk(check.url, check.latestVersion, setProgress);
+      const fileUri = await downloadApk(check.url, check.latestVersion, check.sizeBytes, setProgress);
       setPhase('installing');
       await installApk(fileUri);
       // Control now belongs to the system installer. If the user confirms, this
-      // process is replaced by the new build and nothing below ever runs.
+      // process is replaced by the new build and nothing below ever runs — so
+      // reaching the foreground again means it did NOT install (see the
+      // AppState effect below).
       setMessage('Confirm the install when Android asks. Your data stays as it is.');
     } catch (e) {
       setFailed(true);

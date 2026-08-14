@@ -37,6 +37,8 @@ export interface UpdateCheck {
   notes: string;
   /** e.g. "86 MB", or null when the server didn't say. */
   sizeLabel: string | null;
+  /** The raw size, used to check there's room before spending the download. */
+  sizeBytes: number | null;
   /** Where to download it from. */
   url: string;
 }
@@ -72,6 +74,7 @@ export async function checkForUpdate(): Promise<UpdateCheck> {
     available: UPDATES_SUPPORTED && isUpdateAvailable(current, res.version),
     notes: res.notes ?? '',
     sizeLabel: formatSize(res.size_bytes),
+    sizeBytes: res.size_bytes ?? null,
     url: res.url,
   };
 }
