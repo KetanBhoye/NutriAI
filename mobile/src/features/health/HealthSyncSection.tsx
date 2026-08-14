@@ -6,7 +6,7 @@ import { clearHealthConnected, markHealthConnected, wasHealthConnected } from '@
 import { Button, Card, StatTile } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 
-type Status = 'checking' | 'unavailable' | 'needs-permission' | 'ready';
+type Status = 'checking' | 'unavailable' | 'needs-update' | 'needs-permission' | 'ready';
 
 /** Apple Health / Health Connect sync, as a section embedded in the You tab. */
 /** "exercise_minutes" → "exercise minutes". */
@@ -39,13 +39,32 @@ export function HealthSyncSection() {
   const [message, setMessage] = useState<string | null>(null);
   /** Failures are styled as failures — the same slot in green read as success. */
   const [failed, setFailed] = useState(false);
+  /** Offer the settings shortcut only once a request has actually been refused. */
+  const [denied, setDenied] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      if (!(await health.isAvailable())) {
-        setStatus('unavailable');
+      const state = health.availability ? await health.availability() :
+        (await health.isAvailable()) ? 'available' : 'unavailable';
+      if (state !== 'available') {
+        setStatus(state === 'needs-update' ? 'needs-update' : 'unavailable');
         return;
+      }
+
+      // Granted outside the app — in Health Connect's own settings, which is
+      // where the button below sends people. Without this the card would still
+      // demand a connection the user had already made.
+      if (health.hasPermissions && (await health.hasPermissions())) {
+        try {
+          const r = await health.getDailyHealth(new Date());
+          await markHealthConnected();
+          setReading(r);
+          setStatus('ready');
+          return;
+        } catch {
+          // Fall through to the stored-flag path below.
+        }
       }
       // Already connected on a previous launch: go straight to the readings
       // instead of asking again. A read that throws means access was revoked
@@ -67,10 +86,19 @@ export function HealthSyncSection() {
   const connect = async () => {
     setBusy(true);
     setMessage(null);
+    setFailed(false);
+    setDenied(false);
     try {
       const granted = await health.requestPermissions();
       if (!granted) {
-        setMessage('Permission was not granted. Enable NutriAI in your health app settings.');
+        // A refusal is a failure and must look like one. This branch set the
+        // message but not `failed`, so "Permission was not granted" rendered in
+        // the same green as "Synced ✓".
+        setFailed(true);
+        setDenied(true);
+        setMessage(
+          `${health.name} didn't grant access. If you didn't see a prompt, Android stops asking after a couple of refusals — open the settings below and allow NutriAI there.`
+        );
         return;
       }
       await markHealthConnected();
@@ -122,6 +150,15 @@ export function HealthSyncSection() {
 
       {status === 'checking' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />}
 
+      {status === 'needs-update' && (
+        <Card>
+          <Text style={styles.cardText}>
+            Health Connect is installed but too old to talk to NutriAI. Update it from the Play
+            Store, then come back and connect.
+          </Text>
+        </Card>
+      )}
+
       {status === 'unavailable' && (
         <Card>
           <Text style={styles.cardText}>
@@ -132,7 +169,17 @@ export function HealthSyncSection() {
       )}
 
       {status === 'needs-permission' && (
-        <Button title={`Connect ${health.name}`} onPress={connect} busy={busy} />
+        <>
+          <Button title={`Connect ${health.name}`} onPress={connect} busy={busy} />
+          {denied && health.openSettings ? (
+            <Button
+              title={`Open ${health.name} settings`}
+              variant="ghost"
+              onPress={() => health.openSettings!().catch(() => {})}
+              style={{ marginTop: 8 }}
+            />
+          ) : null}
+        </>
       )}
 
       {status === 'ready' && (

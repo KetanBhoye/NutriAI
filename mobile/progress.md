@@ -329,6 +329,40 @@ from here. Raising the multiplier until that one datum is covered would block
 legitimate updates on healthy devices — so the preflight stays cheap and the
 resume handler is what makes failure honest.
 
+## Health Connect: believe the granted set, not the request's return value
+
+Reported on an iQOO (OriginOS): tapping "Connect Health Connect" answered
+"Permission was not granted" even when permission *had* been granted, and said
+it in green — the success colour, because that branch set the message without
+setting `failed`.
+
+`requestPermission()` resolving with an empty array does not mean refused. Two
+ways it lies:
+
+- Some OEM builds resolve empty even after the user taps Allow.
+- Android stops showing the dialog entirely after a couple of refusals, so the
+  call returns instantly with nothing — indistinguishable from a fresh "no"
+  unless you look at what is actually granted.
+
+So `requestPermissions()` now checks `getGrantedPermissions()` first (skipping
+the prompt when access is already held — re-asking someone who said yes is how
+you get a "no"), and re-checks it after the request, including when the request
+throws. The granted set is the source of truth.
+
+Two consequences worth keeping:
+
+- **The section re-checks grants on mount**, so permission given in Health
+  Connect's own settings is noticed rather than ignored.
+- **There is a route to those settings.** The old message told the user to
+  enable it in settings and gave no way to get there, which is useless once
+  Android has stopped showing the dialog. `openHealthConnectSettings()` is
+  offered after a refusal — same reasoning as the installer's
+  "install unknown apps" shortcut.
+
+`SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED` is also no longer collapsed into
+"unavailable": that told people to install an app they already had. It now says
+to update it.
+
 ## A health reading can be impossible; treat it as broken, not big
 
 Apple Health reported **4,980 exercise minutes** for a day that contains 1,440

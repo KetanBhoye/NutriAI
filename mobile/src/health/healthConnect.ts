@@ -2,6 +2,8 @@ import {
   initialize,
   getSdkStatus,
   requestPermission,
+  getGrantedPermissions,
+  openHealthConnectSettings,
   readRecords,
   aggregateRecord,
   SdkAvailabilityStatus,
@@ -31,18 +33,66 @@ export const healthConnectProvider: HealthProvider = {
   name: 'Health Connect',
 
   async isAvailable() {
+    return (await healthConnectProvider.availability!()) === 'available';
+  },
+
+  async availability() {
     try {
       const status = await getSdkStatus();
-      return status === SdkAvailabilityStatus.SDK_AVAILABLE;
+      if (status === SdkAvailabilityStatus.SDK_AVAILABLE) return 'available';
+      if (status === SdkAvailabilityStatus.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
+        return 'needs-update';
+      }
+      return 'unavailable';
+    } catch {
+      return 'unavailable';
+    }
+  },
+
+  async hasPermissions() {
+    try {
+      await ensureInit();
+      const granted = await getGrantedPermissions();
+      return Array.isArray(granted) && granted.length > 0;
     } catch {
       return false;
     }
   },
 
+  /**
+   * Asks for read access, and then checks whether we actually got it.
+   *
+   * Two things make the obvious one-liner wrong on real devices:
+   *
+   * 1. **Some OEM builds resolve `requestPermission` with an empty array even
+   *    when the user granted everything.** Reported on vivo/iQOO (OriginOS)
+   *    among others. Trusting the return value alone reports a failure the user
+   *    can see is false — they just tapped Allow.
+   * 2. **Android stops showing the dialog after repeated denials.** The call
+   *    then returns immediately with nothing, which is indistinguishable from a
+   *    fresh refusal unless you look at what is actually granted.
+   *
+   * So the granted set is the source of truth, asked for again afterwards.
+   */
   async requestPermissions() {
     await ensureInit();
-    const granted = await requestPermission(READ_PERMISSIONS as any);
-    return Array.isArray(granted) && granted.length > 0;
+
+    // Already granted (possibly on a previous launch, possibly by hand in
+    // settings): don't prompt at all.
+    if (await healthConnectProvider.hasPermissions!()) return true;
+
+    try {
+      const granted = await requestPermission(READ_PERMISSIONS as any);
+      if (Array.isArray(granted) && granted.length > 0) return true;
+    } catch {
+      // Fall through: the re-check below is more reliable than this throw.
+    }
+
+    return healthConnectProvider.hasPermissions!();
+  },
+
+  async openSettings() {
+    await openHealthConnectSettings();
   },
 
   async getDailyHealth(date: Date): Promise<DailyHealth> {
