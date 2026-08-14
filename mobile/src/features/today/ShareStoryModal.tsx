@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Dimensions, Share, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, View } from 'react-native';
 import ViewShot, { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { dashboardApi } from '@/api';
 import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 import { formatCardDate, pickCaption } from './shareCaption';
-import { ShareCardBackground, themeForCaption } from './ShareCardBackground';
+import { ShareCardBackground } from './ShareCardBackground';
 
 interface ShareStoryModalProps {
   visible: boolean;
@@ -17,6 +20,10 @@ interface ShareStoryModalProps {
 /** 9:16 so it drops straight into an Instagram/WhatsApp story without cropping. */
 const CARD_W = Math.min(Dimensions.get('window').width - 72, 300);
 const CARD_H = Math.round((CARD_W * 16) / 9);
+
+/** What the exported image is, regardless of how small the preview is drawn. */
+const STORY_W = 1080;
+const STORY_H = 1920;
 
 /**
  * Shareable story card. The web app draws an equivalent on a <canvas>; here
@@ -43,15 +50,73 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     };
   }, [visible, date]);
 
+  /**
+   * Snapshots the card at story resolution.
+   *
+   * The on-screen card is ~300pt wide because it has to fit in a sheet.
+   * Capturing at that size produced a 300px image that Instagram and WhatsApp
+   * then upscale to 1080 — soft, and it looked cheap next to everything else
+   * in a feed. `width`/`height` re-render the view into a bitmap of that size,
+   * so the text is redrawn sharp rather than stretched.
+   */
+  const capture = () =>
+    captureRef(shotRef, {
+      format: 'png',
+      quality: 1,
+      result: 'tmpfile',
+      width: STORY_W,
+      height: STORY_H,
+    });
+
   const share = async () => {
     setSharing(true);
     setError(null);
     try {
-      // Capture at 3x so the card is crisp when a story viewer scales it up.
-      const uri = await captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' });
-      await Share.share({ url: uri });
+      const uri = await capture();
+
+      // NOT React Native's Share: on Android it ignores `url` entirely and
+      // supports only `message`, so the intent went out carrying nothing and
+      // WhatsApp reported "can't share empty file". expo-sharing attaches the
+      // actual file, through a FileProvider, on both platforms.
+      if (!(await Sharing.isAvailableAsync())) {
+        setError('Sharing is not available on this device.');
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'image/png',
+        UTI: 'public.png',
+        dialogTitle: 'Share your day',
+      });
     } catch {
       setError("Couldn't share that card.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  /**
+   * Straight into the Instagram story composer, skipping the share sheet.
+   *
+   * Android only — this is Instagram's documented ADD_TO_STORY intent. It fails
+   * when Instagram isn't installed, and can fail on versions that require a
+   * registered source application, so any failure falls back to the normal
+   * share sheet rather than dead-ending the user. Instagram appears there too.
+   */
+  const shareToInstagram = async () => {
+    setSharing(true);
+    setError(null);
+    try {
+      const uri = await capture();
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('com.instagram.share.ADD_TO_STORY', {
+        data: contentUri,
+        type: 'image/png',
+        // FLAG_GRANT_READ_URI_PERMISSION — without it Instagram receives a URI
+        // it may not read and shows an empty composer.
+        flags: 1,
+      });
+    } catch {
+      await share().catch(() => setError("Couldn't share that card."));
     } finally {
       setSharing(false);
     }
@@ -73,7 +138,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
       ) : (
         <View style={styles.wrap}>
           <ViewShot ref={shotRef} style={styles.card}>
-            <ShareCardBackground theme={themeForCaption(caption.headline)} width={CARD_W} height={CARD_H} />
+            <ShareCardBackground theme={caption.theme} width={CARD_W} height={CARD_H} />
 
             {/* Header */}
             <View style={styles.cardHead}>
@@ -123,12 +188,28 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
             <Text style={styles.footer}>{stats.name}</Text>
           </ViewShot>
 
+          {/* Instagram first on Android, because "share to a story" is the
+              thing people actually came here to do; the sheet is the fallback
+              and the only option on iOS, where ADD_TO_STORY needs a registered
+              Facebook app to work at all. */}
+          {Platform.OS === 'android' ? (
+            <Button
+              title={sharing ? 'Preparing…' : 'Share to Instagram story'}
+              onPress={shareToInstagram}
+              disabled={sharing}
+              style={styles.shareBtn}
+            />
+          ) : null}
+
           <Button
-            title={sharing ? 'Preparing…' : 'Share'}
+            title={sharing ? 'Preparing…' : Platform.OS === 'android' ? 'More sharing options' : 'Share'}
             onPress={share}
             disabled={sharing}
-            style={styles.shareBtn}
+            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+            style={styles.secondaryBtn}
           />
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
       )}
     </Sheet>
@@ -212,5 +293,6 @@ const styles = StyleSheet.create({
   rule: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginTop: 14, marginBottom: 10 },
   footer: { fontFamily: fonts.semibold, fontSize: 11, color: colors.textDim, letterSpacing: 0.4 },
   shareBtn: { marginTop: 18, alignSelf: 'stretch' },
-  error: { ...type.body, color: colors.danger },
+  secondaryBtn: { marginTop: 8, alignSelf: 'stretch' },
+  error: { ...type.body, color: colors.danger, textAlign: 'center', marginTop: 10 },
 });

@@ -12,7 +12,7 @@ import { StyleSheet } from 'react-native';
  * The palette keys off what the day actually earned, so a streak card and a
  * steps card don't look identical in a feed.
  */
-export type CardTheme = 'streak' | 'protein' | 'steps' | 'dialed' | 'default';
+export type CardTheme = 'perfect' | 'streak' | 'weight' | 'protein' | 'steps' | 'dialed' | 'default';
 
 interface Palette {
   /** Base fill — near-black, faintly tinted toward the accent. */
@@ -26,8 +26,13 @@ interface Palette {
 }
 
 const PALETTES: Record<CardTheme, Palette> = {
+  // The rarest card in the set — everything hit at once. Magenta into gold,
+  // deliberately unlike the others so it reads as an event in a feed.
+  perfect: { base: '#160c14', glowA: '#f472b6', glowB: '#fbbf24', ring: '#f472b6' },
   // Gold: rare, so it should feel like an award.
   streak: { base: '#15120c', glowA: '#fbbf24', glowB: '#f97316', ring: '#fbbf24' },
+  // Indigo for the scale moving — calm, not celebratory; it's a trend, not a win.
+  weight: { base: '#0c0f1a', glowA: '#818cf8', glowB: '#38bdf8', ring: '#818cf8' },
   // Brand green, pushed saturated.
   protein: { base: '#0c1510', glowA: '#4ade80', glowB: '#14b8a6', ring: '#4ade80' },
   // Cyan reads as motion/distance.
@@ -37,14 +42,6 @@ const PALETTES: Record<CardTheme, Palette> = {
   // Muted violet so a plain day still looks considered.
   default: { base: '#0f1115', glowA: '#a98bff', glowB: '#5ad1ff', ring: '#a98bff' },
 };
-
-export function themeForCaption(headline: string): CardTheme {
-  if (headline.includes('NO MISSES')) return 'streak';
-  if (headline.includes('PROTEIN')) return 'protein';
-  if (headline.includes('STEPS')) return 'steps';
-  if (headline.includes('DIALED')) return 'dialed';
-  return 'default';
-}
 
 export function ShareCardBackground({ theme, width, height }: { theme: CardTheme; width: number; height: number }) {
   const p = PALETTES[theme];

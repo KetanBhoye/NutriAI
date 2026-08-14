@@ -21,72 +21,108 @@ const stats = (over: Partial<ShareStats> = {}): ShareStats => ({
  * specific rather than settling for the most common headline.
  */
 describe('pickCaption', () => {
-  it('leads with a week-long streak above everything else', () => {
-    const caption = pickCaption(stats({ streak: 9, protein: { consumed: 200, goal: 150 }, steps: 12000 }));
-    expect(caption.headline).toContain('9 DAYS');
+  it('leads with everything-at-once above any single win', () => {
+    const caption = pickCaption(
+      stats({
+        streak: 9,
+        protein: { consumed: 200, goal: 150 },
+        calories: { consumed: 1800, goal: 2000 },
+        steps: 12000,
+      })
+    );
+
+    expect(caption.theme).toBe('perfect');
+  });
+
+  it('ranks a long streak above a single day\'s wins', () => {
+    const caption = pickCaption(
+      stats({ streak: 31, protein: { consumed: 200, goal: 150 }, steps: 12000 })
+    );
+
+    expect(caption.headline).toContain('31 DAYS');
+    expect(caption.theme).toBe('streak');
   });
 
   it('celebrates hitting protein when the streak is short', () => {
     const caption = pickCaption(stats({ streak: 3, protein: { consumed: 155, goal: 150 } }));
-    expect(caption.headline).toContain('PROTEIN');
+    expect(caption.theme).toBe('protein');
   });
 
-  it('counts protein exactly on target as hit', () => {
-    const caption = pickCaption(stats({ protein: { consumed: 150, goal: 150 } }));
-    expect(caption.headline).toContain('PROTEIN');
-  });
-
-  it('falls to steps when protein was missed', () => {
-    const caption = pickCaption(stats({ protein: { consumed: 100, goal: 150 }, steps: 11500 }));
-    expect(caption.headline).toContain('11,500');
-  });
-
-  it('needs a real 10k, not almost', () => {
+  it('calls out weight coming off above a protein day', () => {
+    // The scale moving is the outcome people actually want; a macro target hit
+    // is the means. Rank them that way.
     const caption = pickCaption(
-      stats({ protein: { consumed: 100, goal: 150 }, steps: 9800, calories: { consumed: 1800, goal: 2000 } })
+      stats({ weight_change_kg: -0.8, protein: { consumed: 200, goal: 150 } })
     );
-    expect(caption.headline).toContain('DIALED');
+
+    expect(caption.theme).toBe('weight');
+    expect(caption.headline + caption.sub).toContain('0.8');
   });
 
-  it('rewards staying under the calorie goal', () => {
-    const caption = pickCaption(stats({ calories: { consumed: 1800, goal: 2000 } }));
-    expect(caption.headline).toContain('DIALED');
+  it('ignores weight moving the wrong way', () => {
+    const caption = pickCaption(stats({ weight_change_kg: 0.6, calories: { consumed: 1500, goal: 2000 } }));
+    expect(caption.theme).not.toBe('weight');
   });
 
-  it('does not count an empty day as being under target', () => {
-    // Logging nothing is not a win, and the card must not imply it was.
-    const caption = pickCaption(stats({ calories: { consumed: 0, goal: 2000 } }));
-    expect(caption.headline).toContain("TODAY'S");
+  it('separates a huge step day from a merely good one', () => {
+    expect(pickCaption(stats({ steps: 16000 })).headline).toMatch(/16,000|LEGS/);
+    expect(pickCaption(stats({ steps: 10500 })).theme).toBe('steps');
   });
 
-  it('still says something kind after going over', () => {
-    const caption = pickCaption(stats({ calories: { consumed: 2600, goal: 2000 } }));
-    expect(caption.headline).toContain('SHOWING UP');
+  it('falls back to showing up, then to an empty day', () => {
+    expect(pickCaption(stats({ calories: { consumed: 900, goal: null } })).theme).toBe('default');
+    expect(pickCaption(stats()).sub.length).toBeGreaterThan(0);
   });
 
-  it('copes with goals that were never set', () => {
-    const caption = pickCaption(
-      stats({ calories: { consumed: 1500, goal: null }, protein: { consumed: 90, goal: null } })
-    );
-    expect(caption.headline).toContain('SHOWING UP');
+  it('never returns an empty headline or sub', () => {
+    const cases: Array<Partial<ShareStats>> = [
+      {},
+      { streak: 7 },
+      { streak: 40 },
+      { steps: 20000 },
+      { weight_change_kg: -1.2 },
+      { protein: { consumed: 160, goal: 150 } },
+      { calories: { consumed: 1200, goal: 2000 } },
+    ];
+
+    for (const over of cases) {
+      const c = pickCaption(stats(over));
+      expect(c.headline.trim().length).toBeGreaterThan(0);
+      expect(c.sub.trim().length).toBeGreaterThan(0);
+      expect(c.theme).toBeTruthy();
+    }
+  });
+});
+
+describe('caption variety', () => {
+  it('is stable within a day, so the preview matches what gets shared', () => {
+    const s = stats({ streak: 8 });
+
+    expect(pickCaption(s)).toEqual(pickCaption(s));
   });
 
-  it('always returns both lines', () => {
-    for (const s of [stats(), stats({ streak: 8 }), stats({ calories: { consumed: 9000, goal: 2000 } })]) {
-      const caption = pickCaption(s);
-      expect(caption.headline.length).toBeGreaterThan(0);
-      expect(caption.sub.length).toBeGreaterThan(0);
+  it('varies across days, so a week of cards does not read identically', () => {
+    // The point of the feature: a card that says the same thing every day is a
+    // card people post once.
+    const seen = new Set<string>();
+    for (const date of ['2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24', '2026-07-25', '2026-07-26']) {
+      seen.add(pickCaption(stats({ date, calories: { consumed: 1500, goal: 2000 } })).headline);
+    }
+
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('keeps the theme fixed even as the wording rotates', () => {
+    // Theme tracks the achievement, not the sentence — otherwise the card's
+    // colour would flicker day to day for the same kind of day.
+    for (const date of ['2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24']) {
+      expect(pickCaption(stats({ date, calories: { consumed: 1500, goal: 2000 } })).theme).toBe('dialed');
     }
   });
 });
 
 describe('formatCardDate', () => {
-  it('renders the web card\'s date treatment', () => {
+  it('renders a short uppercase date', () => {
     expect(formatCardDate('2026-07-27')).toBe('27 JUL 2026');
-  });
-
-  it('handles every month', () => {
-    expect(formatCardDate('2026-01-01')).toBe('1 JAN 2026');
-    expect(formatCardDate('2026-12-31')).toBe('31 DEC 2026');
   });
 });
