@@ -72,13 +72,47 @@ sed -i '' "s/version: '[^']*',/version: '$VERSION',/" app.config.ts
 sed -i '' "s/versionCode: $CURRENT_CODE,/versionCode: $NEXT_CODE,/" app.config.ts
 echo "    version $VERSION, versionCode $NEXT_CODE"
 
+echo "==> Regenerating the native project so the bump reaches the build"
+# ALWAYS, not only when android/ is missing.
+#
+# The version Gradle compiles in lives in android/app/build.gradle, which is
+# GENERATED from app.config.ts by prebuild. Bumping app.config.ts without
+# re-running this changes nothing: v1.0.1 shipped stamped 1.0.0/versionCode 1,
+# so the app reported 1.0.0, the server offered 1.0.1, Android accepted the
+# install as a same-versionCode reinstall, and the update was offered again on
+# the next launch. Forever. See mobile/progress.md.
+npx expo prebuild --platform android --no-install
+
 echo "==> Building the release APK"
-# android/ is generated and gitignored, so a fresh clone has to regenerate it.
-[[ -d android ]] || npx expo prebuild --platform android --no-install
 (cd android && ./gradlew assembleRelease -q)
 
 APK="android/app/build/outputs/apk/release/app-release.apk"
 [[ -f "$APK" ]] || { echo "error: no APK at $APK" >&2; exit 1; }
+
+echo "==> Verifying the APK really carries version $VERSION"
+# The check that makes the above bug unshippable rather than merely fixed:
+# assert what is INSIDE the APK, never what we asked for. Every step between
+# app.config.ts and the binary is a place the version can fail to arrive.
+AAPT=$(ls ~/Library/Android/sdk/build-tools/*/aapt2 2>/dev/null | tail -1)
+if [[ -z "$AAPT" ]]; then
+  echo "error: aapt2 not found — install Android build-tools" >&2
+  exit 1
+fi
+BADGING=$("$AAPT" dump badging "$APK" | head -1)
+APK_NAME=$(sed -E "s/.*versionName='([^']*)'.*/\1/" <<<"$BADGING")
+APK_CODE=$(sed -E "s/.*versionCode='([^']*)'.*/\1/" <<<"$BADGING")
+
+if [[ "$APK_NAME" != "$VERSION" || "$APK_CODE" != "$NEXT_CODE" ]]; then
+  echo "error: the APK does not carry the version being released." >&2
+  echo "  expected versionName $VERSION, versionCode $NEXT_CODE" >&2
+  echo "  got      versionName $APK_NAME, versionCode $APK_CODE" >&2
+  echo >&2
+  echo "Publishing this would put every user in an update loop: the app would" >&2
+  echo "report the old version, be offered this one, install it successfully," >&2
+  echo "and be offered it again on the next launch." >&2
+  exit 1
+fi
+echo "    versionName $APK_NAME, versionCode $APK_CODE ✓"
 
 echo "==> Verifying the signature"
 APKSIGNER=$(ls ~/Library/Android/sdk/build-tools/*/apksigner 2>/dev/null | tail -1)
