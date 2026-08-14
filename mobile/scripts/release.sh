@@ -98,7 +98,11 @@ if [[ -z "$AAPT" ]]; then
   echo "error: aapt2 not found — install Android build-tools" >&2
   exit 1
 fi
-BADGING=$("$AAPT" dump badging "$APK" | head -1)
+# Capture in full, then take the first line in the shell. Piping aapt2 into
+# `head -1` closes the pipe early, aapt2 dies of SIGPIPE, and `set -o pipefail`
+# aborts the release with no message at all.
+BADGING_ALL=$("$AAPT" dump badging "$APK")
+BADGING=${BADGING_ALL%%$'\n'*}
 APK_NAME=$(sed -E "s/.*versionName='([^']*)'.*/\1/" <<<"$BADGING")
 APK_CODE=$(sed -E "s/.*versionCode='([^']*)'.*/\1/" <<<"$BADGING")
 
