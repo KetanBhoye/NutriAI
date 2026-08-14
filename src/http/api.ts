@@ -30,6 +30,7 @@ import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
 import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
 import { parseMealPhoto } from '../services/coach/photo-parse.js';
 import { generateMealSuggestions } from '../services/coach/suggest-meal.js';
+import { mealCalorieBand } from '../services/coach/meal-budget.js';
 import { getVertexUsage } from '../services/admin/usage.js';
 import {
   isPushConfigured,
@@ -1282,6 +1283,17 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         )
         .bind(userId, date)
         .first<{ cal: number; pro: number }>();
+
+      // What they've already eaten today, so the same dish isn't suggested
+      // back to them, plus anything the client says it has already shown.
+      const eatenRows = await env.DB
+        .prepare(`SELECT food_name FROM food_entries WHERE user_id = ? AND entry_date = ? LIMIT 20`)
+        .bind(userId, date)
+        .all<{ food_name: string }>();
+      const alreadyShown = Array.isArray(req.body?.exclude)
+        ? (req.body.exclude as unknown[]).filter((n): n is string => typeof n === 'string').slice(0, 15)
+        : [];
+      const avoid = [...(eatenRows?.results ?? []).map((r) => r.food_name), ...alreadyShown];
       const prefs = await env.DB
         .prepare(
           `SELECT daily_calorie_goal, daily_protein_goal_g, behavior_instructions
@@ -1294,9 +1306,13 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
           behavior_instructions: string | null;
         }>();
 
+      // No floor: a day that's already spent must report as spent. Flooring
+      // this at 150 made being 400 kcal over look identical to having 150
+      // left, so the suggestions never adapted at the one point they matter
+      // most. mealCalorieBand handles the negative case explicitly.
       const remainingCalories =
         prefs?.daily_calorie_goal != null
-          ? Math.max(150, prefs.daily_calorie_goal - Math.round(consumed?.cal ?? 0))
+          ? prefs.daily_calorie_goal - Math.round(consumed?.cal ?? 0)
           : null;
       const remainingProtein =
         prefs?.daily_protein_goal_g != null
@@ -1307,6 +1323,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         remainingCalories,
         remainingProtein,
         mealType,
+        avoid,
         dietNotes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
         credentialJson,
         project,
@@ -1314,10 +1331,20 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
       });
 
+      const band = mealCalorieBand({
+        remainingCalories,
+        remainingProtein,
+        mealType: mealType as Parameters<typeof mealCalorieBand>[0]['mealType'],
+      });
+
       res.json({
         meal_type: mealType,
         remaining_calories: remainingCalories,
         remaining_protein: remainingProtein,
+        // So the sheet can say what it aimed for, rather than leaving the user
+        // to wonder why the numbers look small.
+        target_band: band ? { min: band.min, max: band.max, target: band.target } : null,
+        over_budget: band?.overBudget ?? false,
         suggestions,
       });
     } catch (error) {

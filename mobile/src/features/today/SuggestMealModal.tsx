@@ -21,22 +21,38 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
   const [remaining, setRemaining] = useState<{ cal: number | null; pro: number | null }>({ cal: null, pro: null });
   const [logged, setLogged] = useState<Set<number>>(new Set());
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
+  const [band, setBand] = useState<{ min: number; max: number; target: number } | null>(null);
+  const [overBudget, setOverBudget] = useState(false);
+  /** Everything shown so far this session, so re-rolls keep diverging. */
+  const [seen, setSeen] = useState<string[]>([]);
 
-  const load = () => {
+  /**
+   * `reroll` sends what's already on screen so the server can exclude it.
+   * Asking the same question twice returned the same food, which is what made
+   * "Suggest others" feel broken.
+   */
+  const load = (reroll = false) => {
     setStatus('loading');
     setLogged(new Set());
+    const exclude = reroll ? [...seen, ...suggestions.map((s) => s.name)] : [];
     aiApi
-      .suggestMeal(meal)
+      .suggestMeal(meal, exclude)
       .then((res) => {
         setSuggestions(res.suggestions);
+        setSeen(exclude);
         setRemaining({ cal: res.remaining_calories, pro: res.remaining_protein });
+        setBand(res.target_band);
+        setOverBudget(res.over_budget);
         setStatus(res.suggestions.length ? 'ready' : 'error');
       })
       .catch(() => setStatus('error'));
   };
 
   useEffect(() => {
-    if (visible) load();
+    if (visible) {
+      setSeen([]);
+      load();
+    }
   }, [visible, meal]);
 
   const logIt = async (s: MealSuggestion, i: number) => {
@@ -63,10 +79,21 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
 
   return (
     <Sheet visible={visible} onClose={onClose} title="🍽️ What should I eat?">
-      {remaining.cal !== null ? (
+      {overBudget ? (
         <Text style={styles.sub}>
-          For {meal} · about <Text style={styles.bold}>{remaining.cal} kcal</Text> left today
+          You've already hit today's calories, so these are{' '}
+          <Text style={styles.bold}>light top-ups</Text> rather than a meal.
+          {remaining.pro !== null && remaining.pro > 0 ? ` Still ${remaining.pro}g protein to go.` : ''}
+        </Text>
+      ) : remaining.cal !== null ? (
+        <Text style={styles.sub}>
+          For {meal} · <Text style={styles.bold}>{remaining.cal} kcal</Text> left today
           {remaining.pro !== null && remaining.pro > 0 ? ` · ${remaining.pro}g protein to go` : ''}
+          {band ? (
+            <Text style={styles.sub}>
+              {'\n'}Sized to about <Text style={styles.bold}>{band.min}–{band.max} kcal</Text> for this {meal}.
+            </Text>
+          ) : null}
         </Text>
       ) : null}
 
@@ -106,7 +133,7 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
               </View>
             </View>
           ))}
-          <Button title="↻ Suggest others" variant="ghost" onPress={load} style={{ marginTop: 6 }} />
+          <Button title="↻ Suggest others" variant="ghost" onPress={() => load(true)} style={{ marginTop: 6 }} />
         </View>
       )}
     </Sheet>

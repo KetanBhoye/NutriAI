@@ -22,13 +22,28 @@ export interface MealSuggestion {
   fat_g: number;
 }
 
-export function suggestMeal(meal_type: MealType): Promise<{
+export interface SuggestMealResponse {
   meal_type: MealType;
-  remaining_calories: number;
-  remaining_protein: number;
+  remaining_calories: number | null;
+  remaining_protein: number | null;
+  /** The kcal range the suggestions were sized to, or null with no goal set. */
+  target_band: { min: number; max: number; target: number } | null;
+  /** The day's calories are already spent — suggestions are light top-ups. */
+  over_budget: boolean;
   suggestions: MealSuggestion[];
-}> {
-  return api('/api/ai/suggest-meal', { method: 'POST', body: { meal_type }, timeoutMs: 45_000 });
+}
+
+/**
+ * `exclude` carries the dishes already on screen, so "Suggest others" is a
+ * different question rather than the same one asked twice. Without it the
+ * server sees an identical request and the model returns an identical list.
+ */
+export function suggestMeal(meal_type: MealType, exclude: string[] = []): Promise<SuggestMealResponse> {
+  return api('/api/ai/suggest-meal', {
+    method: 'POST',
+    body: { meal_type, exclude },
+    timeoutMs: 45_000,
+  });
 }
 
 export interface PhotoItem {

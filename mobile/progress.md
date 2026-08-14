@@ -229,6 +229,40 @@ consistent. Active energy defaults to kilocalories and distance to meters
 than the TypeScript name. Health Connect on Android was never affected — it
 computes minutes from session start/end times.
 
+## Meal suggestions: the prompt was answering its own question
+
+"Ideas" kept returning the same two or three dishes regardless of the calories
+left. Three causes, none of them the model's fault:
+
+- **The prompt listed the dishes it wanted back** — eight examples, "e.g. moong
+  dal chilla, curd rice, paneer bhurji…" — and got those dishes. Examples in a
+  prompt are instructions. It now names a *style* (rotated per call from
+  `ANGLES`) instead of dishes.
+- **Nothing varied between calls.** `temperature: 0.6`, thinking disabled and a
+  byte-identical prompt meant "↻ Suggest others" asked the same question and
+  got the same answer. Temperature is 1.0, the angle rotates, and the client
+  now sends `exclude` — what's already on screen — so a re-roll is a genuinely
+  different request.
+- **The budget was a hint, not a constraint.** "Roughly fit the calories left"
+  gave nothing to hit. `mealCalorieBand()` (backend `services/coach/`) computes
+  an explicit kcal range from what remains and the meal type, states it in
+  numbers, and `pickSuggestions()` then *enforces* it on the way back — the
+  model drifts most at the extremes, which is exactly where adapting matters.
+
+The band is a share of what's **remaining**, not of the daily goal: someone
+opening this at 9pm with 400 kcal left needs a 400-kcal-shaped answer.
+
+Two things worth not undoing:
+
+- `remainingCalories` is no longer floored at 150 in the endpoint. That floor
+  made being 400 kcal over look identical to having 150 left, so the one case
+  where adapting matters most was the one case it couldn't see. Negative
+  remaining is handled explicitly as `overBudget`.
+- `pickSuggestions` shows **only** fitting options when any fit, even if that
+  means two instead of three. Padding the list with a 900 kcal plate on a 300
+  kcal budget is the original complaint, and a short list is not a broken one.
+  It falls back to the closest options only when nothing fits at all.
+
 ## In-app updates are Android-only, and that's not a gap to fill (`src/updates/`)
 
 The app is handed out as an APK from `/download`, so nothing tells an installed
