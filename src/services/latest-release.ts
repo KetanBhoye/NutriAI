@@ -147,7 +147,10 @@ export async function getLatestRelease(): Promise<LatestRelease | null> {
 
     if (!res.ok) throw new Error(`GitHub responded ${res.status}`);
 
-    etag = res.headers.get('etag');
+    // Optional-chained deliberately: a thrown TypeError here lands in the
+    // catch below and reports "no update available", so a detail this
+    // incidental must not be able to disable the updater.
+    etag = res.headers?.get('etag') ?? null;
     const value = parse((await res.json()) as GithubRelease);
     cached = { at: Date.now(), value, ok: true };
     return value;

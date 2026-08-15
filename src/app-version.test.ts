@@ -21,7 +21,19 @@ const start = async () => {
 };
 
 const stubGithub = (body: unknown, ok = true) =>
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok, status: ok ? 200 : 500, json: async () => body }) as unknown as Response));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      ({
+        ok,
+        status: ok ? 200 : 500,
+        json: async () => body,
+        // A real Response always has these. Omitting them made this fake
+        // disagree with reality in a way that hid a live bug.
+        headers: new Headers(),
+      }) as unknown as Response
+    )
+  );
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'nutriai-appversion-'));
