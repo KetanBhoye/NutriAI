@@ -107,6 +107,8 @@ either through `AuthProvider` or through the small event buses described below.
 | `notifications/reminders.ts` | four meal reminders a day, scheduled as dated one-shots |
 | `notifications/copy.ts` | what each reminder says — slot times, motivation, missed-meal nudges |
 | `notifications/updateNotice.ts` | announces a new build, once per version |
+| `notifications/channels.ts` | the Android channels; without one, reminders arrive silently |
+| `notifications/delivery.ts` | opens the OS settings that decide whether a reminder is allowed to arrive |
 | `components/ui/` | primitives: `Screen`, `Card`, `Button`, `TextField`, `Sheet`, `PillGroup`, `OptionRow`, `StatTile`, … |
 | `features/<screen>/` | components belonging to one screen, e.g. `features/goals/WeightTrendChart.tsx` |
 
@@ -151,6 +153,20 @@ seven days ahead as dated one-shots and re-armed whenever the app opens or backg
   count are linked.
 - **Nothing is cancelled before its replacement is scheduled.** The previous version cancelled first
   and then made network calls, which is why reminders sometimes vanished — see `progress.md`.
+
+Whether a scheduled reminder actually *arrives* is a separate problem from scheduling it, and lives
+mostly outside the app:
+
+- **Channel.** `channels.ts` creates a MAX-importance "Meal reminders" channel before anything is
+  scheduled. Without one, Android files reminders under the default channel at `IMPORTANCE_DEFAULT`
+  — no banner, and on several vendor skins no sound. Channel settings are frozen once created, so
+  the ids carry a version.
+- **Exact alarms.** `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` are declared, or expo-notifications
+  falls back to `setAndAllowWhileIdle` and Doze defers the reminder. Both are Play-restricted —
+  see `PLAY_STORE.md` before shipping to Play.
+- **The rest is the OEM.** Battery managers that hibernate the app drop its alarms, and Android 14
+  denies exact alarms by default. Neither is visible from JS, so `delivery.ts` opens the relevant
+  settings screens from You → Meal reminders → "Reminders not arriving?".
 
 `updateNotice.ts` separately announces a newly published build, once per version, from the app's own
 update check. Local like everything else here, so it fires on launch rather than the moment a

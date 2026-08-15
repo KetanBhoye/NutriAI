@@ -234,6 +234,12 @@ want sign-in to work in debug builds too.
   **local** notifications instead — four a day, on by default, needing no
   account and working offline. The "new version available" notice is local for
   the same reason, so it fires on launch rather than when a release goes out.
+- **Android reminders need two things the app cannot grant itself.** The build
+  declares `USE_EXACT_ALARM` / `SCHEDULE_EXACT_ALARM` so a reminder isn't
+  deferred to the next Doze maintenance window — both are Play-restricted, so
+  read `mobile/PLAY_STORE.md` before submitting. An OEM battery manager that
+  hibernates the app will still drop its alarms; You → Meal reminders →
+  "Reminders not arriving?" links to the settings that decide it.
 - **A free Apple provisioning profile expires after 7 days.** Rebuild and
   reinstall to keep a sideloaded iPhone build running.
 - **Health data is read-only** on both platforms. The app never writes to Apple
