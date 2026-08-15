@@ -23,6 +23,18 @@
  *  us to ~6, however many phones are checking. */
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * How long a *failed* lookup is allowed to stand in for an answer.
+ *
+ * Deliberately much shorter than the success TTL. Caching a failure for ten
+ * minutes means one rate-limited response tells every phone that checks in
+ * that window "you're up to date" — which is indistinguishable, from the app's
+ * side, from there being no update. A short retry window costs a handful of
+ * requests and stops a blip becoming a silent ten-minute outage of the whole
+ * update mechanism.
+ */
+const FAILURE_TTL_MS = 60 * 1000;
+
 const FETCH_TIMEOUT_MS = 5_000;
 
 export interface LatestRelease {
@@ -50,11 +62,23 @@ interface GithubRelease {
   assets?: GithubAsset[];
 }
 
-let cached: { at: number; value: LatestRelease | null } | null = null;
+let cached: { at: number; value: LatestRelease | null; ok: boolean } | null = null;
+
+/**
+ * The last response's ETag.
+ *
+ * GitHub does **not** count a conditional request answered with 304 against
+ * the rate limit, so sending `If-None-Match` turns the common case — nothing
+ * has changed since the last poll — into a free request. On a shared egress
+ * IP like a PaaS gives you, that is the difference between a working updater
+ * and one that is rate-limited into silence by whoever else is on the address.
+ */
+let etag: string | null = null;
 
 /** Test seam — the suite must not depend on GitHub being reachable. */
 export function resetLatestReleaseCache(): void {
   cached = null;
+  etag = null;
 }
 
 function repo(): string {
@@ -100,29 +124,39 @@ function parse(release: GithubRelease): LatestRelease | null {
  * the user did not ask for.
  */
 export async function getLatestRelease(): Promise<LatestRelease | null> {
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
+  const ttl = cached?.ok ? CACHE_TTL_MS : FAILURE_TTL_MS;
+  if (cached && Date.now() - cached.at < ttl) return cached.value;
 
   try {
     const res = await fetch(`https://api.github.com/repos/${repo()}/releases/latest`, {
       headers: {
         Accept: 'application/vnd.github+json',
         'User-Agent': 'nutriai-server',
+        // Free when nothing has changed — see the note on `etag`.
+        ...(etag && cached?.ok ? { 'If-None-Match': etag } : {}),
         ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
+    // Unchanged: keep the answer we already have and reset its clock.
+    if (res.status === 304 && cached) {
+      cached = { at: Date.now(), value: cached.value, ok: true };
+      return cached.value;
+    }
+
     if (!res.ok) throw new Error(`GitHub responded ${res.status}`);
 
+    etag = res.headers.get('etag');
     const value = parse((await res.json()) as GithubRelease);
-    cached = { at: Date.now(), value };
+    cached = { at: Date.now(), value, ok: true };
     return value;
   } catch (error) {
     console.warn('[app-version] could not read the latest release:', (error as Error).message);
     // Serve the last known good answer if we have one. A rate-limit window or a
     // GitHub blip shouldn't make every phone think it's up to date.
-    if (cached) return cached.value;
-    cached = { at: Date.now(), value: null };
+    if (cached?.ok) return cached.value;
+    cached = { at: Date.now(), value: null, ok: false };
     return null;
   }
 }

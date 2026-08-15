@@ -17,11 +17,22 @@ const release = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const respondWith = (body: unknown, ok = true, status = 200) =>
+const respondWith = (body: unknown, ok = true, status = 200, etag?: string) =>
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => ({ ok, status, json: async () => body }) as unknown as Response)
+    vi.fn(async () => ({
+      ok,
+      status,
+      json: async () => body,
+      headers: { get: (h: string) => (h.toLowerCase() === 'etag' ? (etag ?? null) : null) },
+    }) as unknown as Response)
   );
+
+/** The headers of the most recent request. */
+const sentHeaders = (): Record<string, string> =>
+  ((globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)?.[1] as {
+    headers: Record<string, string>;
+  }).headers;
 
 beforeEach(() => {
   resetLatestReleaseCache();
@@ -101,6 +112,45 @@ describe('getLatestRelease', () => {
     // Still the real version — a GitHub blip must not silently tell every
     // phone it is up to date.
     expect(await getLatestRelease()).toMatchObject({ version: '1.0.1' });
+  });
+
+  it('asks conditionally once it has an ETag, which GitHub does not charge for', async () => {
+    // The whole point: a 304 costs no rate limit, and this server shares an
+    // egress IP with every other tenant on the platform.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    respondWith(release(), true, 200, 'W/"abc"');
+    await getLatestRelease();
+
+    clock.mockReturnValue(1_000_000 + 11 * 60 * 1000);
+    respondWith(null, true, 304);
+    expect(await getLatestRelease()).toMatchObject({ version: '1.0.1' });
+
+    expect(sentHeaders()['If-None-Match']).toBe('W/"abc"');
+  });
+
+  it('retries a failure within a minute instead of sitting on it for ten', async () => {
+    // A rate-limited response cached for the full TTL tells every phone that
+    // checks in that window "you're up to date" — a silent outage of the
+    // update mechanism, which is exactly how one went unnoticed in production.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    respondWith(null, false, 403);
+    expect(await getLatestRelease()).toBeNull();
+
+    clock.mockReturnValue(1_000_000 + 61 * 1000);
+    respondWith(release());
+    expect(await getLatestRelease()).toMatchObject({ version: '1.0.1' });
+  });
+
+  it('does not send a stale ETag after a failure, which would mask a real answer', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    respondWith(null, false, 403);
+    await getLatestRelease();
+
+    clock.mockReturnValue(1_000_000 + 61 * 1000);
+    respondWith(release());
+    await getLatestRelease();
+
+    expect(sentHeaders()['If-None-Match']).toBeUndefined();
   });
 
   it('returns null rather than throwing when GitHub is unreachable', async () => {
