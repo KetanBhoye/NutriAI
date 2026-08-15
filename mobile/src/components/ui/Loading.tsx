@@ -1,17 +1,21 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { colors, type } from '@/theme';
+import { StyleSheet, View } from 'react-native';
+import { NutriLoader } from './NutriLoader';
 
-/** Centred spinner with an optional caption, for in-progress screen sections. */
+/**
+ * Centred loader with an optional caption, for in-progress screen sections.
+ *
+ * Delegates to `NutriLoader` rather than `ActivityIndicator`: the stock
+ * spinner is the same grey one every app on the phone shows, and it appears
+ * in enough places here that it set the tone for the whole product.
+ */
 export function Loading({ label }: { label?: string }) {
   return (
     <View style={styles.wrap}>
-      <ActivityIndicator color={colors.accent} />
-      {label ? <Text style={styles.label}>{label}</Text> : null}
+      <NutriLoader size={64} label={label} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 32, gap: 12 },
-  label: { ...type.body, color: colors.textDim },
+  wrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 32 },
 });

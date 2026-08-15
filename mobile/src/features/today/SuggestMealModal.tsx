@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { aiApi, entriesApi } from '@/api';
 import { MealSuggestion } from '@/api/ai';
 import { Button, Sheet } from '@/components/ui';
 import { colors, fonts, radius, type } from '@/theme';
 import { MealType } from '@/types';
 import { estimateGrams } from '@/portion';
+import { NutriLoader } from '@/components/ui/NutriLoader';
 
 interface SuggestMealModalProps {
   visible: boolean;
@@ -99,7 +100,7 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
 
       {status === 'loading' ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.accent} />
+          <NutriLoader size={52} />
           <Text style={styles.centerText}>Thinking of simple options…</Text>
         </View>
       ) : status === 'error' ? (

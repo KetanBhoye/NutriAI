@@ -1,6 +1,6 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
@@ -14,6 +14,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { AuthProvider, useAuth } from '@/auth';
 import { applyDefaultFont } from '@/components/applyDefaultFont';
+import { NutriLoader } from '@/components/ui/NutriLoader';
 import { colors } from '@/theme';
 
 applyDefaultFont();
@@ -45,7 +46,7 @@ function AuthGate() {
   if (loading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <NutriLoader size={72} />
       </View>
     );
   }

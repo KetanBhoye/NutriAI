@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { entriesApi } from '@/api';
-import { Button, Sheet, TextField } from '@/components/ui';
+import { Button, NutriLoader, Sheet, TextField } from '@/components/ui';
 import { colors, radius } from '@/theme';
 import { parseISODate } from '@/dates';
 import { capitalize } from '@/format';
@@ -189,7 +189,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
             onChangeText={setQuery}
           />
           {listLoading ? (
-            <ActivityIndicator color={colors.accent} style={{ marginVertical: 20 }} />
+            <NutriLoader size={40} />
           ) : searching2Plus && list.length === 0 ? (
             <View>
               <Text style={styles.hint}>"{query.trim()}" isn't in your library yet.</Text>

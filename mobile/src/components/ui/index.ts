@@ -10,3 +10,4 @@ export * from './EmptyState';
 export * from './Loading';
 export * from './Skeleton';
 export * from './StaleNotice';
+export * from './NutriLoader';

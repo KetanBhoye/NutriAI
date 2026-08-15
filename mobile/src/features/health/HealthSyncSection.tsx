@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { health, DailyHealth } from '@/health';
 import { syncToday } from '@/health/sync';
 import { clearHealthConnected, markHealthConnected, wasHealthConnected } from '@/health/permission';
 import { Button, Card, StatTile } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
+import { NutriLoader } from '@/components/ui/NutriLoader';
 
 type Status = 'checking' | 'unavailable' | 'needs-update' | 'needs-permission' | 'ready';
 
@@ -148,7 +149,7 @@ export function HealthSyncSection() {
         sync right now.
       </Text>
 
-      {status === 'checking' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />}
+      {status === 'checking' && <NutriLoader size={38} />}
 
       {status === 'needs-update' && (
         <Card>

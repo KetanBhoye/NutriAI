@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '@/auth';
 import { ApiError, onboardingApi } from '@/api';
 import { emitGoalsChanged } from '@/goalsBus';
@@ -19,6 +19,7 @@ import {
   dailyDelta,
   defaultRate,
 } from '@/nutrition';
+import { NutriLoader } from '@/components/ui/NutriLoader';
 
 const STEPS = ['About you', 'Maintenance', 'Your goal', 'Your plan'] as const;
 
@@ -312,7 +313,7 @@ export default function Onboarding() {
 
             {aiLoading ? (
               <View style={styles.aiLoading}>
-                <ActivityIndicator color={colors.accent} />
+                <NutriLoader size={44} />
                 <Text style={styles.aiLoadingText}>Your coach is building a personalised plan…</Text>
               </View>
             ) : (

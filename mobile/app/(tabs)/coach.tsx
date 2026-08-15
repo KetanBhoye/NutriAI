@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -20,6 +19,7 @@ import { addDays, parseISODate, todayISO } from '@/dates';
 import { colors, fonts, radius, type } from '@/theme';
 import { CoachHistoryTurn } from '@/types';
 import { THINKING_LABEL, describeStep } from '@/features/coach/progress';
+import { NutriLoader } from '@/components/ui/NutriLoader';
 
 const SUGGESTIONS = [
   '2 rotis, a bowl of dal and 3 boiled eggs for lunch',
@@ -219,7 +219,7 @@ export default function Coach() {
                       <Text style={styles.miniAvatarText}>🥗</Text>
                     </View>
                     <View style={[styles.bubble, styles.bubbleCoach, styles.bubbleWorking]}>
-                      <ActivityIndicator color={colors.textDim} size="small" />
+                      <NutriLoader size={20} bare />
                       {status ? <Text style={styles.working}>{status}…</Text> : null}
                     </View>
                   </View>
