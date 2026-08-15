@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { checkForUpdate, UPDATES_SUPPORTED } from '@/updates';
+import { UPDATE_CHANNEL_ID, channelFor, ensureChannels } from './channels';
 
 /**
  * Tells the user, once, when a newer build has been published.
@@ -42,6 +43,7 @@ export async function notifyIfUpdateAvailable(): Promise<boolean> {
   const perms = await Notifications.getPermissionsAsync();
   if (!perms.granted) return false;
 
+  await ensureChannels();
   await Notifications.scheduleNotificationAsync({
     identifier: IDENTIFIER,
     content: {
@@ -50,7 +52,11 @@ export async function notifyIfUpdateAvailable(): Promise<boolean> {
     },
     // A few seconds out rather than immediately: firing during launch competes
     // with the splash screen and is easy to miss.
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 6 },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 6,
+      ...channelFor(UPDATE_CHANNEL_ID),
+    },
   });
 
   await AsyncStorage.setItem(NOTIFIED_KEY, latest);

@@ -8,6 +8,7 @@ import {
   type ParseContext,
   type ParseResult,
 } from './types.js';
+import { reconcileMacros } from '../coach/macro-sanity.js';
 
 export type { LlmProvider, ParseContext, ParseResult } from './types.js';
 
@@ -82,5 +83,17 @@ export async function parseFoodLog(
     };
   }
 
-  return { provider: provider.name, ...result.data };
+  // Every provider's numbers pass through here, so this is the one place that
+  // can guarantee an item's macros never claim more energy than its calories.
+  const items = result.data.items.map((item) => ({
+    ...item,
+    ...reconcileMacros({
+      calories: item.calories,
+      protein_g: item.protein_g ?? 0,
+      carbs_g: item.carbs_g ?? 0,
+      fat_g: item.fat_g ?? 0,
+    }),
+  }));
+
+  return { provider: provider.name, ...result.data, items };
 }

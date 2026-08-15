@@ -17,6 +17,7 @@ import {
 } from '../../tools/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { lookupMacrosGrounded } from './grounded-macros.js';
+import { CONSERVATIVE_ESTIMATION_RULES } from './macro-sanity.js';
 
 const DATE = { type: 'STRING', description: 'YYYY-MM-DD; omit for today' } as const;
 
@@ -302,6 +303,8 @@ When the user describes food they ate:
 2. THEN call add_entry for each item, using the calories and macros returned by lookup_nutrition (matched by name). Give add_entry a food_name that includes the quantity (e.g. "Chapati (2)").
 Two exceptions where you may skip lookup_nutrition and use your own values: (a) the item clearly matches one of the user's known foods below, or (b) lookup_nutrition already failed this turn. This user eats mostly Indian home-cooked food. Known foods and values:
 ${opts.knownFoods}
+
+${CONSERVATIVE_ESTIMATION_RULES}
 
 For questions about their data ("how much protein left?", "what did I weigh last week?", "am I on track?"), call the relevant read tools (list_entries, get_profile_history, list_body_measurements, compare_progress) and answer from the results — never guess numbers you haven't read.
 

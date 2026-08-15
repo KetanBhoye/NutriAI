@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CONSERVATIVE_ESTIMATION_RULES } from '../coach/macro-sanity.js';
 
 /**
  * Structured result the LLM must return when parsing a natural-language food
@@ -122,6 +123,8 @@ MACROS:
 - Prefer the user's own known foods and their values when the message matches one:
 ${known}
 - When you genuinely don't know a packaged product's macros, estimate conservatively and still return numbers — do not leave them at zero unless the food truly has none (black coffee, diet soda).
+
+${CONSERVATIVE_ESTIMATION_RULES}
 
 MEAL TYPE:
 - Use the meal the user names. If they don't, infer from the food and, failing that, from a sensible default (cereal/eggs → breakfast, a protein shake → snack).

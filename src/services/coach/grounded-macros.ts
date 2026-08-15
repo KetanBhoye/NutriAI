@@ -1,5 +1,6 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { CONSERVATIVE_ESTIMATION_RULES, reconcileMacros } from './macro-sanity.js';
 
 /**
  * Looks up accurate, web-sourced macros for foods using Gemini with Google
@@ -30,6 +31,8 @@ export async function lookupMacrosGrounded(
   const prompt =
     `Search the web for accurate nutrition facts for exactly these foods and portions: ${query}. ` +
     `The user eats mostly Indian home-cooked food, so use realistic values for Indian preparations. ` +
+    `Give values for the portion stated, not per 100 g — converting when the source is per 100 g. ` +
+    `\n\n${CONSERVATIVE_ESTIMATION_RULES}\n\n` +
     `Return ONLY a JSON object (no prose, no markdown fences): ` +
     `{"items":[{"name":"food with portion","calories":0,"protein_g":0,"carbs_g":0,"fat_g":0}]} ` +
     `with realistic INTEGER per-portion values for each item mentioned.`;
@@ -64,13 +67,23 @@ export async function lookupMacrosGrounded(
     .slice(0, 4);
 
   return {
-    items: (parsed.items ?? []).slice(0, 12).map((i) => ({
-      name: String(i.name ?? 'Food').slice(0, 120),
-      calories: num(i.calories),
-      protein_g: num(i.protein_g),
-      carbs_g: num(i.carbs_g),
-      fat_g: num(i.fat_g),
-    })),
+    items: (parsed.items ?? []).slice(0, 12).map((i) => {
+      // Web sources mix per-100 g and per-serving figures freely, which is the
+      // usual way an item comes back carrying more macro energy than calories.
+      const macros = reconcileMacros({
+        calories: num(i.calories),
+        protein_g: num(i.protein_g),
+        carbs_g: num(i.carbs_g),
+        fat_g: num(i.fat_g),
+      });
+      return {
+        name: String(i.name ?? 'Food').slice(0, 120),
+        calories: Math.round(macros.calories),
+        protein_g: Math.round(macros.protein_g),
+        carbs_g: Math.round(macros.carbs_g),
+        fat_g: Math.round(macros.fat_g),
+      };
+    }),
     sources,
   };
 }

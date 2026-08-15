@@ -1,5 +1,6 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { CONSERVATIVE_ESTIMATION_RULES, reconcileMacros } from './macro-sanity.js';
 
 /**
  * Identifies the foods in a meal photo and estimates their portions and macros
@@ -72,6 +73,8 @@ export async function parseMealPhoto(opts: {
 - Give realistic calories and macros for that portion. This user eats mostly Indian home-cooked food; use that context for dishes like dal, sabzi, roti, rice, paneer, curd.
 - Prefer the user's known foods and their values when a dish clearly matches one:
 ${opts.knownFoods || '(none yet)'}
+
+${CONSERVATIVE_ESTIMATION_RULES}
 - Write "note" as a short one-line description of the plate (e.g. "Veg thali: 2 roti, dal, aloo sabzi, rice, curd").
 - If the image is NOT food, set understood=false and items=[].
 - Be decisive; give your best estimate rather than refusing. Portions are approximate and the user will confirm them.`;
@@ -114,14 +117,24 @@ ${opts.knownFoods || '(none yet)'}
   return {
     understood: Boolean(parsed.understood),
     note: String(parsed.note ?? '').slice(0, 200),
-    items: (parsed.items ?? []).slice(0, 12).map((it) => ({
-      food_name: String(it.food_name ?? 'Food').slice(0, 120),
-      quantity: clampNum(it.quantity, 0.1, 100),
-      unit: String(it.unit ?? 'serving').slice(0, 20),
-      calories: Math.round(clampNum(it.calories, 0, 5000)),
-      protein_g: Math.round(clampNum(it.protein_g, 0, 400)),
-      carbs_g: Math.round(clampNum(it.carbs_g, 0, 800)),
-      fat_g: Math.round(clampNum(it.fat_g, 0, 400)),
-    })),
+    items: (parsed.items ?? []).slice(0, 12).map((it) => {
+      // The prompt asks for consistent numbers; this makes sure of it, since a
+      // photo estimate is the easiest place to inflate protein unnoticed.
+      const macros = reconcileMacros({
+        calories: clampNum(it.calories, 0, 5000),
+        protein_g: clampNum(it.protein_g, 0, 400),
+        carbs_g: clampNum(it.carbs_g, 0, 800),
+        fat_g: clampNum(it.fat_g, 0, 400),
+      });
+      return {
+        food_name: String(it.food_name ?? 'Food').slice(0, 120),
+        quantity: clampNum(it.quantity, 0.1, 100),
+        unit: String(it.unit ?? 'serving').slice(0, 20),
+        calories: Math.round(macros.calories),
+        protein_g: Math.round(macros.protein_g),
+        carbs_g: Math.round(macros.carbs_g),
+        fat_g: Math.round(macros.fat_g),
+      };
+    }),
   };
 }

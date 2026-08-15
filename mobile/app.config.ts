@@ -76,6 +76,22 @@ const config: ExpoConfig = {
        * even offered and the install intent fails with no explanation.
        */
       'android.permission.REQUEST_INSTALL_PACKAGES',
+      /**
+       * Meal reminders that arrive at the meal (see src/notifications/).
+       *
+       * Without these, expo-notifications falls back to
+       * `setAndAllowWhileIdle`, which Android is free to defer to the next
+       * Doze maintenance window — minutes on a stock phone, hours on the
+       * aggressive vendor skins. A "lunch" nudge at 4pm is worse than none.
+       *
+       * `USE_EXACT_ALARM` is granted on install (Android 13+);
+       * `SCHEDULE_EXACT_ALARM` covers Android 12, where it is also granted on
+       * install. **Both are Play-restricted** to apps whose core function is
+       * alarms, timers or calendar events — see PLAY_STORE.md before shipping
+       * this manifest to the Play track.
+       */
+      'android.permission.SCHEDULE_EXACT_ALARM',
+      'android.permission.USE_EXACT_ALARM',
     ],
     // Foreground art sits inside the ~66% safe zone; Android masks the rest.
     adaptiveIcon: {

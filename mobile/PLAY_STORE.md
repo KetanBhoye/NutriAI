@@ -97,9 +97,37 @@ than from us:
 | `CAMERA` | meal photos | keep, justify |
 | `POST_NOTIFICATIONS` | reminders | keep, justify |
 | `RECEIVE_BOOT_COMPLETED` | reminder rescheduling | keep |
+| `USE_EXACT_ALARM` / `SCHEDULE_EXACT_ALARM` | meal reminders firing at the meal | **decide before submitting** — see below |
 
 Strip with `android.permissions` removal in `app.config.ts` or a
 `tools:node="remove"` plugin.
+
+### The exact-alarm decision
+
+Both exact-alarm permissions were added so reminders arrive at 11:00, not at
+whenever Doze next lets the phone wake up — without them expo-notifications
+falls back to `setAndAllowWhileIdle`, which vendor skins defer by hours. That
+is the right trade for the sideloaded APK, where a late reminder is the whole
+complaint.
+
+Play restricts both to apps whose *core* function is an alarm clock, timer or
+calendar. A meal-reminder app is arguable, not obvious, and the reviewer's
+opinion is the one that counts. Three options, in the order I'd try them:
+
+1. **Drop both from the Play build.** Reminders become inexact — typically a
+   few minutes late, occasionally an hour on an aggressive OEM. Zero review
+   risk, and it rides on the same build split that removes
+   `REQUEST_INSTALL_PACKAGES`, so it costs nothing extra.
+2. **Keep `SCHEDULE_EXACT_ALARM` only** and fill in the declaration. Users on
+   Android 14+ then have to grant it themselves in Settings → Alarms &
+   reminders; the app already links straight there from You → Meal reminders →
+   "Reminders not arriving?".
+3. **Keep both** and argue the case in the declaration form. Highest risk; a
+   rejection here costs a review cycle, which at 3–7 days each is the
+   expensive currency.
+
+My recommendation is (1) for the first submission: ship, get reviewed, and
+revisit if users complain about timing on the Play build specifically.
 
 ---
 

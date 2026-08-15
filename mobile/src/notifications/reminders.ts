@@ -5,6 +5,7 @@ import { cached } from '@/cache';
 import { todayISO } from '@/dates';
 import { MealType } from '@/types';
 import { MEAL_SLOTS, reminderCopy } from './copy';
+import { MEAL_CHANNEL_ID, channelFor, ensureChannels } from './channels';
 
 /**
  * Meal reminders, delivered as **local** notifications.
@@ -119,6 +120,10 @@ export async function scheduleMealReminders(): Promise<void> {
     return;
   }
 
+  // Before anything is scheduled — a notification posted to a channel that
+  // doesn't exist yet inherits the default one's importance for good.
+  await ensureChannels();
+
   // Read BEFORE touching anything scheduled: if this fails or the process is
   // suspended here, the existing reminders are still armed.
   const today = await readToday();
@@ -150,7 +155,11 @@ export async function scheduleMealReminders(): Promise<void> {
       await Notifications.scheduleNotificationAsync({
         identifier,
         content: { title: copy.title, body: copy.body },
-        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date,
+          ...channelFor(MEAL_CHANNEL_ID),
+        },
       });
     }
   }
@@ -221,6 +230,7 @@ export async function setRemindersEnabled(enabled: boolean): Promise<boolean> {
 
 /** Fires a notification a few seconds out, so the user can see what they get. */
 export async function sendPreviewReminder(): Promise<void> {
+  await ensureChannels();
   const today = await readToday();
   const copy =
     reminderCopy({
@@ -234,6 +244,10 @@ export async function sendPreviewReminder(): Promise<void> {
 
   await Notifications.scheduleNotificationAsync({
     content: { title: copy.title, body: copy.body },
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 3 },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 3,
+      ...channelFor(MEAL_CHANNEL_ID),
+    },
   });
 }

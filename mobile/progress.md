@@ -500,6 +500,75 @@ keeping:
   Today alerts and re-reads, so a refused write is visible rather than a silent
   revert. **Any new queue consumer should subscribe.**
 
+## A reminder that arrives silently, an hour late, counts as missing
+
+"The reminders don't come" turned out to be two separate Android behaviours,
+neither of them the scheduling logic (which does not need the app running —
+the alarms live in the OS, and `RECEIVE_BOOT_COMPLETED` from
+expo-notifications' manifest re-arms them after a restart).
+
+**No notification channel.** Nothing ever called
+`setNotificationChannelAsync`, so every reminder landed in the app's default
+channel at `IMPORTANCE_DEFAULT`: no heads-up banner, and on several vendor
+skins no sound. `src/notifications/channels.ts` now creates a MAX-importance
+"Meal reminders" channel and a quieter "App updates" one, and every scheduled
+notification names its channel. Two things about channels that bite:
+
+- Android **ignores** later changes to a channel that already exists — the
+  user owns it from creation. Deleting and recreating the same id doesn't
+  help either; the OS restores the user's settings for a resurrected id. So
+  the ids carry a version (`meal-reminders-v2`) and the version moves when
+  the settings must.
+- `ensureChannels()` runs before the first `scheduleNotificationAsync`, not
+  after. A notification posted to a channel that doesn't exist yet is filed
+  under the default one permanently.
+
+**Inexact alarms.** expo-notifications uses `setExactAndAllowWhileIdle` only
+when `canScheduleExactAlarms()` is true, and falls back to
+`setAndAllowWhileIdle` otherwise — which Android may defer to the next Doze
+maintenance window. Minutes on a Pixel, hours on OriginOS/MIUI/ColorOS. So
+`SCHEDULE_EXACT_ALARM` and `USE_EXACT_ALARM` are now declared. **Both are
+Play-restricted** — read the exact-alarm section of PLAY_STORE.md before
+shipping this manifest to Play.
+
+What's left is genuinely outside the app: OEM battery managers that hibernate
+the process and drop its alarms, and the per-app exact-alarm toggle on
+Android 14+. `src/notifications/delivery.ts` opens each of those settings
+screens, surfaced under You → Meal reminders → "Reminders not arriving?".
+They can't be detected from JS, so the card offers them rather than
+diagnosing.
+
+## AI macro estimates are allowed to be low, never high
+
+Every estimator was overstating meals, protein worst of all — a veg thali
+coming back at 30 g. The asymmetry matters: an under-estimate means the user
+eats a little more than the plan and progresses slightly slower; an
+over-estimate means the app tells them they've spent a budget they haven't,
+they eat less than planned, and they stop believing the numbers.
+
+`src/services/coach/macro-sanity.ts` holds both halves of the fix:
+
+- `reconcileMacros()` — deterministic. If protein×4 + carbs×4 + fat×9 exceeds
+  the item's own calorie figure by more than 10%, the macros are scaled to fit
+  it. **One direction only.** Macros carrying *less* energy than the calories
+  are left alone, because closing that gap would mean inventing protein — the
+  exact failure being fixed. Items arriving with no calories get them derived
+  from the macros, since a 0 kcal / 30 g protein entry corrupts a day's totals
+  invisibly.
+- `CONSERVATIVE_ESTIMATION_RULES` — the prompt half: take the lower end of any
+  plausible range, judge portions as home servings rather than restaurant
+  ones, and anchors for ordinary Indian portions (roti, katori of dal, rice,
+  curd, paneer). A test parses those anchor lines back out and checks each one
+  is internally consistent, so the reference table can't quietly teach the
+  thing the rules forbid.
+
+Applied at all four estimating call sites: `photo-parse.ts`,
+`grounded-macros.ts` (where per-100g and per-serving figures get mixed most
+often), the coach's system prompt, and `parseFoodLog()` in
+`src/services/llm/index.ts` — which is the single point every provider's
+output passes through. Deliberately **not** applied to entries the user typed
+themselves; their numbers are theirs.
+
 ## Only the server can end a session (`src/session.ts`)
 
 Opening the app without a connection signed people out. The launch check in
