@@ -1,0 +1,46 @@
+# Regression: the app offered the same update forever.
+#
+# v1.0.1 shipped with versionName 1.0.0 baked into the APK, because the release
+# script only ran `expo prebuild` when android/ was missing — so the version
+# bump never reached build.gradle. The app compared its own 1.0.0 against the
+# published 1.0.1, offered the update, installed it, and found itself on 1.0.0
+# again. "Update available" that survives updating is the single most
+# trust-destroying state this screen has.
+#
+# So the assertion is not "the card renders" but "the card agrees with the
+# server". A build installed from the current release must report itself as
+# up to date; if the version inside the APK ever drifts from the tag again,
+# this fails.
+#
+# Android-only by nature — iOS has no in-app updater (see src/updates/).
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+- tapOn: 'You'
+- assertVisible: 'YOU'
+
+- scrollUntilVisible:
+    element:
+      text: 'App version'
+    direction: DOWN
+    timeout: 45000
+
+# The version the *binary* reports, which is the number that was wrong.
+- assertVisible: 'Version \d+\.\d+\.\d+'
+
+# The check on mount is silent by design — it says nothing when you're current
+# (UpdateSection.tsx). So the state to assert here is the absence of the offer:
+# if the version inside the APK ever drifts below the published tag again, this
+# badge appears and the flow fails.
+- assertNotVisible: 'UPDATE AVAILABLE'
+- assertNotVisible: 'Update to .*'
+
+# Asking explicitly is what produces a verdict in words. The button only reads
+# "Check for updates" when no update is on offer, so finding it is itself part
+# of the assertion.
+- tapOn: 'Check for updates'
+- extendedWaitUntil:
+    visible: "You're on the latest version.*"
+    timeout: 30000
+- assertNotVisible: 'UPDATE AVAILABLE'

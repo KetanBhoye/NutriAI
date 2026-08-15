@@ -183,9 +183,10 @@ npm run e2e        # end-to-end — Maestro, needs an emulator/device + credenti
 npm run e2e:smoke  # end-to-end, no account required
 ```
 
-**211 unit tests** cover the logic: portion maths, nutrition formulas, local dates, the day's
+**278 unit tests** cover the logic: portion maths, nutrition formulas, local dates, the day's
 totals, the cache, the write queue, the entry-edit payload rules, the plan editor's gating, the
-weight-trend smoothing, exercise energy, health sync and the reminder scheduler. Native modules are stubbed
+weight-trend smoothing, exercise energy, health sync, the reminder scheduler and copy, the
+notification channels, and which failures are allowed to end a session (`src/session.ts`). Native modules are stubbed
 once in `src/test/setup.ts`, and AsyncStorage is swapped for an in-memory map so the cache and
 queue are tested against something that really stores.
 

@@ -1,0 +1,54 @@
+# Signing out, and signing back in.
+#
+# Two things this protects, both of which have a way of breaking quietly:
+#
+#   1. Sign-out really ends the session. The stored cookie, the cached
+#      responses and the remembered profile are all cleared — so a relaunch
+#      lands on the login screen rather than briefly painting the previous
+#      account's day from cache. This is the half that would go wrong if the
+#      offline handling (src/session.ts) ever started keeping too much.
+#   2. Signing back in still works afterwards. The cookie jar can end up with
+#      the empty `ct_sid=` the server sets when rejecting a session; replaying
+#      that onto the next sign-in used to make the account permanently
+#      unloggable-into on that device (see api/client.ts).
+#
+# Runs last-ish by name, because it deliberately leaves the app signed out
+# mid-flow — every other flow starts with ensure-signed-in, so that is safe.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+- tapOn: 'You'
+- assertVisible: 'YOU'
+- scrollUntilVisible:
+    element:
+      text: 'Sign out'
+    direction: DOWN
+    timeout: 45000
+- tapOn: 'Sign out'
+- extendedWaitUntil:
+    visible: 'Sign in to keep tracking'
+    timeout: 20000
+
+# A relaunch must still be signed out — if the session survived a sign-out,
+# only a relaunch would reveal it.
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: 'Sign in to keep tracking'
+    timeout: 30000
+- assertNotVisible: 'Quick log .*'
+
+# And back in, on a device that has just been through a sign-out.
+- tapOn: 'Email'
+- inputText: ${EMAIL}
+- hideKeyboard
+- tapOn: 'Password'
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: 'Sign in'
+- extendedWaitUntil:
+    visible: 'Quick log .*'
+    timeout: 30000

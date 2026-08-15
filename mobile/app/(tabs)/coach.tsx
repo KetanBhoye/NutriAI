@@ -226,6 +226,10 @@ export default function Coach() {
             ) : null}
             <View style={styles.composerPill}>
               <TextInput
+                // Named for the E2E flow: the send control is an arrow glyph
+                // and the input has only a placeholder, neither of which is a
+                // selector worth depending on.
+                testID="coach-input"
                 style={styles.composerInput}
                 placeholder="Message your coach…"
                 placeholderTextColor={colors.textDim}
@@ -236,6 +240,7 @@ export default function Coach() {
                 onSubmitEditing={() => send()}
               />
               <Pressable
+                testID="coach-send"
                 onPress={() => send()}
                 disabled={sending || !input.trim()}
                 style={[styles.sendBtn, (sending || !input.trim()) && styles.sendBtnDisabled]}

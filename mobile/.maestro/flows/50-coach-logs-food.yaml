@@ -1,0 +1,72 @@
+# The Coach logging a meal from plain language — the app's headline feature,
+# and the only path where a model's numbers land in the diary without anyone
+# typing them.
+#
+# It is worth an end-to-end flow rather than more unit tests because the chain
+# is long and every link is somewhere else: the app posts a message, the server
+# runs an agent loop, the agent calls lookup_nutrition and then add_entry, the
+# entry is written, and the Today screen has to show it. A unit test can prove
+# any one link; only this proves they are still joined together.
+#
+# Deliberately a food with an unmistakable name and a well-known value, so the
+# assertion is about the pipeline rather than about the model's opinion.
+#
+# Slow by nature — the agent makes a web-grounded lookup before it writes —
+# hence the long waits. A timeout here is a real signal, not flake: the user
+# would be staring at the same spinner.
+appId: app.nutriai.mobile
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+- tapOn: 'Coach'
+- assertVisible: 'Coach'
+
+- tapOn:
+    id: 'coach-input'
+- inputText: 'log 3 boiled eggs for breakfast'
+- tapOn:
+    id: 'coach-send'
+
+# Wait for the badge the app only renders once entries were actually written,
+# not for the word "egg" — that matches the user's *own* message bubble the
+# instant it is sent, so the flow would race ahead of the agent's tool calls
+# and find an empty diary. (It did, in the suite, while passing when run alone:
+# the classic shape of a test that measures its own timing.)
+- extendedWaitUntil:
+    visible: '.*updated your log.*'
+    timeout: 120000
+
+# The claim is only worth anything if the diary agrees.
+#
+# Relaunched rather than `tapOn: 'Today'`: "Today" is also the date label in
+# the Coach header, and the first match wins — tapping it stays on Coach, where
+# the coach's own message still matches "egg" and the assertion passes for the
+# wrong reason. A cold start opens on the Today tab, and has the side benefit
+# of proving the entry survived a restart, i.e. that it is really on the
+# server and not just in the chat transcript.
+- stopApp
+- launchApp:
+    clearState: false
+- runFlow:
+    when:
+      visible: 'Jump to today'
+    commands:
+      - tapOn: 'Jump to today'
+- extendedWaitUntil:
+    visible: '.*[Ee]gg.*'
+    timeout: 30000
+# Not the Coach screen, which would match "egg" from the conversation.
+- assertVisible: 'Quick log .*'
+
+# Clean up: this runs against a real account. `repeat` rather than one delete,
+# so a half-finished previous run doesn't leave rows for the next one.
+- repeat:
+    while:
+      visible: '.*[Bb]oiled [Ee]gg.*'
+    commands:
+      - tapOn: '.*[Bb]oiled [Ee]gg.*'
+      - assertVisible: 'Entry'
+      - tapOn: 'Delete'
+      - assertVisible: "Delete this entry\\? This can't be undone."
+      - tapOn: 'Delete'

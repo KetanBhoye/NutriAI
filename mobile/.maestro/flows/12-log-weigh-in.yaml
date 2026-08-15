@@ -27,14 +27,47 @@ appId: app.nutriai.mobile
 
 # "Saved for today." means it synced; "Saved on this device" means it's still
 # queued. Only the first is acceptable with a working connection.
-- extendedWaitUntil:
-    visible: 'Saved for today.'
-    timeout: 20000
+#
+# Scrolled to, not merely asserted: the message renders *below* the button that
+# was just tapped (goals.tsx), so at the moment it appears it is one line under
+# the fold. Asserting directly fails on a screen where the save worked.
+- scrollUntilVisible:
+    element:
+      text: 'Saved for today.'
+    direction: DOWN
+    timeout: 30000
 - assertNotVisible: "The server wouldn't accept that weigh-in.*"
 
 # And the readout picked it up, which only happens after a reload from the API.
+#
+# Reached by relaunching rather than scrolling back up: the Plan tab is about
+# five screens tall and grows with what earlier flows logged, so "scroll up far
+# enough" is a race against page length that this flow kept losing. A cold
+# start puts the page at the top deterministically — and asserts something
+# stronger while it's there, since the number now has to survive a restart,
+# which only happens if the server really has it.
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn: 'Plan'
+
+# The weight, from the CURRENT tile — server-derived, so seeing it after a
+# restart is the proof that the weigh-in landed rather than sat in the queue.
+- extendedWaitUntil:
+    visible: 'CURRENT'
+    timeout: 30000
+# Wrapped in .* — Maestro text selectors match the whole string, and the tile
+# renders the number with its unit alongside.
+- assertVisible: '.*71\.2.*'
+
+# Steps are asserted from the chart, NOT from the top-right tile. That tile
+# shows "STEPS TODAY" only when no exercise session exists — log one and it
+# becomes "ACTIVITY TODAY · 45 min badminton" instead. Asserting it there made
+# this flow depend on whether 13-log-exercise-session had run first, which the
+# runner gives no guarantees about.
 - scrollUntilVisible:
     element:
-      text: 'STEPS TODAY'
-    direction: UP
-- assertVisible: '6,500'
+      text: 'Daily steps'
+    direction: DOWN
+    timeout: 45000
+- assertVisible: '.*6,500.*'

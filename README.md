@@ -349,7 +349,7 @@ Full Railway deployment guide: `deploy/railway/README.md`
 - `pnpm test` - run tests
 - `pnpm type-check` - TypeScript check
 - `pnpm web:dev` / `pnpm web:build` - PWA dev server / production build
-- `cd mobile && npm test` - unit tests for the native app (vitest, 265 tests)
+- `cd mobile && npm test` - unit tests for the native app (vitest, 278 tests)
 - `cd mobile && npm run e2e` - end-to-end flows on a device (Maestro, 10 flows)
 - `cd mobile && npm run typecheck` - type-check the native app
 - `node deploy/windows/acceptance-test.mjs ...` - deployment acceptance checks

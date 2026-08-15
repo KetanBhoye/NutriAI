@@ -25,15 +25,21 @@ appId: app.nutriai.mobile
 - tapOn: 'You'
 - assertVisible: 'YOU'
 - assertVisible: 'Plan & daily targets'
-- assertVisible: 'Daily log reminder'
+- assertVisible: 'Meal reminders'
 
-# The reminder toggle is device-local, so flipping it twice leaves no trace.
-- tapOn:
-    id: 'reminder-toggle'
+# Reminders are ON by default, so the sample button is already there — that
+# default is the feature, and this is the assertion that would catch it
+# silently reverting.
 - assertVisible: 'Send a sample'
+
+# The toggle is device-local, so flipping it twice leaves no trace. Off first,
+# then back on, so the flow can't be what leaves a user without reminders.
 - tapOn:
     id: 'reminder-toggle'
 - assertNotVisible: 'Send a sample'
+- tapOn:
+    id: 'reminder-toggle'
+- assertVisible: 'Send a sample'
 
 # The rest of the tab is below the fold — Maestro never scrolls on its own.
 - scrollUntilVisible:

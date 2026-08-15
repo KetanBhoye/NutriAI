@@ -15,9 +15,12 @@ appId: app.nutriai.mobile
 - tapOn: 'Plan'
 - assertVisible: 'PLAN'
 
+# Scroll to the chip itself, not to the "Anything else today?" heading above
+# it. Badminton is the seventh chip, so stopping at the heading leaves it below
+# the fold — and the flow then fails on a screen where nothing is wrong.
 - scrollUntilVisible:
     element:
-      text: 'Anything else today\?'
+      text: 'Badminton'
     direction: DOWN
 - tapOn: 'Badminton'
 - tapOn:

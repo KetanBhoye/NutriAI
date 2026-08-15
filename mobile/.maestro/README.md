@@ -41,6 +41,8 @@ simulator/device is booted) — nothing in them is Android-specific.
 |---|---|
 | **00-launch** | Boots to sign-in. No account needed, so it runs anywhere — and it catches the worst failures: a bundle that won't load, a native module that crashes on start. |
 | **01-sign-in** | Signs in and lands on the tab bar, which only renders behind a valid session. |
+| **02-offline-session-survives** | Launching with no connection stays signed in, and the session still works on reconnect. Verified against v1.0.4, where it fails at the offline launch — see below. |
+| **03-sign-out-and-back-in** | Sign-out really ends the session (a relaunch is still signed out), and signing back in works on a device that has just signed out. |
 | **10-plan-editor-opens-blank** | The editor opens with nothing selected and the saved targets untouched, recalculating only once activity, goal *and* pace are chosen. Has regressed twice. |
 | **12-log-weigh-in** | A weigh-in and step count reach the **server** — asserts "Saved for today." and the readout, not merely an encouraging message. |
 | **13-log-exercise-session** | A session is priced on the device, and afterwards it is either stored or the refusal is on screen. Never silence. |
@@ -48,7 +50,9 @@ simulator/device is booted) — nothing in them is Android-specific.
 | **21-log-food-and-portion** | Log at a weight, re-portion to half, and both the macros and the server follow. |
 | **22-day-navigation** | Yesterday, back again, forward, jump to today — and no navigating into the future. Guards the UTC date bug. |
 | **30-food-search-keyboard** | Typing in the food search keeps the sheet on screen and the field focused. |
-| **40-trends-and-profile** | The two read-mostly tabs render their charts, tiles and settings; the reminder toggle flips and flips back. |
+| **40-trends-and-profile** | The two read-mostly tabs render their charts, tiles and settings; reminders are on by default and the toggle flips and flips back. |
+| **41-update-card-knows-its-version** | The installed build agrees with the published release — the guard against "update available" surviving the update. |
+| **50-coach-logs-food** | Coach → agent → web lookup → entry → Today, and the entry survives a restart. The one path where a model's numbers reach the diary untyped. |
 
 ## Writing more
 
@@ -79,4 +83,41 @@ Four things bit us writing these, all worth knowing before adding a flow:
   typing into. Tap neutral text inside the sheet instead — it works because the
   sheet sets `keyboardShouldPersistTaps="handled"`.
 - **Maestro never scrolls on its own.** Anything below the fold needs
-  `scrollUntilVisible`.
+  `scrollUntilVisible` — and on the Plan tab, which is about five screens tall,
+  the default 20s scroll budget is not enough to cross it. Pass `timeout:
+  45000` there. Three flows failed at once when that page grew.
+- **"Today" is two different things.** It is the Today *tab* and the date label
+  in the Coach and Today headers, and the first match wins. `tapOn: 'Today'`
+  from the Coach screen stays on Coach — where the conversation still contains
+  whatever food you just logged, so the next assertion passes for the wrong
+  reason. Relaunch instead: a cold start opens on the Today tab.
+- **One tile, two meanings.** The Plan tab's top-right tile reads "STEPS
+  TODAY" *until* an exercise session exists, then becomes "ACTIVITY TODAY · 45
+  min badminton". Asserting steps there made `12-log-weigh-in` depend on
+  whether `13-log-exercise-session` had run first. Assert steps from the
+  "Daily steps" chart instead — the runner gives no ordering guarantees.
+- **Don't wait for a string the user's own input contains.** `50-coach-logs-food`
+  waited for `.*egg.*` after sending "log 3 boiled eggs" — which matches the
+  message bubble the instant it is sent, so the flow raced past the agent's
+  tool calls and read an empty diary. It passed alone and failed in the suite:
+  the signature of a test measuring its own timing. Wait for something only
+  the *response* can produce ("updated your log").
+- **A flow that changes device state must undo it in `onFlowComplete`**, which
+  runs even when the flow fails. `02-offline-session-survives` fails *while
+  offline*, and without the hook every flow after it fails too — one honest red
+  becomes a suite-wide mystery. Note the shape: a bare list, not a `commands:`
+  block.
+
+## Proving a regression test regresses
+
+A flow named after a bug should fail on a build that has the bug — otherwise it
+is a comment that happens to pass. Released APKs make this cheap:
+
+```bash
+curl -Ls -o /tmp/old.apk https://github.com/KetanBhoye/NutriAI/releases/download/v1.0.4/NutriAI.apk
+adb uninstall app.nutriai.mobile          # a downgrade needs a clean install
+adb install /tmp/old.apk
+maestro test .maestro/flows/02-offline-session-survives.yaml -e EMAIL=... -e PASSWORD=...
+# expect: FAILED at the offline launch
+adb uninstall app.nutriai.mobile && adb install <current>.apk
+```

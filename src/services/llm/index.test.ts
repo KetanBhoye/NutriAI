@@ -156,3 +156,62 @@ describe('createProviderFromEnv', () => {
     expect(createProviderFromEnv()).toBeNull();
   });
 });
+
+/**
+ * Every provider's output converges here, which makes it the one place a
+ * guarantee can be made about all of them at once. The guarantee: an item
+ * never reaches the food log claiming more macro energy than its own calorie
+ * figure. Provider prompts drift; this doesn't.
+ */
+describe('parseFoodLog reconciles macros against calories', () => {
+  const one = (macros: Record<string, number>) =>
+    parseFoodLog(
+      fakeProvider({
+        understood: true,
+        clarification: null,
+        entry_date: '2026-07-21',
+        items: [
+          {
+            food_name: 'Test food',
+            quantity: 1,
+            unit: 'serving',
+            meal_type: 'lunch',
+            ...macros,
+          },
+        ],
+      }),
+      'anything',
+      context
+    );
+
+  it('scales an over-stated item down to the calories it claims', async () => {
+    // 30×4 + 60×4 + 10×9 = 450 kcal of macros in a 350 kcal item.
+    const { items } = await one({ calories: 350, protein_g: 30, carbs_g: 60, fat_g: 10 });
+
+    expect(items[0].calories).toBe(350);
+    expect(items[0].protein_g!).toBeLessThan(30);
+    const energy = items[0].protein_g! * 4 + items[0].carbs_g! * 4 + items[0].fat_g! * 9;
+    expect(energy).toBeLessThanOrEqual(350 * 1.1);
+  });
+
+  it('leaves a consistent item untouched', async () => {
+    const { items } = await one({ calories: 200, protein_g: 6, carbs_g: 36, fat_g: 4 });
+
+    expect(items[0]).toMatchObject({ calories: 200, protein_g: 6, carbs_g: 36, fat_g: 4 });
+  });
+
+  it('never raises macros to meet the calories', async () => {
+    // The gap is usually fibre or an unlisted ingredient. Filling it would
+    // mean inventing protein, which is the failure this all exists to prevent.
+    const { items } = await one({ calories: 500, protein_g: 10, carbs_g: 20, fat_g: 5 });
+
+    expect(items[0]).toMatchObject({ calories: 500, protein_g: 10, carbs_g: 20, fat_g: 5 });
+  });
+
+  it('keeps the food name and meal type it was given', async () => {
+    const { items } = await one({ calories: 350, protein_g: 30, carbs_g: 60, fat_g: 10 });
+
+    expect(items[0].food_name).toBe('Test food');
+    expect(items[0].meal_type).toBe('lunch');
+  });
+});

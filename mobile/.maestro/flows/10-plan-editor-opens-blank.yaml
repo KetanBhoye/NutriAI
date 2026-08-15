@@ -16,10 +16,14 @@ appId: app.nutriai.mobile
 - tapOn: 'Plan'
 - assertVisible: 'PLAN'
 
+# "Edit plan" sits below the log card, the weight chart, the steps chart and
+# the daily targets — about five screens down. The default scroll budget runs
+# out before it gets there, so this one needs a longer leash.
 - scrollUntilVisible:
     element:
       text: 'Edit plan'
     direction: DOWN
+    timeout: 45000
 - tapOn: 'Edit plan'
 - assertVisible: 'Same questions as setup, starting from blank.*'
 
@@ -68,9 +72,12 @@ appId: app.nutriai.mobile
     direction: DOWN
 
 # Leaving via Cancel puts the saved plan back, untouched: we're in view mode
-# (the editor's own copy is gone) and the saved targets are on screen. Cancel
-# lands at the bottom of the page, so assert against what's actually there
-# rather than scrolling back to the top.
+# (the editor's own copy is gone) and the saved targets are on screen.
+#
+# Where Cancel *lands* is not deterministic — it varies run to run, and the
+# view-mode page is now about five screens tall, so nothing can be assumed to
+# be in view. The two absence checks hold at any scroll position; each presence
+# check scrolls to its own target, starting from a known place at the top.
 - scrollUntilVisible:
     element:
       text: 'Cancel'
@@ -78,5 +85,18 @@ appId: app.nutriai.mobile
 - tapOn: 'Cancel'
 - assertNotVisible: 'Same questions as setup, starting from blank.*'
 - assertNotVisible: 'Recalculated from your choices above.'
-- assertVisible: 'Daily targets'
-- assertVisible: 'Edit plan'
+- scrollUntilVisible:
+    element:
+      text: 'PLAN'
+    direction: UP
+    timeout: 45000
+- scrollUntilVisible:
+    element:
+      text: 'Daily targets'
+    direction: DOWN
+    timeout: 45000
+- scrollUntilVisible:
+    element:
+      text: 'Edit plan'
+    direction: DOWN
+    timeout: 45000

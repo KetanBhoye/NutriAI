@@ -1,0 +1,53 @@
+# Regression: opening the app without a connection used to sign the user out.
+#
+# The launch check called /api/me inside a try, and the catch — reached by any
+# failure, "no internet" included — deleted the session cookie. It was not a
+# temporary bounce to /login: the cookie was gone, so reconnecting did not
+# bring the session back and the password had to be typed again.
+#
+# This is the flow that would catch it coming back. It is deliberately the
+# whole round trip, because each half fails differently:
+#   - offline launch still signed in   → the cookie survived the failure
+#   - online launch still signed in    → and it is still a *valid* cookie,
+#                                        not just one we kept out of optimism
+#
+# Airplane mode is restored in `onFlowComplete`, which runs whether or not the
+# assertions passed. That is not tidiness: when this flow fails it fails
+# *while offline*, and without the hook every flow that ran after it would fail
+# too — turning one honest red into a suite-wide mystery. (Verified the hard
+# way: the first run of this against the pre-fix build left the emulator in
+# airplane mode.)
+appId: app.nutriai.mobile
+onFlowComplete:
+  - setAirplaneMode: disabled
+---
+- launchApp
+- runFlow: ../helpers/ensure-signed-in.yaml
+
+# Confirmed signed in *before* the connection is cut, so a failure below can
+# only mean the offline launch broke it.
+- assertVisible: 'Today'
+
+- setAirplaneMode: enabled
+- stopApp
+- launchApp:
+    clearState: false
+
+# The cached day paints from AsyncStorage; the tab bar proves we are in the app
+# and not on the login screen.
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 30000
+- assertVisible: 'Plan'
+- assertNotVisible: 'Sign in to keep tracking'
+
+# Back online, the same cookie must still be accepted — this is what separates
+# "we kept the session" from "we kept a dead session".
+- setAirplaneMode: disabled
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: 'Today'
+    timeout: 30000
+- assertNotVisible: 'Sign in to keep tracking'
