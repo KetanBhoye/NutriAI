@@ -23,6 +23,14 @@ appId: app.nutriai.mobile
       text: 'Badminton'
     direction: DOWN
 - tapOn: 'Badminton'
+# The minutes field only exists once a kind is chosen, and it appears below the
+# chip grid — further below since the readouts gained an "Activity today" tile.
+# Reach for it rather than assuming the tap brought it into view.
+- scrollUntilVisible:
+    element:
+      id: 'log-minutes'
+    direction: DOWN
+    timeout: 30000
 - tapOn:
     id: 'log-minutes'
 - inputText: '45'

@@ -638,7 +638,12 @@ export default function Plan() {
             ) : null}
           </View>
 
-          {data.progress ? (
+          {/* Not while the plan has no target. `progress` still computes a pace,
+              a projection and a calorie suggestion against a goal equal to the
+              start weight — "ON PLAN, 39 days early" for a plan that cannot be
+              early. Fixing the header alone just moved the claim one card
+              down. */}
+          {data.progress && !planGoesNowhere ? (
             <ProgressFlag
               progress={data.progress}
               calorieGoal={data.macros.calories}
