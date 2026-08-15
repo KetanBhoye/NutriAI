@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { api, clearSession, loadStoredCookie, setUnauthorizedHandler } from './api';
 import { clearCache } from './cache';
+import { clearStoredUser, isSessionRejected, readStoredUser, writeStoredUser } from './session';
 
 export interface User {
   id: string;
@@ -27,15 +29,25 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+/** How often to re-check a session we couldn't verify because we were offline. */
+const RETRY_MS = 15_000;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // The launch check couldn't reach the server. The cookie is still good — we
+  // just don't know who it belongs to yet.
+  const [unverified, setUnverified] = useState(false);
 
   // Stable identity: screens subscribe to goal changes with this as a
   // dependency, and a fresh function each render would re-subscribe forever.
   const refreshUser = useCallback(async () => {
     const me = await api<{ user: User } | User>('/api/me');
-    setUser((me as { user?: User }).user ?? (me as User));
+    const next = (me as { user?: User }).user ?? (me as User);
+    setUser(next);
+    setUnverified(false);
+    // Kept so the next launch can render signed-in before the network answers.
+    void writeStoredUser(next);
   }, []);
 
   // On launch: if we have a stored session cookie, confirm it's still valid.
@@ -45,14 +57,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const cookie = await loadStoredCookie();
-        if (cookie) {
-          await refreshUser();
+        if (!cookie) return;
+
+        // Show the last known profile first. Offline, this is the whole of what
+        // we'll get; online it's replaced a moment later by the real answer.
+        const remembered = await readStoredUser();
+        if (remembered && !cancelled) setUser(remembered);
+
+        await refreshUser();
+      } catch (e) {
+        // Only the server can end a session. A request that never arrived —
+        // no internet, DNS, a timeout — says nothing about whether the cookie
+        // is still good, and signing out on it would be unrecoverable: the
+        // cookie is gone even once the connection comes back.
+        if (!isSessionRejected(e)) {
+          if (!cancelled) setUnverified(true);
+          return;
         }
-      } catch {
         await clearSession();
-        if (!cancelled) {
-          setUser(null);
-        }
+        await clearStoredUser();
+        if (!cancelled) setUser(null);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -65,10 +89,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Someone who was offline at launch and had no remembered profile is sitting
+  // on the login screen with a perfectly valid cookie. Foregrounding the app is
+  // the cheapest signal that the connection may be back, so retry there and let
+  // AuthGate walk them in — rather than making them type a password they
+  // already gave us.
+  useEffect(() => {
+    if (!unverified) return;
+    const attempt = () => {
+      // A success clears `unverified` inside refreshUser itself, which tears
+      // this effect down.
+      void refreshUser().catch((e) => {
+        if (!isSessionRejected(e)) return;
+        setUnverified(false);
+        void clearSession();
+        void clearStoredUser();
+        setUser(null);
+      });
+    };
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') attempt();
+    });
+    // ...and while they sit there, in case the connection returns without the
+    // app ever leaving the foreground. Stops the moment the retry resolves
+    // either way, so it can't poll forever.
+    const timer = setInterval(attempt, RETRY_MS);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [unverified, refreshUser]);
+
   // A session that expires mid-use bounces to /login instead of dead-ending.
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void clearSession();
+      void clearStoredUser();
       setUser(null);
     });
     return () => setUnauthorizedHandler(null);
@@ -103,7 +159,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearSession();
     // Otherwise the next account to sign in would briefly see this one's data.
     await clearCache();
+    await clearStoredUser();
     setUser(null);
+    setUnverified(false);
   };
 
   return (

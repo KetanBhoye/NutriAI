@@ -95,6 +95,7 @@ either through `AuthProvider` or through the small event buses described below.
 | `api/queue.ts` | durable write queue — food entries, weigh-ins, plan saves |
 | `cache.ts` / `useCachedResource.ts` | read-through cache; screens paint last-known data, then refresh |
 | `auth.tsx` | `AuthProvider` / `useAuth`, session bootstrap |
+| `session.ts` | when a session is genuinely over (401/403 only) and the remembered profile that lets an offline launch stay signed in |
 | `goalsBus.ts` | broadcasts "the targets changed" to every mounted tab |
 | `nutrition.ts` | BMR/TDEE/macros — a port of the web app's copy, matching the backend's formulas |
 | `portion.ts` | everything is grams; unit conversion and weight estimation |

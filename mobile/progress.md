@@ -500,6 +500,41 @@ keeping:
   Today alerts and re-reads, so a refused write is visible rather than a silent
   revert. **Any new queue consumer should subscribe.**
 
+## Only the server can end a session (`src/session.ts`)
+
+Opening the app without a connection signed people out. The launch check in
+`AuthProvider` called `/api/me` inside a `try`, and the `catch` — reached by
+*any* failure, "no internet" included — ran `clearSession()`. That deletes the
+`ct_sid` cookie from SecureStore, so it isn't a temporary bounce to `/login`:
+the session is gone, and reconnecting doesn't bring it back. A lift, a tunnel,
+or a server hiccup cost you your login permanently.
+
+`isSessionRejected(e)` is now the only thing allowed to end a session, and it's
+true for exactly 401 and 403. Everything else keeps the cookie:
+
+- **status 0** — `client.ts` throws `ApiError(0, …)` for both a dead
+  connection and a 20s timeout. Neither says anything about the cookie,
+  because the request never reached the server that owns it.
+- **5xx** — the server is up but broken. Its opinion on our session is
+  unavailable, not negative.
+- **anything that isn't an `ApiError`** — a bug in our own code must not cost
+  the user their login.
+
+Two supporting pieces:
+
+- The confirmed profile is mirrored to AsyncStorage (`nutriai.auth.user`) on
+  every successful `/api/me`, and read *before* the network call at launch. The
+  cookie surviving isn't enough on its own — `AuthGate` redirects on `user`
+  being null, so without a remembered profile an offline start still lands on
+  the login screen. Cleared on sign-out and on a real 401, alongside the cache.
+- If we couldn't verify *and* have nothing remembered (a first launch after
+  update, offline), `unverified` stays set and retries on foreground and every
+  15s until the server answers either way. `AuthGate` then walks them in
+  without a password.
+
+The screens behind this were already offline-tolerant: `cached()` falls back to
+the last good payload, and writes go through the durable queue.
+
 ## The plan adapts to the trend, not to the last weigh-in
 
 `planProgress()` (backend `src/services/goal-progress.ts`, returned as
