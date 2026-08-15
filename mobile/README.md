@@ -7,7 +7,7 @@ web app.
 It talks to the same backend as the Vue PWA (`calorie-tracker-codex-refactored`, `src/http/api.ts`)
 and shares its session cookie, its nutrition maths and its domain language. Where the web app
 can't go, this app does: HealthKit and Health Connect, the camera for meal photos and barcodes,
-local reminders, and an offline write queue.
+meal reminders, shareable story cards, in-app updates, and an offline write queue.
 
 ---
 
@@ -103,7 +103,9 @@ either through `AuthProvider` or through the small event buses described below.
 | `theme.ts` | colours, spacing, and the `type` scale. Use it; don't set `fontFamily` by hand |
 | `health/` | HealthKit + Health Connect behind one interface, plus auto-sync |
 | `updates/` | in-app updates for the Android build — version compare, APK download, install intent |
-| `notifications/reminders.ts` | local daily reminders, scheduled as dated one-shots |
+| `notifications/reminders.ts` | four meal reminders a day, scheduled as dated one-shots |
+| `notifications/copy.ts` | what each reminder says — slot times, motivation, missed-meal nudges |
+| `notifications/updateNotice.ts` | announces a new build, once per version |
 | `components/ui/` | primitives: `Screen`, `Card`, `Button`, `TextField`, `Sheet`, `PillGroup`, `OptionRow`, `StatTile`, … |
 | `features/<screen>/` | components belonging to one screen, e.g. `features/goals/WeightTrendChart.tsx` |
 
@@ -134,6 +136,24 @@ calorie change that would close the gap.
 It is deliberately conservative: no rate from under a week of readings, no suggestion with under a
 week of plan left, clamped to ±400 kcal, and the suggestion is offered rather than applied. The app
 renders it as `ProgressFlag` plus `WeightTrendChart`.
+
+### Reminders (`src/notifications/`)
+
+Four a day — breakfast 11:00, lunch 14:00, snack 18:00, dinner 20:30 — **on by default**, scheduled
+seven days ahead as dated one-shots and re-armed whenever the app opens or backgrounds.
+
+- A meal that is already logged gets **no** reminder; when an earlier one was missed the nudge names
+  the first missed meal, not the most recent.
+- Only *today's* copy can quote live numbers, because a local notification's text is fixed when it
+  is scheduled. Future days get wording that will still be true on arrival.
+- 7 days × 4 meals = 28 pending. iOS silently drops anything past 64, so the horizon and the slot
+  count are linked.
+- **Nothing is cancelled before its replacement is scheduled.** The previous version cancelled first
+  and then made network calls, which is why reminders sometimes vanished — see `progress.md`.
+
+`updateNotice.ts` separately announces a newly published build, once per version, from the app's own
+update check. Local like everything else here, so it fires on launch rather than the moment a
+release goes out.
 
 ---
 

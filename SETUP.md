@@ -230,8 +230,10 @@ want sign-in to work in debug builds too.
   `aps-environment` entitlement needs a provisioning profile with the Push
   capability; a free/personal team can create neither. The server's push is Web
   Push (VAPID), which native iOS ignores. `mobile/plugins/withoutPushEntitlement.js`
-  strips the entitlement so device builds sign at all. Daily reminders ship as
-  **local** notifications instead, which need no account and work offline.
+  strips the entitlement so device builds sign at all. Meal reminders ship as
+  **local** notifications instead — four a day, on by default, needing no
+  account and working offline. The "new version available" notice is local for
+  the same reason, so it fires on launch rather than when a release goes out.
 - **A free Apple provisioning profile expires after 7 days.** Rebuild and
   reinstall to keep a sideloaded iPhone build running.
 - **Health data is read-only** on both platforms. The app never writes to Apple

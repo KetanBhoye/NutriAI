@@ -36,7 +36,8 @@ second repo and no submodule.
 - Web signup/login/session auth
 - Dashboard for profile, weight/body-fat tracking, and daily entries
 - Native app: food logging, photo/barcode logging, AI coach, trends, plan
-  tracking, and Apple Health / Health Connect sync
+  tracking, Apple Health / Health Connect sync, meal reminders, shareable story
+  cards, and self-updating Android builds
 - SQLite persistence with automatic migrations
 
 ## Tech Stack
@@ -148,7 +149,12 @@ A few things that bite people, all expanded in the app's own README:
   signing certificate's SHA-1, so a release build needs its own OAuth client;
   see [SETUP.md §6](SETUP.md#6-google-sign-in).
 - iOS push is impossible on a personal Apple team, so reminders are local
-  notifications. SETUP.md §7 explains why.
+  notifications — four meal nudges a day, on by default. SETUP.md §7 explains
+  why, and `mobile/progress.md` explains why they must never be cancelled
+  before their replacements are scheduled.
+- Android builds update themselves from `/download`; see
+  [mobile/README.md](mobile/README.md#how-installed-apps-find-out-srcupdates).
+  Play Store readiness is audited in [mobile/PLAY_STORE.md](mobile/PLAY_STORE.md).
 - Health data is read-only on both platforms. Apple Health needs a real device;
   Health Connect needs Android 8.0+ and the Health Connect app.
 - `mobile/` never affects the server build: `tsconfig.json` and
@@ -343,7 +349,7 @@ Full Railway deployment guide: `deploy/railway/README.md`
 - `pnpm test` - run tests
 - `pnpm type-check` - TypeScript check
 - `pnpm web:dev` / `pnpm web:build` - PWA dev server / production build
-- `cd mobile && npm test` - unit tests for the native app (vitest, 211 tests)
+- `cd mobile && npm test` - unit tests for the native app (vitest, 265 tests)
 - `cd mobile && npm run e2e` - end-to-end flows on a device (Maestro, 10 flows)
 - `cd mobile && npm run typecheck` - type-check the native app
 - `node deploy/windows/acceptance-test.mjs ...` - deployment acceptance checks
