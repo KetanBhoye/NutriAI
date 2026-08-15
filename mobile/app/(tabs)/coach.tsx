@@ -19,6 +19,7 @@ import { aiApi } from '@/api';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { colors, fonts, radius, type } from '@/theme';
 import { CoachHistoryTurn } from '@/types';
+import { THINKING_LABEL, describeStep } from '@/features/coach/progress';
 
 const SUGGESTIONS = [
   '2 rotis, a bowl of dal and 3 boiled eggs for lunch',
@@ -51,6 +52,12 @@ export default function Coach() {
   const [history, setHistory] = useState<CoachHistoryTurn[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  /**
+   * What the agent is doing right now, from the tool calls it streams back.
+   * Null when idle. A coach turn that logs food takes 30-60s, and a spinner
+   * that long is indistinguishable from a hang.
+   */
+  const [status, setStatus] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
   const [keyboardUp, setKeyboardUp] = useState(false);
 
@@ -87,10 +94,14 @@ export default function Coach() {
     setBubbles((prev) => [...prev, { id: nextId(), from: 'user', text: message }]);
     setInput('');
     setSending(true);
+    setStatus(THINKING_LABEL);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
 
     try {
-      const result = await aiApi.coachChat({ message, history, active_date: sentDate });
+      const result = await aiApi.coachChatStreaming(
+        { message, history, active_date: sentDate },
+        (tools) => setStatus(describeStep(tools))
+      );
       setHistory(result.history);
       const changed = result.actions.some((a) => ACTIONS_THAT_CHANGE_LOG.has(a));
       setBubbles((prev) => [
@@ -101,6 +112,7 @@ export default function Coach() {
       setBubbles((prev) => [...prev, { id: nextId(), from: 'coach', text: 'Network error. Try again in a moment.' }]);
     } finally {
       setSending(false);
+      setStatus(null);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
   };
@@ -206,8 +218,9 @@ export default function Coach() {
                     <View style={styles.miniAvatar}>
                       <Text style={styles.miniAvatarText}>🥗</Text>
                     </View>
-                    <View style={[styles.bubble, styles.bubbleCoach]}>
+                    <View style={[styles.bubble, styles.bubbleCoach, styles.bubbleWorking]}>
                       <ActivityIndicator color={colors.textDim} size="small" />
+                      {status ? <Text style={styles.working}>{status}…</Text> : null}
                     </View>
                   </View>
                 ) : null
@@ -323,6 +336,8 @@ const styles = StyleSheet.create({
   miniAvatarText: { fontSize: 13 },
   bubble: { maxWidth: '82%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },
   bubbleUser: { backgroundColor: colors.accent, borderBottomRightRadius: 5 },
+  bubbleWorking: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  working: { ...type.caption, color: colors.textDim, fontSize: 13 },
   bubbleCoach: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: 5 },
   bubbleText: { color: colors.text, fontSize: 15, lineHeight: 21 },
   bubbleTextUser: { color: colors.onAccent },

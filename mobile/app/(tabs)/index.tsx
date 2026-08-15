@@ -35,6 +35,7 @@ import { PhotoMealModal } from '@/features/today/PhotoMealModal';
 import { PortionSheet } from '@/features/today/PortionSheet';
 import { BarcodeModal } from '@/features/today/BarcodeModal';
 import { ShareStoryModal } from '@/features/today/ShareStoryModal';
+import { UpdateBanner } from '@/features/updates/UpdateBanner';
 
 /** Shared with Trends via `src/nutrition.ts`, so the two can't disagree. */
 const FALLBACK_GOALS = {
@@ -391,6 +392,10 @@ export default function Today() {
           label={`${pendingWrites} change${pendingWrites === 1 ? '' : 's'} waiting to sync — they're saved on this device.`}
         />
       ) : null}
+
+      {/* Below the sync notice on purpose: an unsynced change is about the
+          user's own data and outranks news about the app. */}
+      <UpdateBanner />
 
       {/* Three secondary ways in, as compact tiles — stacking them as
           full-width buttons pushed the day's actual food below the fold. */}

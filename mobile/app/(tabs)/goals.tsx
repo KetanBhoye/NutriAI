@@ -457,6 +457,21 @@ export default function Plan() {
     return logged.length ? logged[logged.length - 1]!.status : null;
   }, [data]);
 
+  /**
+   * A plan whose goal equals its start weight.
+   *
+   * It arises honestly — finish a cut and the plan sits at its target — but it
+   * renders as nonsense: "Descent to 71.2" from 71.2 kg, "0.0 kg remaining",
+   * a pace of -0.00 kg/wk, and a confident green ON PACE for a plan that
+   * cannot make progress because there is none to make. Saying so is kinder
+   * than congratulating someone for standing still.
+   */
+  const planGoesNowhere = useMemo(() => {
+    const plan = data?.plan;
+    if (!plan) return false;
+    return Math.abs(plan.goal_weight_kg - plan.start_weight_kg) < 0.1;
+  }, [data]);
+
   const remaining = useMemo(() => {
     const plan = data?.plan;
     const latest = data?.latest_weight;
@@ -581,27 +596,46 @@ export default function Plan() {
 
       {showViewMode ? (
         <View>
-          <Text style={styles.h1}>
-            Descent to <Text style={styles.accentNum}>{data.plan!.goal_weight_kg.toFixed(1)}</Text>
-          </Text>
-          <Text style={styles.sub}>
-            {data.plan!.start_weight_kg.toFixed(1)} kg on {data.plan!.start_date} → {data.plan!.goal_weight_kg.toFixed(1)} kg by{' '}
-            {data.plan!.target_date}
-          </Text>
+          {planGoesNowhere ? (
+            <>
+              <Text style={styles.h1}>
+                Holding at <Text style={styles.accentNum}>{data.plan!.goal_weight_kg.toFixed(1)}</Text>
+              </Text>
+              <Text style={styles.sub}>
+                This plan's target is the same as its starting weight, so there's nothing to work
+                towards yet. Set a goal weight in Edit plan and the pace, projection and calorie
+                suggestions all switch on.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.h1}>
+                Descent to <Text style={styles.accentNum}>{data.plan!.goal_weight_kg.toFixed(1)}</Text>
+              </Text>
+              <Text style={styles.sub}>
+                {data.plan!.start_weight_kg.toFixed(1)} kg on {data.plan!.start_date} → {data.plan!.goal_weight_kg.toFixed(1)} kg by{' '}
+                {data.plan!.target_date}
+              </Text>
+            </>
+          )}
 
           <View style={styles.readouts}>
             <StatTile label="Current" value={data.latest_weight?.toFixed(1) ?? '—'} unit="kg" />
             <StatTile label="Remaining" value={remaining?.toFixed(1) ?? '—'} unit="kg" color={colors.cyan} />
+            {/* No verdict on a plan that cannot make progress — green ON PACE
+                for a target you are already standing on is meaningless. */}
             <StatTile
               label="Pace"
-              value={paceStatus ? STATUS_LABEL[paceStatus] : '—'}
-              color={paceStatus ? statusColor[paceStatus] : undefined}
+              value={planGoesNowhere ? 'NO TARGET' : paceStatus ? STATUS_LABEL[paceStatus] : '—'}
+              color={planGoesNowhere ? colors.textDim : paceStatus ? statusColor[paceStatus] : undefined}
             />
+            {/* Steps always. This tile used to be replaced by the day's
+                session, so logging a workout hid your step count entirely —
+                the one thing this screen is checked for most often. */}
+            <StatTile label="Steps today" value={stepsToday?.toLocaleString() ?? '—'} />
             {exerciseToday ? (
               <StatTile label="Activity today" value={exerciseToday.text} color={colors.purple} />
-            ) : (
-              <StatTile label="Steps today" value={stepsToday?.toLocaleString() ?? '—'} />
-            )}
+            ) : null}
           </View>
 
           {data.progress ? (
@@ -662,12 +696,17 @@ export default function Plan() {
               </View>
             ) : null}
 
+            {/* Above the button, not below it. The Plan tab is several screens
+                tall, so when you tap "Log for today" the button is usually at
+                the bottom edge — and a confirmation rendered under it lands
+                off-screen. The app was telling the truth somewhere nobody was
+                looking. */}
+            {logMsg ? <Text style={styles.logMsg}>{logMsg}</Text> : null}
             <Button
               title={logBusy ? 'Saving…' : 'Log for today'}
               onPress={saveLog}
               disabled={logBusy || (!logWeight && !logSteps && !loggedBurn)}
             />
-            {logMsg ? <Text style={styles.logMsg}>{logMsg}</Text> : null}
             {logExercise ? (
               <Text style={styles.burnNote}>
                 Energy above resting, so it doesn't double-count the movement your maintenance calories
@@ -1082,7 +1121,7 @@ const styles = StyleSheet.create({
   burnLabel: { ...type.overline, color: colors.textDim },
   burnValue: { ...type.figureSmall, fontSize: 16, fontFamily: fonts.semibold, color: colors.accent, marginTop: 2 },
   burnNote: { color: colors.textDim, fontSize: 11.5, lineHeight: 16, marginTop: 10 },
-  logMsg: { color: colors.accent, fontSize: 13, textAlign: 'center', marginTop: 10 },
+  logMsg: { color: colors.accent, fontSize: 13, textAlign: 'center', marginBottom: 10 },
   errorNote: {
     color: colors.danger,
     fontSize: 13,

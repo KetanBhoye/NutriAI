@@ -360,6 +360,14 @@ export async function runCoachTurn(opts: {
   project: string;
   location: string;
   model: string;
+  /**
+   * Called with the tool names as each step's calls are about to run, so a
+   * caller can stream honest progress. A turn that logs a meal takes 30-60s,
+   * nearly all of it here; without this the client can only show a spinner and
+   * guess. Never called for the final text-only step, because at that point
+   * nothing is being done.
+   */
+  onStep?: (tools: string[]) => void;
 }): Promise<CoachTurn> {
   const today = new Date().toLocaleDateString('en-CA');
   const activeDate = opts.activeDate || today;
@@ -413,6 +421,10 @@ export async function runCoachTurn(opts: {
         .trim();
       return { reply: reply || 'Done.', actions, history: contents };
     }
+
+    // Report before executing, not after: the point is to say what is being
+    // waited on while it is being waited on.
+    opts.onStep?.(calls.map((c) => c.functionCall.name));
 
     // Execute every tool call in this turn, then feed all results back together.
     const responseParts: GeminiPart[] = [];

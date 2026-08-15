@@ -114,6 +114,14 @@ const coachChatSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  /**
+   * Answer as newline-delimited JSON, emitting a `step` line per round of tool
+   * calls so the app can say what it is waiting on. Opt-in, because every
+   * already-installed build expects a single JSON object and would choke on a
+   * stream — the response shape must stay the client's choice, not the
+   * server's.
+   */
+  stream: z.boolean().optional(),
 });
 
 const aiParseSchema = z.object({
@@ -1234,6 +1242,30 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         )
         .join('\n');
 
+      /**
+       * Streaming mode: newline-delimited JSON, one `step` line per round of
+       * tool calls, then a final `done` line carrying the same object the
+       * non-streaming path returns.
+       *
+       * Why it matters: a turn that logs a meal spends 30-60 seconds in the
+       * agent loop, and the client could previously show nothing but a
+       * spinner. The steps are the tool calls the agent is actually about to
+       * make, so the progress the user sees is the work being done rather
+       * than a timer pretending.
+       *
+       * Headers are flushed before the first step so the connection is
+       * established while the model is still thinking; `X-Accel-Buffering:no`
+       * asks any proxy in front not to hold the chunks back until the end,
+       * which would defeat the whole thing.
+       */
+      const streaming = parsed.data.stream === true;
+      if (streaming) {
+        res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+      }
+
       const result = await runCoachTurn({
         message: parsed.data.message,
         history: (parsed.data.history ?? []) as never,
@@ -1245,18 +1277,43 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         project,
         location: process.env.GCP_LOCATION || 'us-central1',
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+        onStep: streaming
+          ? (tools) => {
+              // Best-effort: a client that has gone away must not take the
+              // turn down with it — the entries it asked for are already
+              // being written.
+              try {
+                res.write(`${JSON.stringify({ type: 'step', tools })}\n`);
+              } catch {
+                /* ignore */
+              }
+            }
+          : undefined,
       });
 
+      if (streaming) {
+        res.write(`${JSON.stringify({ type: 'done', ...result })}\n`);
+        res.end();
+        return;
+      }
       res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      if (message.includes('429')) {
-        // Vertex rate limit — transient, the user just retries.
-        res.status(429).json({ error: "The AI is busy right now — give it a few seconds and try again." });
+      const rateLimited = message.includes('429');
+      const status = rateLimited ? 429 : 502;
+      const text = rateLimited
+        ? "The AI is busy right now — give it a few seconds and try again."
+        : 'The Coach could not be reached. Try again in a moment.';
+      if (!rateLimited) console.error('Coach chat error:', error);
+
+      // Once streaming has begun the status line is long gone, so the failure
+      // has to travel as a final line instead of an HTTP code.
+      if (res.headersSent) {
+        res.write(`${JSON.stringify({ type: 'error', error: text })}\n`);
+        res.end();
         return;
       }
-      console.error('Coach chat error:', error);
-      res.status(502).json({ error: 'The Coach could not be reached. Try again in a moment.' });
+      res.status(status).json({ error: text });
     }
   });
 
