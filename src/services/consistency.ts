@@ -46,7 +46,8 @@ export interface DayInput {
 
 export interface Targets {
   calories: number;
-  proteinG: number;
+  /** Absent or 0 when the user has no protein goal; protein then does not count. */
+  proteinG?: number | null;
   /** Absent when the user has no step goal; movement then does not count. */
   stepGoal?: number | null;
 }
@@ -75,7 +76,7 @@ export interface DayScore {
   logged: boolean;
   logging: number;
   calories: number;
-  protein: number;
+  protein: number | null;
   movement: number | null;
   /** 0–100 for this day. */
   total: number;
@@ -134,22 +135,30 @@ export function scoreDay(day: DayInput, targets: Targets): DayScore {
       logged: false,
       logging: 0,
       calories: 0,
-      protein: 0,
+      protein: targets.proteinG ? 0 : null,
       movement: targets.stepGoal ? 0 : null,
       total: 0,
     };
   }
 
   const calories = calorieAdherence(day.calories, targets.calories);
-  const protein = proteinAdherence(day.proteinG, targets.proteinG);
+
+  // Protein and movement are both optional, and for the same reason: a goal
+  // the user was never asked to set must not be scored as a goal they missed.
+  // Getting this wrong is invisible in the total — it just quietly caps
+  // everyone without that goal at a lower ceiling.
+  const hasProteinGoal = Boolean(targets.proteinG && targets.proteinG > 0);
+  const protein = hasProteinGoal ? proteinAdherence(day.proteinG, targets.proteinG!) : null;
   const hasStepGoal = Boolean(targets.stepGoal && targets.stepGoal > 0);
   const movement = hasStepGoal ? movementAdherence(day.steps ?? 0, targets.stepGoal!) : null;
 
-  // Weights are renormalised over the components that apply. A user with no
-  // step goal is measured on what they did set, rather than being docked 20
-  // points for a goal nobody asked them to choose.
-  let earned = WEIGHTS.logging + calories * WEIGHTS.calories + protein * WEIGHTS.protein;
-  let available = WEIGHTS.logging + WEIGHTS.calories + WEIGHTS.protein;
+  // Weights renormalise over the components that apply.
+  let earned = WEIGHTS.logging + calories * WEIGHTS.calories;
+  let available = WEIGHTS.logging + WEIGHTS.calories;
+  if (protein !== null) {
+    earned += protein * WEIGHTS.protein;
+    available += WEIGHTS.protein;
+  }
   if (movement !== null) {
     earned += movement * WEIGHTS.movement;
     available += WEIGHTS.movement;
@@ -175,7 +184,7 @@ export interface WeekScore {
   components: {
     logging: number;
     calories: number;
-    protein: number;
+    protein: number | null;
     movement: number | null;
   };
 }
@@ -191,13 +200,16 @@ export function scoreWeek(days: DayInput[], targets: Targets): WeekScore {
       score: 0,
       daysLogged: 0,
       days: [],
-      components: { logging: 0, calories: 0, protein: 0, movement: null },
+      components: { logging: 0, calories: 0, protein: null, movement: null },
     };
   }
 
   const scored = days.map((d) => scoreDay(d, targets));
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const movementScores = scored.map((d) => d.movement).filter((m): m is number => m !== null);
+  const present = (pick: (d: DayScore) => number | null) =>
+    scored.map(pick).filter((v): v is number => v !== null);
+  const proteinScores = present((d) => d.protein);
+  const movementScores = present((d) => d.movement);
 
   return {
     score: Math.round(mean(scored.map((d) => d.total))),
@@ -206,7 +218,7 @@ export function scoreWeek(days: DayInput[], targets: Targets): WeekScore {
     components: {
       logging: Math.round(mean(scored.map((d) => d.logging)) * 100),
       calories: Math.round(mean(scored.map((d) => d.calories)) * 100),
-      protein: Math.round(mean(scored.map((d) => d.protein)) * 100),
+      protein: proteinScores.length ? Math.round(mean(proteinScores) * 100) : null,
       movement: movementScores.length ? Math.round(mean(movementScores) * 100) : null,
     },
   };

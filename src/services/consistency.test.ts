@@ -148,6 +148,34 @@ describe('movement is optional', () => {
   });
 });
 
+describe('protein is optional, for the same reason movement is', () => {
+  const noProtein: Targets = { calories: 2000, proteinG: null, stepGoal: null };
+
+  it('is not scored when the user has no protein goal', () => {
+    expect(scoreDay(day({ proteinG: 0 }), noProtein).protein).toBeNull();
+  });
+
+  it('does not penalise a user for a goal they never set', () => {
+    // The bug this replaced: protein returned 0 for a missing goal, which
+    // quietly capped every such user at 80 and was invisible in the total.
+    expect(scoreWeek(week({ proteinG: 0 }), noProtein).score).toBe(100);
+  });
+
+  it('reports the component as null rather than zero', () => {
+    // The card must render "not tracked", not a red 0%.
+    expect(scoreWeek(week({ proteinG: 0 }), noProtein).components.protein).toBeNull();
+  });
+
+  it('still scores it when the goal exists', () => {
+    expect(scoreWeek(week({ proteinG: 0 }), TARGETS).score).toBeLessThan(100);
+  });
+
+  it('treats a zero goal the same as an absent one', () => {
+    const zero: Targets = { calories: 2000, proteinG: 0, stepGoal: null };
+    expect(scoreWeek(week({ proteinG: 0 }), zero).score).toBe(100);
+  });
+});
+
 describe('the percentile', () => {
   it('reports the share of members beaten', () => {
     expect(percentileOf(75, [10, 20, 30, 90])).toBe(75);
