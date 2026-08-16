@@ -20,7 +20,10 @@ export interface RunningApp {
 }
 
 export async function createApp(config: AppConfig = getConfig()): Promise<RunningApp> {
-  const { compat, driver, close: closeDatabase } = openDatabase(config.databasePath);
+  const { compat, driver, close: closeDatabase } = openDatabase(config.databasePath, {
+    driver: config.dbDriver,
+    databaseUrl: config.databaseUrl,
+  });
   console.log(`[db] driver: ${driver}`);
 
   await bootstrapDatabase(compat, {

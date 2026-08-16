@@ -29,11 +29,14 @@ export function resolveDriver(env: NodeJS.ProcessEnv = process.env): DbDriver {
   throw new Error(`Unknown DB_DRIVER "${env.DB_DRIVER}" (expected "sqlite" or "postgres")`);
 }
 
-export function openDatabase(databasePath: string): OpenedDatabase {
-  const driver = resolveDriver();
+export function openDatabase(
+  databasePath: string,
+  overrides: { driver?: DbDriver; databaseUrl?: string } = {}
+): OpenedDatabase {
+  const driver = overrides.driver ?? resolveDriver();
 
   if (driver === 'postgres') {
-    const connectionString = process.env.DATABASE_URL;
+    const connectionString = overrides.databaseUrl ?? process.env.DATABASE_URL;
     if (!connectionString) {
       // Failing loudly beats falling back to SQLite: a silent fallback would
       // boot a Postgres deployment onto an empty local file and look healthy.

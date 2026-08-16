@@ -5,6 +5,14 @@ export interface AppConfig {
   sessionTtlHours: number;
   baseUrl: string;
   nodeEnv: string;
+  /**
+   * Which database driver this instance uses. Normally from `DB_DRIVER`, but
+   * overridable so the parity tests can run two apps side by side — one on
+   * each driver — and compare their responses.
+   */
+  dbDriver?: 'sqlite' | 'postgres';
+  /** Postgres connection string; only read when `dbDriver` is 'postgres'. */
+  databaseUrl?: string;
 }
 
 export function getConfig(): AppConfig {

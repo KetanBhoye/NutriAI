@@ -1,4 +1,6 @@
 import { normalizeFoodName } from '../utils/food-normalize.js';
+import { utcDate } from '../db/time.js';
+import { rankSuggestions, type LoggedFoodRow } from '../services/food-ranking.js';
 
 export interface FoodRow {
   id: string;
@@ -22,19 +24,8 @@ export interface SuggestedFood extends FoodRow {
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
-/**
- * Half-life in days for the recency weighting. A food eaten today counts 1.0,
- * three weeks ago 0.5, three months ago ~0.05 — so habits that changed
- * recently surface quickly while older staples fade without disappearing.
- */
-export const RECENCY_HALF_LIFE_DAYS = 21;
-
-/**
- * Foods logged only once shouldn't outrank a staple just because they were
- * eaten yesterday. This damps a food's score until it has been logged a few
- * times: n=1 keeps ~50% of its weight, n=3 ~75%, n=10 ~91%.
- */
-const FREQUENCY_PRIOR = 1;
+/** Scoring constants now live with the ranking maths. */
+export { RECENCY_HALF_LIFE_DAYS } from '../services/food-ranking.js';
 
 export class FoodLibraryRepository {
   constructor(private db: any) {}
@@ -51,6 +42,11 @@ export class FoodLibraryRepository {
     mealType: MealType,
     limit = 8
   ): Promise<SuggestedFood[]> {
+    // Returns one row per logged entry and ranks them in TypeScript. The
+    // scoring used to live in this query via `julianday()`, which does not
+    // exist in Postgres — it was the only query in the codebase doing date
+    // arithmetic in SQL, and the only endpoint that 500'd on Postgres.
+    // See services/food-ranking.ts.
     const result = await this.db
       .prepare(
         `
@@ -58,22 +54,16 @@ export class FoodLibraryRepository {
           f.id, f.canonical_name, f.normalized_key, f.reference_unit,
           f.calories_per_unit, f.protein_g_per_unit, f.carbs_g_per_unit,
           f.fat_g_per_unit, f.default_quantity, f.source,
-          COUNT(*) AS times_logged,
-          MAX(e.entry_date) AS last_logged,
-          SUM(EXP(-0.693147 * (julianday('now') - julianday(e.entry_date)) / ?))
-            * (COUNT(*) * 1.0 / (COUNT(*) + ?)) AS score
+          e.entry_date
         FROM food_entries e
         JOIN foods f ON f.id = e.food_id
         WHERE e.user_id = ? AND e.meal_type = ?
-        GROUP BY f.id
-        ORDER BY score DESC
-        LIMIT ?
         `
       )
-      .bind(RECENCY_HALF_LIFE_DAYS, FREQUENCY_PRIOR, userId, mealType, limit)
+      .bind(userId, mealType)
       .all();
 
-    return result.results as SuggestedFood[];
+    return rankSuggestions(result.results as LoggedFoodRow[], utcDate(), limit);
   }
 
   /**
