@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
 import { humanValidationError } from './validation.js';
+import { COMPLETE_DAY_KCAL, loggingStreak } from '../services/streak.js';
 import type { AppEnv } from '../db/types.js';
 import {
   createSession,
@@ -639,24 +640,14 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const repository = new FoodEntryRepository(env.DB);
       const daily = await repository.getDailyTotals(req.sessionUser!.userId, days);
 
-      // A day only counts toward the streak if enough was logged to be a real
-      // day's record. The history contains days with a single 240 kcal entry —
-      // those are abandoned logs, not fasts, and counting them would make the
-      // streak flatter.
-      const COMPLETE_DAY_KCAL = 1200;
-      const logged = new Set(daily.filter((d) => d.calories >= COMPLETE_DAY_KCAL).map((d) => d.entry_date));
-
-      let streak = 0;
-      const cursor = new Date();
-      // Today doesn't break the streak until it ends, so start from today only
-      // if it already qualifies, otherwise from yesterday.
-      if (!logged.has(cursor.toISOString().split('T')[0]!)) {
-        cursor.setDate(cursor.getDate() - 1);
-      }
-      while (logged.has(cursor.toISOString().split('T')[0]!)) {
-        streak += 1;
-        cursor.setDate(cursor.getDate() - 1);
-      }
+      // The date the *client* is looking at, not the server's idea of today:
+      // the walk used to run in UTC, so a user at +05:30 saw their streak one
+      // short for the first five and a half hours of every day. See
+      // services/streak.ts.
+      const streak = loggingStreak(
+        daily,
+        String(req.query.date || '') || new Date().toLocaleDateString('en-CA')
+      );
 
       const complete = daily.filter((d) => d.calories >= COMPLETE_DAY_KCAL);
       const average =

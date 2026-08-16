@@ -4,7 +4,7 @@ import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
-import { entriesApi, goalsApi } from '@/api';
+import { dashboardApi, entriesApi, goalsApi } from '@/api';
 import {
   enqueueCreate,
   enqueueDelete,
@@ -36,6 +36,9 @@ import { PortionSheet } from '@/features/today/PortionSheet';
 import { BarcodeModal } from '@/features/today/BarcodeModal';
 import { ShareStoryModal } from '@/features/today/ShareStoryModal';
 import { UpdateBanner } from '@/features/updates/UpdateBanner';
+import { CelebrationCard } from '@/features/celebrate/CelebrationCard';
+import { pickMoment, type Moment } from '@/features/celebrate/moments';
+import { rememberMoment, seenMoments } from '@/features/celebrate/seen';
 
 /** Shared with Trends via `src/nutrition.ts`, so the two can't disagree. */
 const FALLBACK_GOALS = {
@@ -102,6 +105,17 @@ export default function Today() {
   const [showBarcode, setShowBarcode] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [pendingWrites, setPendingWrites] = useState(0);
+  /** The one milestone worth showing right now, if any. See features/celebrate. */
+  const [moment, setMoment] = useState<Moment | null>(null);
+  /**
+   * Consecutive days logged, from the server.
+   *
+   * Fetched rather than derived: the rule for what counts as a logged day
+   * (enough calories to be a real record, and today not breaking the streak
+   * until it ends) lives in `services/streak.ts`, and a second implementation
+   * here would drift from it.
+   */
+  const [streakDays, setStreakDays] = useState(0);
   /** Suggestion whose portion is being adjusted before logging. */
   const [portionFood, setPortionFood] = useState<Suggestion | null>(null);
   const [portionMeal, setPortionMeal] = useState<MealType>('snack');
@@ -268,6 +282,72 @@ export default function Today() {
 
   // The day's arithmetic lives in src/meals.ts, where it's under test.
   const totals = useMemo(() => sumTotals(entries), [entries]);
+
+  /**
+   * Look for something worth marking whenever the day's totals change.
+   *
+   * Only what this screen actually knows: the food targets. Steps and weight
+   * milestones belong on the Plan tab, where those numbers live and where the
+   * user was looking when they earned them — a celebration that appears two
+   * tabs away from the thing it is about reads as a non-sequitur.
+   *
+   * Only for today, too. Scrolling back through last Tuesday should not
+   * congratulate you again for last Tuesday.
+   */
+  /**
+   * Read the streak when today first counts as a logged day.
+   *
+   * `COMPLETE_DAY_KCAL` on the server is 1,200: below that a day is an
+   * abandoned log, not a record. So the streak can only change when the day
+   * crosses it — one request at that moment, rather than one per meal.
+   */
+  useEffect(() => {
+    if (viewDate !== today || totals.calories < 1200 || streakDays > 0) return;
+    let cancelled = false;
+
+    dashboardApi
+      .getShareStats(today)
+      .then((s) => {
+        if (!cancelled) setStreakDays(s.streak);
+      })
+      // No streak is a missing celebration, never an error on the log screen.
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewDate, today, totals.calories, streakDays]);
+
+  useEffect(() => {
+    if (viewDate !== today || entries.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const seen = await seenMoments(today);
+      if (cancelled) return;
+
+      const found = pickMoment(
+        {
+          totals,
+          proteinGoal: goals.daily_protein_goal_g ?? null,
+          steps: null,
+          stepGoal: null,
+          loggedMeals: [...new Set(entries.map((e) => e.meal_type as MealType))],
+          streakDays,
+          weight: null,
+        },
+        seen
+      );
+
+      if (!found || cancelled) return;
+      setMoment(found);
+      void rememberMoment(found.key, today);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [totals, entries, goals.daily_protein_goal_g, viewDate, today, streakDays]);
   const byMeal = useMemo(() => groupByMeal(entries), [entries]);
   const remaining = remainingCalories(
     goals.daily_calorie_goal ?? FALLBACK_GOALS.daily_calorie_goal,
@@ -396,6 +476,8 @@ export default function Today() {
       {/* Below the sync notice on purpose: an unsynced change is about the
           user's own data and outranks news about the app. */}
       <UpdateBanner />
+
+      {moment ? <CelebrationCard moment={moment} onDismiss={() => setMoment(null)} /> : null}
 
       {/* Three secondary ways in, as compact tiles — stacking them as
           full-width buttons pushed the day's actual food below the fold. */}

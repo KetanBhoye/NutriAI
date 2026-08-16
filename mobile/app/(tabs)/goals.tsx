@@ -33,6 +33,9 @@ import {
 } from '@/nutrition';
 import { EXERCISE_KINDS, describeExercise, netExerciseKcal } from '@/exercise';
 import { treadmillSummary } from '@/treadmill';
+import { CelebrationCard } from '@/features/celebrate/CelebrationCard';
+import { pickMoment, type Moment } from '@/features/celebrate/moments';
+import { rememberMoment, seenMoments } from '@/features/celebrate/seen';
 import { autoSyncHealth } from '@/health/autoSync';
 import { GoalsPayload, ProfileBasics } from '@/types';
 import { editorTargets } from '@/features/goals/editorTargets';
@@ -124,6 +127,8 @@ export default function Plan() {
    * the box while it is untouched.
    */
   const [stepsEdited, setStepsEdited] = useState(false);
+  /** Step and weight milestones — the ones this screen has the numbers for. */
+  const [moment, setMoment] = useState<Moment | null>(null);
   const [logBusy, setLogBusy] = useState(false);
   const [logMsg, setLogMsg] = useState<string | null>(null);
   /** SVG needs a concrete width; measured from the container. */
@@ -544,6 +549,52 @@ export default function Plan() {
    * The net energy of a logged session, priced against today's weight — the
    * same figure the server adds to the day's expenditure.
    */
+  /**
+   * Milestones this screen owns: the step goal, and progress along the plan.
+   *
+   * Deliberately not the food targets — those fire on Today, where the meals
+   * are. Splitting them by where they were earned keeps each one legible
+   * instead of every achievement piling onto one screen.
+   */
+  useEffect(() => {
+    if (!data) return;
+    let cancelled = false;
+
+    (async () => {
+      const today = todayISO();
+      const seen = await seenMoments(today);
+      if (cancelled) return;
+
+      const found = pickMoment(
+        {
+          totals: { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
+          proteinGoal: null,
+          steps: stepsToday,
+          stepGoal: data.plan?.daily_step_goal ?? null,
+          loggedMeals: [],
+          streakDays: 0,
+          weight:
+            data.plan && data.latest_weight != null
+              ? {
+                  startKg: data.plan.start_weight_kg,
+                  goalKg: data.plan.goal_weight_kg,
+                  currentKg: data.latest_weight,
+                }
+              : null,
+        },
+        seen
+      );
+
+      if (!found || cancelled) return;
+      setMoment(found);
+      void rememberMoment(found.key, today);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data, stepsToday]);
+
   const isTreadmill = logExercise === 'treadmill';
 
   /**
@@ -715,6 +766,8 @@ export default function Plan() {
               </Text>
             </>
           )}
+
+          {moment ? <CelebrationCard moment={moment} onDismiss={() => setMoment(null)} /> : null}
 
           <View style={styles.readouts}>
             <StatTile label="Current" value={data.latest_weight?.toFixed(1) ?? '—'} unit="kg" />
