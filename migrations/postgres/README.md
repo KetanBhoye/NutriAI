@@ -54,6 +54,24 @@ python3 deploy/postgres/gen-pg-migrations.py
 Then re-run the verification below. Do not hand-edit `0001`–`0008`; change the
 portable file or the generator.
 
+## Running the tests against Postgres
+
+The parity suite (`src/db/driver-parity.test.ts`) boots the app on both drivers
+and requires identical responses. It **skips** without a database, so a plain
+`pnpm test` still passes on a machine that has no Postgres — check the skip
+count if you expect it to have run.
+
+```bash
+brew install postgresql@17 && brew services start postgresql@17
+createdb nutriai_test
+TEST_DATABASE_URL=postgresql://localhost/nutriai_test pnpm test
+```
+
+376 tests pass with it; 364 + 12 skipped without.
+
+It drops and recreates the `public` schema on each run, so point it at a
+throwaway database — never at `dev`, and obviously never at production.
+
 ## Verifying a change
 
 ```bash
