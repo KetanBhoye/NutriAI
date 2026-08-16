@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
 import { daysAgo } from '../db/time.js';
+import { headlineFor } from '../services/consistency.js';
+import { compareToPopulation, getUserConsistency } from '../services/consistency-data.js';
 import { humanValidationError } from './validation.js';
 import { COMPLETE_DAY_KCAL, loggingStreak } from '../services/streak.js';
 import type { AppEnv } from '../db/types.js';
@@ -628,6 +630,60 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Suggestions error:', error);
       res.status(500).json({ error: 'Failed to load suggestions' });
+    }
+  });
+
+  /**
+   * The consistency score shown at the top of Trends.
+   *
+   * Deliberately not an AI call: the same week must always produce the same
+   * number, or comparing it to last week means nothing. See
+   * services/consistency.ts for the formula and the reasoning behind it.
+   */
+  app.get('/api/consistency', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      // The client's calendar day, not the server's — a user at +05:30 is
+      // already on tomorrow for the first five and a half hours of UTC's day,
+      // and getting this wrong shifts their whole week.
+      const today = String(req.query.date || '') || new Date().toLocaleDateString('en-CA');
+
+      const consistency = await getUserConsistency(env.DB, req.sessionUser!.userId, today);
+      if (!consistency) {
+        // No calorie goal yet: nothing to be consistent with. Answer 200 with
+        // a flag so the client can prompt rather than render an empty card.
+        res.json({ available: false, reason: 'no_targets' });
+        return;
+      }
+
+      const { current, previousScore, personalBest, history, weekStart } = consistency;
+      const comparison = await compareToPopulation(
+        env.DB,
+        weekStart,
+        current.score,
+        current.daysLogged
+      );
+
+      res.json({
+        available: true,
+        week_start: weekStart,
+        score: current.score,
+        days_logged: current.daysLogged,
+        previous_score: previousScore,
+        personal_best: personalBest,
+        is_personal_best: personalBest !== null && current.score >= personalBest && current.score > 0,
+        components: current.components,
+        headline: headlineFor(current.score, previousScore, personalBest),
+        history,
+        // Only the flag and the share cross the wire when it should be shown.
+        // The raw percentile is withheld otherwise so a client cannot render
+        // a discouraging number the server decided to suppress.
+        comparison: comparison.show
+          ? { better_than_percent: comparison.percentile, population: comparison.populationSize }
+          : null,
+      });
+    } catch (error) {
+      console.error('Consistency error:', error);
+      res.status(500).json({ error: 'Failed to load consistency' });
     }
   });
 
