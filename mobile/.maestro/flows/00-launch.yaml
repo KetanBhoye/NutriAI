@@ -15,4 +15,7 @@ appId: app.nutriai.mobile
     text: 'Email'
 - assertVisible:
     text: 'Sign in'
-- assertVisible: 'New here? Create an account'
+# The route a new person takes. Asserted by its call to action rather than the
+# whole card's wording, so a copy tweak above it doesn't fail the smoke test —
+# but the button existing at all is the promise worth keeping.
+- assertVisible: 'Create an account'
