@@ -2,7 +2,7 @@ import express, { type Express } from 'express';
 import { resolve } from 'node:path';
 import type { Server } from 'node:http';
 import { getConfig, type AppConfig } from './config.js';
-import { openSqliteDatabase } from './db/sqlite-adapter.js';
+import { migrationsDirFor, openDatabase } from './db/open.js';
 import { bootstrapDatabase } from './db/bootstrap.js';
 import { registerApiRoutes } from './http/api.js';
 import { createOAuthRouter } from './auth/oauth.js';
@@ -20,10 +20,11 @@ export interface RunningApp {
 }
 
 export async function createApp(config: AppConfig = getConfig()): Promise<RunningApp> {
-  const { raw, compat } = openSqliteDatabase(resolve(config.databasePath));
+  const { compat, driver, close: closeDatabase } = openDatabase(config.databasePath);
+  console.log(`[db] driver: ${driver}`);
 
   await bootstrapDatabase(compat, {
-    migrationsDir: resolve(process.cwd(), 'migrations/portable'),
+    migrationsDir: migrationsDirFor(driver),
     adminApiKey: config.adminApiKey,
     adminEmail: process.env.ADMIN_EMAIL,
     adminPassword: process.env.ADMIN_PASSWORD,
@@ -246,9 +247,7 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   return {
     app,
     env,
-    close: async () => {
-      raw.close();
-    },
+    close: closeDatabase,
   };
 }
 
