@@ -6,6 +6,8 @@ import { writeCache } from '@/cache';
 import { subscribeGoalsChanged } from '@/goalsBus';
 import { NudgeCard } from '@/features/nudge/NudgeCard';
 import { ConsistencyCard } from '@/features/consistency/ConsistencyCard';
+import { ShareWeekModal } from '@/features/trends/ShareWeekModal';
+import { canShareWeek } from '@/features/trends/weekShareCopy';
 import { pickNudge } from '@/features/nudge/consequences';
 import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
 import { emitWeeklyBadgeChanged, markWeeklyBadgeSeen } from '@/features/nudge/weeklyBadge';
@@ -77,6 +79,7 @@ export default function Trends() {
   useEffect(() => subscribeGoalsChanged(() => void refreshGoals()), [refreshGoals]);
 
   const [refreshingReport, setRefreshingReport] = useState(false);
+  const [shareWeekOpen, setShareWeekOpen] = useState(false);
   const regenerateReport = async () => {
     setRefreshingReport(true);
     try {
@@ -199,7 +202,24 @@ export default function Trends() {
       {/* First, because it answers "how am I doing" in one number and gives
           everything below it a frame. The nudge that follows is the "what to
           do about it", and the report is the commentary. */}
-      {consistency.data?.available ? <ConsistencyCard data={consistency.data} /> : null}
+      {consistency.data?.available ? (
+        <ConsistencyCard
+          data={consistency.data}
+          onShare={canShareWeek(consistency.data) ? () => setShareWeekOpen(true) : undefined}
+        />
+      ) : null}
+
+      {consistency.data?.available ? (
+        <ShareWeekModal
+          visible={shareWeekOpen}
+          data={consistency.data}
+          stats={{
+            streak: stats.data?.streak ?? 0,
+            averageCalories: stats.data?.average_calories ?? 0,
+          }}
+          onClose={() => setShareWeekOpen(false)}
+        />
+      ) : null}
 
       {/* Above the report: this is the checkable arithmetic, and the prose
           below is commentary on it rather than the only account of the week. */}

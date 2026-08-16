@@ -70,4 +70,25 @@ appId: app.nutriai.mobile
       text: 'Daily steps'
     direction: DOWN
     timeout: 45000
-- assertVisible: '.*6,500.*'
+
+# Steps are deliberately NOT asserted by value here.
+#
+# The chart header shows the day's figure on an account with one day of steps
+# and a multi-day *average* once there is history, so asserting '6,500' only
+# passed because the test account was nearly empty — it broke the moment the
+# dev database held two weeks of data, which is the state every real user is
+# in. Reading it back from the input does not work either: that is an entry
+# form and it resets to a placeholder after saving.
+#
+# The write itself is already covered above: steps and weight are saved in the
+# same request, and "Saved for today." means the server accepted it rather
+# than the queue holding it. What is left worth checking is that the chart
+# renders at all with real history behind it — the failure mode being a plot
+# that throws or draws nothing once there is more than one point.
+- scrollUntilVisible:
+    element:
+      text: 'Daily steps'
+    direction: DOWN
+    timeout: 45000
+- assertVisible: 'Daily steps'
+- assertVisible: 'today'

@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Card } from '@/components/ui/Card';
 import { colors, radius, space } from '@/theme';
 import type { Consistency } from '@/api/dashboard';
@@ -27,7 +27,14 @@ const BAND_COLOR: Record<Consistency['headline']['band'], string> = {
 
 const BAR_HEIGHT = 34;
 
-export function ConsistencyCard({ data }: { data: Consistency }) {
+export function ConsistencyCard({
+  data,
+  onShare,
+}: {
+  data: Consistency;
+  /** Absent when the week is not worth offering as a story — see weekShareCopy. */
+  onShare?: () => void;
+}) {
   const accent = BAND_COLOR[data.headline.band];
   const peak = Math.max(100, ...data.history.map((h) => h.score));
 
@@ -35,11 +42,20 @@ export function ConsistencyCard({ data }: { data: Consistency }) {
     <Card style={styles.card}>
       <View style={styles.head}>
         <Text style={styles.eyebrow}>CONSISTENCY</Text>
-        {data.is_personal_best && data.score > 0 ? (
-          <View style={styles.bestPill}>
-            <Text style={styles.bestPillText}>PERSONAL BEST</Text>
-          </View>
-        ) : null}
+        <View style={styles.headRight}>
+          {data.is_personal_best && data.score > 0 ? (
+            <View style={styles.bestPill}>
+              <Text style={styles.bestPillText}>PERSONAL BEST</Text>
+            </View>
+          ) : null}
+          {/* Offered only for a week worth showing other people. A share
+              button on a bad week is an invitation to broadcast a bad week. */}
+          {onShare ? (
+            <Pressable onPress={onShare} hitSlop={10} accessibilityLabel="Share your week">
+              <Text style={styles.share}>Share</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.scoreRow}>
@@ -117,6 +133,8 @@ function Component({ label, value }: { label: string; value: number | null }) {
 const styles = StyleSheet.create({
   card: { marginBottom: space.lg },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  share: { color: colors.accent, fontSize: 12, fontWeight: '700' },
   eyebrow: { color: colors.textDim, fontSize: 11, letterSpacing: 1.2, fontWeight: '700' },
   bestPill: {
     backgroundColor: colors.accent,

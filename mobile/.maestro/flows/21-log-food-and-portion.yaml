@@ -16,6 +16,15 @@ appId: app.nutriai.mobile
       - tapOn: 'Jump to today'
 
 # Log a food we control, so the flow doesn't depend on the library's contents.
+#
+# Scrolled to rather than tapped blind: the button sits under whatever is
+# already logged for dinner, so on an account with a real day's food it starts
+# below the fold. Maestro never scrolls on its own.
+- scrollUntilVisible:
+    element:
+      text: '\+ Add dinner'
+    direction: DOWN
+    timeout: 30000
 - tapOn:
     text: '\+ Add dinner'
 - tapOn: "\\+ Add a food that isn't listed"
