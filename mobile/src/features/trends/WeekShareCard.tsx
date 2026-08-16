@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { BrandMark } from '@/components/BrandMark';
 import { colors } from '@/theme';
+import { DOWNLOAD_LABEL } from '@/config';
 import type { Consistency } from '@/api/dashboard';
 import { ShareCardBackground } from '../today/ShareCardBackground';
 import { themeFor, weekRangeLabel, weekShareCopy } from './weekShareCopy';
@@ -111,7 +112,13 @@ export function WeekShareCard({ data, stats, w }: Props) {
         <View style={styles.footer}>
           <View style={styles.brand}>
             <BrandMark size={w * 0.075} />
-            <Text style={[styles.brandText, { fontSize: w * 0.038 }]}>NutriAI</Text>
+            <View>
+              <Text style={[styles.brandText, { fontSize: w * 0.038 }]}>NutriAI</Text>
+              {/* The install link lives on the image itself rather than in a
+                  swipe-up attachment: it survives a screenshot, a re-share and
+                  a repost, which is how these actually travel. */}
+              <Text style={[styles.link, { fontSize: w * 0.026 }]}>{DOWNLOAD_LABEL}</Text>
+            </View>
           </View>
           {/* Smallest line on the card, and only when the server sent one. */}
           {data.comparison ? (
@@ -164,5 +171,6 @@ const styles = StyleSheet.create({
   },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandText: { color: 'rgba(255,255,255,0.65)', fontWeight: '700', letterSpacing: 0.3 },
+  link: { color: 'rgba(255,255,255,0.35)', letterSpacing: 0.2, marginTop: 1 },
   peer: { color: 'rgba(255,255,255,0.4)', fontWeight: '600', letterSpacing: 0.6 },
 });

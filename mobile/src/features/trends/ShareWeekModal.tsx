@@ -6,8 +6,10 @@ import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
+import { DOWNLOAD_URL } from '@/config';
 import type { Consistency } from '@/api/dashboard';
 import { WeekShareCard } from './WeekShareCard';
+import { weekShareCaption } from './weekShareCopy';
 
 /**
  * Share sheet for the weekly card.
@@ -34,6 +36,9 @@ interface Props {
 
 export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
   const shotRef = useRef<View>(null);
+  // Targets that accept text get the link too; the card carries it visually
+  // for the ones that do not (Instagram stories, screenshots).
+  const caption = `${weekShareCaption(data)}\n${DOWNLOAD_URL}`;
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +73,47 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
       });
     } catch {
       setError("Couldn't share that card.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  /**
+   * Snapchat.
+   *
+   * Android gets a targeted ACTION_SEND, which drops straight into Snapchat's
+   * send screen. iOS cannot do this: handing an image to a *named* app needs
+   * Snap's Creative Kit SDK and an app registered for a Client ID, and without
+   * that the sandbox offers no route — so iOS falls through to the share
+   * sheet, where Snapchat appears anyway. That is one extra tap, not a
+   * dead end.
+   *
+   * Best-effort even on Android: Snapchat has no documented public intent
+   * contract, so a version that stops accepting this must land the user in the
+   * normal sheet rather than on an error.
+   */
+  const shareToSnapchat = async () => {
+    if (Platform.OS !== 'android') {
+      await share();
+      return;
+    }
+    setSharing(true);
+    setError(null);
+    try {
+      const uri = await capture();
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
+        type: 'image/png',
+        packageName: 'com.snapchat.android',
+        // FLAG_GRANT_READ_URI_PERMISSION, or Snapchat gets a URI it may not read.
+        flags: 1,
+        extra: {
+          'android.intent.extra.STREAM': contentUri,
+          'android.intent.extra.TEXT': caption,
+        },
+      });
+    } catch {
+      await share().catch(() => setError("Couldn't share that card."));
     } finally {
       setSharing(false);
     }
@@ -119,8 +165,15 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
           />
         ) : null}
         <Button
-          title={sharing ? 'Preparing…' : 'Share'}
+          title="Snapchat"
           variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+          onPress={shareToSnapchat}
+          disabled={sharing}
+          style={styles.action}
+        />
+        <Button
+          title={sharing ? 'Preparing…' : 'More…'}
+          variant="ghost"
           onPress={share}
           disabled={sharing}
           style={styles.action}

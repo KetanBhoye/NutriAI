@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Consistency } from '@/api/dashboard';
+import { DOWNLOAD_LABEL, DOWNLOAD_URL } from '@/config';
 import {
   canShareWeek,
   MIN_SHAREABLE_DAYS,
@@ -86,6 +87,17 @@ describe('the caption', () => {
 
   it('carries the score, which is the thing worth stating', () => {
     expect(weekShareCaption(week({ score: 73 }))).toContain('73');
+  });
+});
+
+describe('the install link', () => {
+  it('points at the public site, not whatever backend this build talks to', () => {
+    // A dev-pointed build must still share a link real people can install
+    // from. Someone screenshots the story and types this in.
+    expect(DOWNLOAD_URL).toContain('nutriai-app.up.railway.app');
+    expect(DOWNLOAD_URL).not.toContain('nutriai-dev');
+    // The printed label is the same address without the scheme.
+    expect(DOWNLOAD_URL).toContain(DOWNLOAD_LABEL);
   });
 });
 
