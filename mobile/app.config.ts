@@ -93,10 +93,17 @@ const config: ExpoConfig = {
       'android.permission.SCHEDULE_EXACT_ALARM',
       'android.permission.USE_EXACT_ALARM',
     ],
-    // Foreground art sits inside the ~66% safe zone; Android masks the rest.
+    /**
+     * Foreground art sits inside the ~66% safe zone; Android masks the rest.
+     *
+     * The background is the app's own near-black, not the accent green: the
+     * mark is a luminous ring on a dark ground, and on a bright green tile its
+     * dark track and glow both invert into mud. It also stops the icon being a
+     * slab of saturated colour in a dock of dark ones.
+     */
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
-      backgroundColor: '#4ade80',
+      backgroundColor: '#0b0e13',
     },
   },
   plugins: [

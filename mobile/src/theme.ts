@@ -21,6 +21,28 @@ export const colors = {
   onAccent: '#06210f',
 };
 
+/**
+ * The spacing scale.
+ *
+ * Everything vertical should be one of these. Before it existed, screens mixed
+ * 6, 8, 12, 14, 16, 18, 20, 22, 24, 28, 30, 32 and 40 — which is why gaps that
+ * were meant to look equal didn't, and why a component carrying its own margin
+ * plus a parent's `gap` silently produced a third value nobody chose.
+ *
+ * Steps are 4-based: each is either +4 or a jump that reads as a new grouping
+ * level, so two elements one step apart look related and two elements three
+ * steps apart look separate.
+ */
+export const space = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  xxl: 32,
+  xxxl: 44,
+} as const;
+
 export const radius = 14;
 export const tap = 48;
 

@@ -25,11 +25,29 @@ export function GoogleSignInButton({ mode }: GoogleSignInButtonProps) {
 
   useEffect(() => {
     let cancelled = false;
-    accountApi.getAuthConfig().then((cfg) => {
-      if (cancelled || !cfg.googleClientId) return;
-      GoogleSignin.configure({ webClientId: cfg.googleClientId, iosClientId: GOOGLE_IOS_CLIENT_ID });
-      setClientId(cfg.googleClientId);
-    });
+    accountApi
+      .getAuthConfig()
+      .then((cfg) => {
+        if (cancelled) return;
+        if (!cfg.googleClientId) {
+          // Not an error: a server with no Google client configured should
+          // simply not offer the button.
+          console.warn('[google] no client id from /api/auth/config');
+          return;
+        }
+        GoogleSignin.configure({ webClientId: cfg.googleClientId, iosClientId: GOOGLE_IOS_CLIENT_ID });
+        setClientId(cfg.googleClientId);
+      })
+      .catch((e) => {
+        /**
+         * `configure()` throwing used to disappear entirely: getAuthConfig has
+         * its own catch, but nothing covered the callback body, so a failure
+         * there became an unhandled rejection and the button silently never
+         * appeared — indistinguishable from a server with Google sign-in
+         * switched off.
+         */
+        console.warn('[google] sign-in unavailable:', (e as Error)?.message ?? e);
+      });
     return () => {
       cancelled = true;
     };

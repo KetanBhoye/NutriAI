@@ -11,3 +11,6 @@ export * from './Loading';
 export * from './Skeleton';
 export * from './StaleNotice';
 export * from './NutriLoader';
+export * from './AnimatedBar';
+export * from './CountUp';
+export * from './FadeIn';

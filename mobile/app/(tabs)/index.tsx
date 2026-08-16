@@ -25,7 +25,7 @@ import { FALLBACK_GOALS as FALLBACK } from '@/nutrition';
 import { MEALS, currentMeal, groupByMeal, remainingCalories, sumTotals } from '@/meals';
 import { defaultPortion, formatGrams, toGrams, type Portion } from '@/portion';
 import { colors, fonts, radius } from '@/theme';
-import { Button, EmptyState, Loading, Screen, StaleNotice } from '@/components/ui';
+import { Button, EmptyState, FadeIn, Loading, Screen, StaleNotice } from '@/components/ui';
 import { FoodEntry, Goals, MealType, Suggestion, Totals } from '@/types';
 import { MacroBar } from '@/features/today/MacroBar';
 import { AddFoodModal } from '@/features/today/AddFoodModal';
@@ -425,11 +425,15 @@ export default function Today() {
             }}
           />
 
-          {loading ? <Loading /> : MEALS.map((meal) => (
+          {loading ? <Loading /> : MEALS.map((meal, mealIndex) => (
             <View key={meal} style={styles.mealSection}>
               <Text style={styles.mealTitle}>{meal}</Text>
-              {byMeal[meal].map((entry) => (
-                <View key={entry.id} style={styles.entry}>
+              {byMeal[meal].map((entry, entryIndex) => (
+                // Staggered by position down the whole day, not within the
+                // meal, so the log assembles top-down rather than four
+                // sections animating in parallel.
+                <FadeIn key={entry.id} index={mealIndex * 2 + entryIndex} style={styles.entry}>
+                  <View style={styles.entryRow}>
                   <Pressable style={styles.entryMain} onPress={() => setViewingEntry(entry)}>
                     <Text style={styles.entryName} numberOfLines={1}>
                       {entry.food_name}
@@ -446,7 +450,8 @@ export default function Today() {
                   <Pressable onPress={() => removeEntry(entry)} hitSlop={10} style={styles.removeBtn}>
                     <Text style={styles.removeText}>×</Text>
                   </Pressable>
-                </View>
+                  </View>
+                </FadeIn>
               ))}
               <Pressable style={styles.addBtn} onPress={() => setActiveMeal(meal)}>
                 <Text style={styles.addBtnText}>+ Add {meal}</Text>
@@ -542,10 +547,10 @@ const styles = StyleSheet.create({
   quickBtn: { marginTop: 10 },
   mealSection: { marginTop: 22 },
   mealTitle: { color: colors.text, fontSize: 16, fontFamily: fonts.bold, marginBottom: 10, textTransform: 'capitalize' },
+  // Split in two: the card chrome sits on the animated wrapper, the row
+  // layout on the view inside it. Leaving `flexDirection: row` on the wrapper
+  // would lay the animated container out as a row and collapse the card.
   entry: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
@@ -554,6 +559,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 8,
   },
+  entryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   entryMain: { flex: 1, marginRight: 8 },
   entryName: { color: colors.text, fontSize: 15 },
   entrySub: { color: colors.textDim, fontSize: 13, marginTop: 2 },

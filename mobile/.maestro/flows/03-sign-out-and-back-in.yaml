@@ -28,7 +28,7 @@ appId: app.nutriai.mobile
     timeout: 45000
 - tapOn: 'Sign out'
 - extendedWaitUntil:
-    visible: 'Sign in to keep tracking'
+    id: 'login-screen'
     timeout: 20000
 
 # A relaunch must still be signed out — if the session survived a sign-out,
@@ -37,7 +37,7 @@ appId: app.nutriai.mobile
 - launchApp:
     clearState: false
 - extendedWaitUntil:
-    visible: 'Sign in to keep tracking'
+    id: 'login-screen'
     timeout: 30000
 - assertNotVisible: 'Quick log .*'
 

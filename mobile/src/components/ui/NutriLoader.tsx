@@ -147,7 +147,14 @@ export function NutriLoader({ size = 64, label, bare = false }: NutriLoaderProps
             pointerEvents="none"
           >
             <Svg width={size} height={size} viewBox="0 0 24 24">
-              <G>
+              {/*
+                The path's own bounding box is centred on (12.45, 8.65), not
+                (12, 12) — a leaf drawn from its stem upward sits high in its
+                box. Measured rather than eyeballed, and corrected here so the
+                leaf sits in the middle of the ring instead of riding its top
+                edge.
+              */}
+              <G transform="translate(-0.45 3.35)">
                 <Path
                   d="M12 4c4.2 1 5.6 5 3.4 7.8C13.6 14.2 10 13.7 8.9 11.3 7.9 9.1 9 5.6 12 4Z"
                   fill={colors.accent}

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { DarkTheme, ThemeProvider, type Theme } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
 import {
   useFonts,
@@ -18,6 +19,31 @@ import { NutriLoader } from '@/components/ui/NutriLoader';
 import { colors } from '@/theme';
 
 applyDefaultFont();
+
+/**
+ * The navigator's own theme.
+ *
+ * React Navigation defaults to a **light** theme whose background is
+ * `rgb(242, 242, 242)`. Every screen here paints its own dark background, so
+ * that was invisible until the tabs started cross-fading — and then it showed
+ * as a white flash between scenes, because a fade briefly reveals whatever the
+ * navigator is drawing underneath.
+ *
+ * Fixing it at the theme rather than per-navigator: the same white sits behind
+ * modals, the stack, and anything added later, so patching one `sceneStyle`
+ * would just move the bug somewhere less obvious.
+ */
+const navigationTheme: Theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: colors.bg,
+    card: colors.bg,
+    border: colors.border,
+    text: colors.text,
+    primary: colors.accent,
+  },
+};
 
 // Hold the native splash until fonts are ready, so no frame renders in the
 // fallback system font and then reflows once Inter loads.
@@ -52,7 +78,23 @@ function AuthGate() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        /**
+         * A fade, not the platform's default push.
+         *
+         * These are not a navigation hierarchy — they are states: signed out,
+         * onboarding, in the app. Sliding implies a back gesture that does not
+         * exist, and the redirect is a `replace`, so the slide plays against a
+         * screen the user can never return to. A cross-fade reads as the app
+         * changing state, which is what happened.
+         */
+        animation: 'fade',
+        animationDuration: 220,
+        contentStyle: { backgroundColor: colors.bg },
+      }}
+    >
       <Stack.Screen name="index" />
       <Stack.Screen name="login" />
       <Stack.Screen name="signup" />
@@ -94,12 +136,14 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <AuthProvider>
-          <StatusBar style="light" />
-          <AuthGate />
-        </AuthProvider>
-      </View>
+      <ThemeProvider value={navigationTheme}>
+        <View style={{ flex: 1, backgroundColor: colors.bg }}>
+          <AuthProvider>
+            <StatusBar style="light" />
+            <AuthGate />
+          </AuthProvider>
+        </View>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

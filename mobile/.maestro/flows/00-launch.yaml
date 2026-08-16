@@ -9,7 +9,8 @@ appId: app.nutriai.mobile
 - clearState
 - launchApp
 - assertVisible: 'NutriAI'
-- assertVisible: 'Sign in to keep tracking'
+- assertVisible:
+    id: 'login-screen'
 - assertVisible:
     text: 'Email'
 - assertVisible:

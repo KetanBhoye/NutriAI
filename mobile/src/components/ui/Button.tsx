@@ -17,12 +17,18 @@ export function Button({ title, onPress, variant = 'primary', disabled, busy, st
   const isDisabled = disabled || busy;
 
   /**
-   * A press dips the button slightly and taps back.
+   * A press dips the button and springs it back.
    *
-   * Scale runs on the native driver so it stays smooth even while the press
-   * handler is doing work — which for the primary buttons here (log a food,
-   * save the plan) it usually is. Without that the feedback arrives late,
-   * which feels worse than no feedback at all.
+   * The scale lives on a wrapping `Animated.View`, **not** on an animated
+   * Pressable. `Animated.createAnimatedComponent(Pressable)` passes a
+   * function `style` through without resolving it, so the variant styles
+   * never applied: the primary button lost its green fill and its minimum
+   * height, leaving dark text on a dark background in a collapsed row. The
+   * pressed state has to stay on a plain Pressable for that callback to work.
+   *
+   * Native driver, because the press handler is usually doing work — logging
+   * a food, saving a plan — and feedback that arrives after it feels worse
+   * than none.
    */
   const scale = useRef(new Animated.Value(1)).current;
   const to = useCallback(
@@ -37,46 +43,44 @@ export function Button({ title, onPress, variant = 'primary', disabled, busy, st
   );
 
   return (
-    <AnimatedPressable
-      style={({ pressed }) => [
-        styles.base,
-        variant === 'primary' && styles.primary,
-        variant === 'ghost' && styles.ghost,
-        variant === 'danger' && styles.danger,
-        (isDisabled || pressed) && styles.pressed,
-        { transform: [{ scale }] },
-        style,
-      ]}
-      onPressIn={() => {
-        if (isDisabled) return;
-        to(0.965);
-        // Selection rather than impact: four of these a minute while logging
-        // a meal, so it has to be a tick, not a thud.
-        void Haptics.selectionAsync().catch(() => {});
-      }}
-      onPressOut={() => to(1)}
-      onPress={onPress}
-      disabled={isDisabled}
-    >
-      {busy ? (
-        <NutriLoader size={22} bare />
-      ) : (
-        <Text
-          style={[
-            styles.text,
-            variant === 'primary' && styles.primaryText,
-            variant === 'ghost' && styles.ghostText,
-            variant === 'danger' && styles.dangerText,
-          ]}
-        >
-          {title}
-        </Text>
-      )}
-    </AnimatedPressable>
+    <Animated.View style={[{ transform: [{ scale }] }, style]}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.base,
+          variant === 'primary' && styles.primary,
+          variant === 'ghost' && styles.ghost,
+          variant === 'danger' && styles.danger,
+          (isDisabled || pressed) && styles.pressed,
+        ]}
+        onPressIn={() => {
+          if (isDisabled) return;
+          to(0.965);
+          // Selection rather than impact: several of these a minute while
+          // logging a meal, so it has to be a tick, not a thud.
+          void Haptics.selectionAsync().catch(() => {});
+        }}
+        onPressOut={() => to(1)}
+        onPress={onPress}
+        disabled={isDisabled}
+      >
+        {busy ? (
+          <NutriLoader size={22} bare />
+        ) : (
+          <Text
+            style={[
+              styles.text,
+              variant === 'primary' && styles.primaryText,
+              variant === 'ghost' && styles.ghostText,
+              variant === 'danger' && styles.dangerText,
+            ]}
+          >
+            {title}
+          </Text>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const styles = StyleSheet.create({
   base: {

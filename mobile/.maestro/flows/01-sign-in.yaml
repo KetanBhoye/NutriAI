@@ -8,7 +8,8 @@ appId: app.nutriai.mobile
 ---
 - clearState
 - launchApp
-- assertVisible: 'Sign in to keep tracking'
+- assertVisible:
+    id: 'login-screen'
 
 - tapOn:
     text: 'Email'

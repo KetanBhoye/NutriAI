@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { Card } from '@/components/ui';
+import { AnimatedBar, Card, CountUp } from '@/components/ui';
 import { colors } from '@/theme';
 import { Goals, Totals } from '@/types';
 
@@ -24,12 +24,10 @@ export function MacroBar({ totals, goals }: MacroBarProps) {
       <View style={styles.row}>
         <Text style={styles.label}>Calories</Text>
         <Text style={styles.value}>
-          {Math.round(totals.calories)} / {goals.daily_calorie_goal}
+          <CountUp value={totals.calories} style={styles.value} /> / {goals.daily_calorie_goal}
         </Text>
       </View>
-      <View style={styles.track}>
-        <View style={[styles.fill, { width: `${caloriePct}%` }, over && styles.fillOver]} />
-      </View>
+      <AnimatedBar percent={caloriePct} height={8} color={over ? colors.warn : colors.accent} />
 
       <View style={styles.macroRow}>
         {macros.map((m) => (
@@ -38,9 +36,7 @@ export function MacroBar({ totals, goals }: MacroBarProps) {
               <Text style={styles.macroLabel}>{m.label}</Text>
               <Text style={styles.macroValue}>{Math.round(m.value)}g</Text>
             </View>
-            <View style={styles.trackThin}>
-              <View style={[styles.fill, { width: `${Math.min(100, (m.value / m.goal) * 100)}%` }]} />
-            </View>
+            <AnimatedBar percent={(m.value / m.goal) * 100} height={5} />
           </View>
         ))}
       </View>

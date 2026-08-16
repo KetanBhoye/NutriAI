@@ -8,7 +8,7 @@ appId: app.nutriai.mobile
 ---
 - runFlow:
     when:
-      visible: 'Sign in to keep tracking'
+      id: 'login-screen'
     commands:
       - tapOn: 'Email'
       - inputText: ${EMAIL}

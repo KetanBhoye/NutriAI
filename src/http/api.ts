@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
+import { humanValidationError } from './validation.js';
 import type { AppEnv } from '../db/types.js';
 import {
   createSession,
@@ -361,7 +362,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const parsed = signupSchema.safeParse(req.body);
 
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -412,7 +413,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const parsed = loginSchema.safeParse(req.body);
 
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -585,7 +586,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = entryCreateSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -610,7 +611,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = suggestionsQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -725,7 +726,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = activitySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -873,7 +874,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = goalPlanSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -911,7 +912,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = preferencesSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -930,7 +931,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = aiPlanSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -965,7 +966,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = onboardingCompleteSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
       const userId = req.sessionUser!.userId;
@@ -1035,7 +1036,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       }
       const parsed = pushSubscribeSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
       await saveSubscription(env.DB, req.sessionUser!.userId, parsed.data);
@@ -1096,7 +1097,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = aiParseSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -1209,7 +1210,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = coachChatSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -1467,7 +1468,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = foodCreateSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 
@@ -1494,7 +1495,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const parsed = entryUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.message });
+        res.status(400).json({ error: humanValidationError(parsed.error) });
         return;
       }
 

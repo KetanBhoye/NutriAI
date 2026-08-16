@@ -62,6 +62,15 @@ export default function TabsLayout() {
         // Every screen renders its own title/header (mirroring the web app's
         // full-bleed pages), so a navigator header would just duplicate it.
         headerShown: false,
+        // A short cross-fade. Tabs are siblings, so a slide would imply an
+        // order they do not have; 180ms is under the threshold where a
+        // transition starts to feel like waiting.
+        animation: 'fade',
+        transitionSpec: { animation: 'timing', config: { duration: 180 } },
+        // The surface a cross-fade reveals between scenes. The dark navigation
+        // theme already covers this, but the scene container is the thing
+        // actually on screen mid-transition, so it says so explicitly.
+        sceneStyle: { backgroundColor: colors.bg },
         tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textDim,

@@ -39,7 +39,8 @@ onFlowComplete:
     visible: 'Today'
     timeout: 30000
 - assertVisible: 'Plan'
-- assertNotVisible: 'Sign in to keep tracking'
+- assertNotVisible:
+    id: 'login-screen'
 
 # Back online, the same cookie must still be accepted — this is what separates
 # "we kept the session" from "we kept a dead session".
@@ -50,4 +51,5 @@ onFlowComplete:
 - extendedWaitUntil:
     visible: 'Today'
     timeout: 30000
-- assertNotVisible: 'Sign in to keep tracking'
+- assertNotVisible:
+    id: 'login-screen'
