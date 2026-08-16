@@ -5,6 +5,7 @@ import { useCachedResource } from '@/useCachedResource';
 import { writeCache } from '@/cache';
 import { subscribeGoalsChanged } from '@/goalsBus';
 import { NudgeCard } from '@/features/nudge/NudgeCard';
+import { ConsistencyCard } from '@/features/consistency/ConsistencyCard';
 import { pickNudge } from '@/features/nudge/consequences';
 import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
 import { emitWeeklyBadgeChanged, markWeeklyBadgeSeen } from '@/features/nudge/weeklyBadge';
@@ -58,6 +59,11 @@ export default function Trends() {
     errorMessage: "Couldn't load your trends.",
   });
   const goals = useCachedResource('goals', () => goalsApi.getGoals());
+  // The client's own calendar day: the week boundary is computed from it, and
+  // a server-side "today" puts +05:30 users in the wrong week each morning.
+  const consistency = useCachedResource('consistency', () =>
+    dashboardApi.getConsistency(todayISO())
+  );
   // The weekly report is an LLM call and the server caches it per day, so it
   // is the most valuable thing to serve from cache and refresh behind.
   const report = useCachedResource('insights.weekly', () => dashboardApi.getWeeklyInsights(), {
@@ -67,6 +73,7 @@ export default function Trends() {
   // The goal line has to move when the plan does, and this tab stays mounted
   // while the plan is edited on another one.
   const refreshGoals = goals.refresh;
+  const refreshConsistency = consistency.refresh;
   useEffect(() => subscribeGoalsChanged(() => void refreshGoals()), [refreshGoals]);
 
   const [refreshingReport, setRefreshingReport] = useState(false);
@@ -84,7 +91,7 @@ export default function Trends() {
   };
 
   const refreshAll = async () => {
-    await Promise.all([stats.refresh(), goals.refresh(), report.refresh()]);
+    await Promise.all([stats.refresh(), goals.refresh(), report.refresh(), refreshConsistency()]);
   };
 
   const goalCalories = goals.data?.macros.calories ?? FALLBACK_GOAL_CALORIES;
@@ -188,6 +195,11 @@ export default function Trends() {
       <Text style={styles.title}>Trends</Text>
 
       {stats.stale || report.stale ? <StaleNotice /> : null}
+
+      {/* First, because it answers "how am I doing" in one number and gives
+          everything below it a frame. The nudge that follows is the "what to
+          do about it", and the report is the commentary. */}
+      {consistency.data?.available ? <ConsistencyCard data={consistency.data} /> : null}
 
       {/* Above the report: this is the checkable arithmetic, and the prose
           below is commentary on it rather than the only account of the week. */}
