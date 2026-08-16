@@ -14,6 +14,16 @@
  *
  * Usage:
  *   node deploy/postgres/seed-dev-data.mjs <postgres-url> [--days 14]
+ *        [--end YYYY-MM-DD]  last day to seed; defaults to today (UTC)
+ *        [--reset]           clear existing rows in the range first
+ *
+ * `--end` matters more than it looks: the app asks for *its* local date, so a
+ * server seeding "up to UTC today" leaves the current week empty for anyone
+ * east of UTC — which is exactly the week you want to look at.
+ *
+ * `--reset` makes re-running idempotent instead of stacking duplicate days on
+ * top of each other. It deletes real rows in the range for the seeded users,
+ * so it is dev-only by construction.
  *
  * Refuses to run against anything that looks like production.
  */
@@ -40,8 +50,8 @@ function makeRng(seed) {
   };
 }
 
-const iso = (daysAgo) =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+const isoFrom = (endMs) => (daysAgo) =>
+  new Date(endMs - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
 async function main() {
   const [url, ...rest] = process.argv.slice(2);
@@ -51,6 +61,15 @@ async function main() {
   }
   const daysArg = rest.indexOf('--days');
   const DAYS = daysArg >= 0 ? Number(rest[daysArg + 1]) : 14;
+  const endArg = rest.indexOf('--end');
+  const endDate = endArg >= 0 ? rest[endArg + 1] : new Date().toISOString().slice(0, 10);
+  const RESET = rest.includes('--reset');
+  const endMs = Date.parse(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(endMs)) {
+    console.error(`--end must be YYYY-MM-DD, got: ${endDate}`);
+    process.exit(1);
+  }
+  const iso = isoFrom(endMs);
 
   // Guard: this writes fabricated rows, and doing that to real user data would
   // be unrecoverable without a restore.
@@ -85,8 +104,24 @@ async function main() {
   let activity = 0;
   let weighIns = 0;
 
+  const rangeStart = iso(DAYS - 1);
+  const rangeEnd = iso(0);
+
   await client.query('BEGIN');
   try {
+    if (RESET) {
+      const ids = users.map((u) => u.id);
+      for (const [table, column] of [
+        ['food_entries', 'entry_date'],
+        ['daily_activity', 'activity_date'],
+        ['profile_tracking', 'recorded_date'],
+      ]) {
+        await client.query(
+          `DELETE FROM ${table} WHERE user_id = ANY($1) AND ${column} BETWEEN $2 AND $3`,
+          [ids, rangeStart, rangeEnd]
+        );
+      }
+    }
     for (const [index, user] of users.entries()) {
       const rng = makeRng(index * 7919 + 13);
       const kcalGoal = user.daily_calorie_goal ?? 2000;
@@ -175,6 +210,7 @@ async function main() {
     await client.end();
   }
 
+  console.log(`range:         ${rangeStart} .. ${rangeEnd}${RESET ? ' (reset first)' : ''}`);
   console.log(`users seeded:  ${users.length}`);
   console.log(`food entries:  ${entries}`);
   console.log(`activity days: ${activity}`);
