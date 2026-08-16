@@ -1,0 +1,12 @@
+-- Postgres-only. Not generated from migrations/portable.
+--
+-- Login looks up `WHERE lower(email) = lower($1)`, which replaced SQLite's
+-- `COLLATE NOCASE`. A plain b-tree index on `email` cannot serve that
+-- predicate, so every sign-in would degrade to a sequential scan of `users`.
+-- Small today; not something to discover at 30k rows.
+--
+-- Unique as well as indexed: `email` already carries a UNIQUE constraint, but
+-- that is case-sensitive, so 'a@b.com' and 'A@B.com' could both be inserted
+-- and then both match the same login. This makes the case-insensitive
+-- uniqueness the app already assumes actually true.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email));

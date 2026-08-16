@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { D1DatabaseCompat } from './types.js';
 import { createPasswordHash, hashSha256 } from '../auth/security.js';
+import { isoNow } from './time.js';
 
 interface BootstrapOptions {
   migrationsDir: string;
@@ -123,18 +124,18 @@ async function ensureDefaultAdmin(
 
 async function cleanupExpiredAuthData(db: D1DatabaseCompat): Promise<void> {
   await db
-    .prepare("DELETE FROM oauth_authorization_codes WHERE datetime(expires_at) <= datetime('now')")
-    .bind()
+    .prepare('DELETE FROM oauth_authorization_codes WHERE expires_at <= ?')
+    .bind(isoNow())
     .run();
 
   await db
-    .prepare("DELETE FROM oauth_tokens WHERE datetime(expires_at) <= datetime('now')")
-    .bind()
+    .prepare('DELETE FROM oauth_tokens WHERE expires_at <= ?')
+    .bind(isoNow())
     .run();
 
   await db
-    .prepare("DELETE FROM web_sessions WHERE datetime(expires_at) <= datetime('now')")
-    .bind()
+    .prepare('DELETE FROM web_sessions WHERE expires_at <= ?')
+    .bind(isoNow())
     .run();
 }
 

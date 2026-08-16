@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Response } from 'express';
 import type { D1DatabaseCompat } from '../db/types.js';
+import { isoNow } from '../db/time.js';
 
 const SESSION_COOKIE_NAME = 'ct_sid';
 
@@ -61,9 +62,9 @@ export async function getSessionUser(
       `SELECT s.user_id, u.role, u.name, u.email
        FROM web_sessions s
        JOIN users u ON u.id = s.user_id
-       WHERE s.session_id = ? AND datetime(s.expires_at) > datetime('now')`
+       WHERE s.session_id = ? AND s.expires_at > ?`
     )
-    .bind(sessionId)
+    .bind(sessionId, isoNow())
     .first<{ user_id: string; role: string; name: string; email: string }>();
 
   if (!result) {

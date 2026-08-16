@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import z from 'zod';
 import type { D1DatabaseCompat } from '../db/types.js';
+import { isoNow } from '../db/time.js';
 import {
   getSessionIdFromCookie,
   getSessionUser,
@@ -452,9 +453,9 @@ export function createOAuthRouter(options: OAuthRouterOptions): Router {
           .prepare(
             `SELECT client_id, user_id, redirect_uri, code_challenge, code_challenge_method, scope
              FROM oauth_authorization_codes
-             WHERE code_hash = ? AND datetime(expires_at) > datetime('now')`
+             WHERE code_hash = ? AND expires_at > ?`
           )
-          .bind(hashSha256(code))
+          .bind(hashSha256(code), isoNow())
           .first<{
             client_id: string;
             user_id: string;

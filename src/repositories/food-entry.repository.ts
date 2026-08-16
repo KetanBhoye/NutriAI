@@ -1,4 +1,5 @@
-import { FoodEntry, AddEntryParams, UpdateEntryParams, ListEntriesParams } from '../types/index.js';
+import { daysAgo } from '../db/time.js';
+import type { FoodEntry, AddEntryParams, UpdateEntryParams, ListEntriesParams } from '../types/index.js';
 
 export class FoodEntryRepository {
   constructor(private db: any) {}
@@ -138,12 +139,12 @@ export class FoodEntryRepository {
           COALESCE(SUM(fat_g), 0) AS fat_g,
           COUNT(*) AS entry_count
         FROM food_entries
-        WHERE user_id = ? AND entry_date >= date('now', ?)
+        WHERE user_id = ? AND entry_date >= ?
         GROUP BY entry_date
         ORDER BY entry_date ASC
         `
       )
-      .bind(userId, `-${days} days`)
+      .bind(userId, daysAgo(days))
       .all();
 
     return result.results;

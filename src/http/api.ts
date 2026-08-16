@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
+import { daysAgo } from '../db/time.js';
 import { humanValidationError } from './validation.js';
 import { COMPLETE_DAY_KCAL, loggingStreak } from '../services/streak.js';
 import type { AppEnv } from '../db/types.js';
@@ -333,7 +334,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       }
 
       let user = await env.DB
-        .prepare('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE')
+        .prepare('SELECT id, name, email FROM users WHERE lower(email) = lower(?)')
         .bind(email)
         .first<{ id: string; name: string; email: string }>();
 
@@ -373,7 +374,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const email = parsed.data.email.trim().toLowerCase();
 
       const existing = await env.DB
-        .prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE')
+        .prepare('SELECT id FROM users WHERE lower(email) = lower(?)')
         .bind(email)
         .first<{ id: string }>();
 
@@ -422,7 +423,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const email = parsed.data.email.trim().toLowerCase();
 
       const user = await env.DB
-        .prepare('SELECT id, name, email, role FROM users WHERE email = ? COLLATE NOCASE')
+        .prepare('SELECT id, name, email, role FROM users WHERE lower(email) = lower(?)')
         .bind(email)
         .first<{ id: string; name: string; email: string; role: string }>();
 
@@ -809,10 +810,10 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const dailyIntake = await env.DB
         .prepare(
           `SELECT entry_date, SUM(calories) AS calories FROM food_entries
-           WHERE user_id = ? AND entry_date >= date('now', '-60 days')
+           WHERE user_id = ? AND entry_date >= ?
            GROUP BY entry_date`
         )
-        .bind(userId)
+        .bind(userId, daysAgo(60))
         .all<{ entry_date: string; calories: number }>();
 
       // Only days with a plausibly complete log feed the deficit: a day with
@@ -1680,10 +1681,10 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const intake = await env.DB
         .prepare(
           `SELECT entry_date, SUM(calories) AS cal, SUM(protein_g) AS pro
-           FROM food_entries WHERE user_id = ? AND entry_date >= date('now', '-6 days')
+           FROM food_entries WHERE user_id = ? AND entry_date >= ?
            GROUP BY entry_date`
         )
-        .bind(userId)
+        .bind(userId, daysAgo(6))
         .all<{ entry_date: string; cal: number; pro: number }>();
       const days = (intake.results ?? []).filter((d) => d.cal >= 200);
       const daysLogged = days.length;
@@ -1695,9 +1696,9 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const stepRows = await env.DB
         .prepare(
           `SELECT steps FROM daily_activity
-           WHERE user_id = ? AND activity_date >= date('now', '-6 days') AND steps IS NOT NULL`
+           WHERE user_id = ? AND activity_date >= ? AND steps IS NOT NULL`
         )
-        .bind(userId)
+        .bind(userId, daysAgo(6))
         .all<{ steps: number }>();
       const avgSteps = avg((stepRows.results ?? []).map((r) => r.steps));
 
@@ -1726,10 +1727,10 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const weigh = await env.DB
         .prepare(
           `SELECT weight_kg, tdee_calories, recorded_date FROM profile_tracking
-           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date >= date('now', '-14 days')
+           WHERE user_id = ? AND weight_kg IS NOT NULL AND recorded_date >= ?
            ORDER BY recorded_date ASC`
         )
-        .bind(userId)
+        .bind(userId, daysAgo(14))
         .all<{ weight_kg: number; tdee_calories: number | null; recorded_date: string }>();
       const weighIns = weigh.results ?? [];
       const weightChange =
@@ -1821,7 +1822,12 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         payload = { report, stats, generated_at: new Date().toISOString(), source: 'ai' };
         await env.DB
           .prepare(
-            'INSERT OR REPLACE INTO weekly_reports (user_id, period_key, report_json) VALUES (?, ?, ?)'
+            // ON CONFLICT rather than INSERT OR REPLACE, which is SQLite-only.
+            // created_at is refreshed explicitly because OR REPLACE deleted the
+            // row and re-defaulted it, and the report is genuinely regenerated.
+            `INSERT INTO weekly_reports (user_id, period_key, report_json) VALUES (?, ?, ?)
+             ON CONFLICT (user_id, period_key) DO UPDATE
+               SET report_json = excluded.report_json, created_at = CURRENT_TIMESTAMP`
           )
           .bind(userId, periodKey, JSON.stringify(payload))
           .run();
@@ -1873,7 +1879,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
 
       const totalEntriesRow = await env.DB.prepare('SELECT COUNT(*) c FROM food_entries').first<{ c: number }>();
       const entries7dRow = await env.DB
-        .prepare("SELECT COUNT(*) c FROM food_entries WHERE entry_date >= date('now','-7 days')")
+        .prepare('SELECT COUNT(*) c FROM food_entries WHERE entry_date >= ?')
+        .bind(daysAgo(7))
         .first<{ c: number }>();
       const foodsRow = await env.DB.prepare('SELECT COUNT(*) c FROM foods').first<{ c: number }>();
       const weighRow = await env.DB

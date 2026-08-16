@@ -25,6 +25,18 @@
  */
 const JSONB_OPERATOR_SUFFIXES = new Set(['?', '|', '&']);
 
+/**
+ * Postgres' `CURRENT_TIMESTAMP` is a `timestamptz` and will not assign to the
+ * TEXT columns this schema uses — 24 call sites write it into `created_at` /
+ * `updated_at`. Rather than edit all 24, it is substituted here for an
+ * expression that yields SQLite's exact rendering (`YYYY-MM-DD HH:MM:SS`, UTC),
+ * so rows written through either driver stay byte-comparable. See db/time.ts.
+ *
+ * `CURRENT_DATE` is deliberately left alone: it targets real `date` columns,
+ * where Postgres' own value is already correct.
+ */
+const PG_UTC_TIMESTAMP_TEXT = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+
 export interface RewrittenQuery {
   text: string;
   /** How many placeholders were substituted; used to sanity-check bind arity. */
@@ -85,6 +97,13 @@ export function toPositionalParams(query: string): RewrittenQuery {
       }
     }
 
+    // --- CURRENT_TIMESTAMP, but only as a whole word. ---
+    if ((char === 'C' || char === 'c') && matchesKeyword(query, i, 'CURRENT_TIMESTAMP')) {
+      out += PG_UTC_TIMESTAMP_TEXT;
+      i += 'CURRENT_TIMESTAMP'.length;
+      continue;
+    }
+
     // --- An actual placeholder. ---
     if (char === '?') {
       // `??`, `?|`, `?&` are jsonb operators, not placeholders.
@@ -104,6 +123,22 @@ export function toPositionalParams(query: string): RewrittenQuery {
   }
 
   return { text: out, count };
+}
+
+/**
+ * Whole-word, case-insensitive keyword match. The word-boundary check matters:
+ * a column named `current_timestamp_utc` must not be partially rewritten.
+ */
+function matchesKeyword(query: string, start: number, keyword: string): boolean {
+  const slice = query.slice(start, start + keyword.length);
+  if (slice.toUpperCase() !== keyword) return false;
+  const before = start > 0 ? query[start - 1] : '';
+  const after = query[start + keyword.length] ?? '';
+  return !isWordChar(before) && !isWordChar(after);
+}
+
+function isWordChar(char: string): boolean {
+  return char !== '' && /[A-Za-z0-9_]/.test(char);
 }
 
 /**

@@ -1,3 +1,4 @@
+import { daysAgo } from '../db/time.js';
 export interface DailyActivity {
   activity_date: string;
   steps: number | null;
@@ -65,26 +66,26 @@ export class DailyActivityRepository {
            * so a sync keeps filling those in either way.
            */
           steps = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN steps
-            ELSE COALESCE(excluded.steps, steps) END,
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.steps
+            ELSE COALESCE(excluded.steps, daily_activity.steps) END,
           exercise_minutes = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_minutes
-            ELSE COALESCE(excluded.exercise_minutes, exercise_minutes) END,
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.exercise_minutes
+            ELSE COALESCE(excluded.exercise_minutes, daily_activity.exercise_minutes) END,
           exercise_type = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_type
-            ELSE COALESCE(excluded.exercise_type, exercise_type) END,
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.exercise_type
+            ELSE COALESCE(excluded.exercise_type, daily_activity.exercise_type) END,
           exercise_kcal = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_kcal
-            ELSE COALESCE(excluded.exercise_kcal, exercise_kcal) END,
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.exercise_kcal
+            ELSE COALESCE(excluded.exercise_kcal, daily_activity.exercise_kcal) END,
           distance_km = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN distance_km
-            ELSE COALESCE(excluded.distance_km, distance_km) END,
-          active_energy_kcal = COALESCE(excluded.active_energy_kcal, active_energy_kcal),
-          resting_energy_kcal = COALESCE(excluded.resting_energy_kcal, resting_energy_kcal),
-          stand_hours = COALESCE(excluded.stand_hours, stand_hours),
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.distance_km
+            ELSE COALESCE(excluded.distance_km, daily_activity.distance_km) END,
+          active_energy_kcal = COALESCE(excluded.active_energy_kcal, daily_activity.active_energy_kcal),
+          resting_energy_kcal = COALESCE(excluded.resting_energy_kcal, daily_activity.resting_energy_kcal),
+          stand_hours = COALESCE(excluded.stand_hours, daily_activity.stand_hours),
           -- The day stays marked manual once a person has touched it.
           source = CASE
-            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN source
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.source
             ELSE excluded.source END,
           updated_at = CURRENT_TIMESTAMP
         `
@@ -113,11 +114,11 @@ export class DailyActivityRepository {
         SELECT activity_date, steps, active_energy_kcal, resting_energy_kcal,
                exercise_minutes, stand_hours, distance_km, exercise_type, exercise_kcal, source
         FROM daily_activity
-        WHERE user_id = ? AND activity_date >= date('now', ?)
+        WHERE user_id = ? AND activity_date >= ?
         ORDER BY activity_date ASC
         `
       )
-      .bind(userId, `-${days} days`)
+      .bind(userId, daysAgo(days))
       .all();
 
     return result.results as DailyActivity[];

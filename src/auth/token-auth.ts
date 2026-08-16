@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import type { AuthUser, D1DatabaseCompat } from '../db/types.js';
 import { hashSha256 } from './security.js';
+import { isoNow } from '../db/time.js';
 
 export function extractBearerToken(headerValue?: string): string | null {
   if (!headerValue || !headerValue.startsWith('Bearer ')) {
@@ -20,9 +21,9 @@ export async function verifyBearerToken(
       `SELECT t.user_id, u.role
        FROM oauth_tokens t
        JOIN users u ON u.id = t.user_id
-       WHERE t.token_hash = ? AND datetime(t.expires_at) > datetime('now')`
+       WHERE t.token_hash = ? AND t.expires_at > ?`
     )
-    .bind(tokenHash)
+    .bind(tokenHash, isoNow())
     .first<{ user_id: string; role: string }>();
 
   if (oauthTokenResult) {

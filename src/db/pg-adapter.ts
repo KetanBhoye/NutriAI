@@ -36,6 +36,18 @@ pg.types.setTypeParser(1700, (value: string) => Number.parseFloat(value));
 /** `int8` (OID 20) likewise arrives as a string; COUNT(*) is the common case. */
 pg.types.setTypeParser(20, (value: string) => Number.parseInt(value, 10));
 
+/**
+ * `date` (OID 1082) is parsed into a JS `Date` by default. SQLite hands back
+ * the plain 'YYYY-MM-DD' string, and the app treats these columns as strings
+ * throughout — `entry_date.split('-')`, map keys, direct comparisons. A Date
+ * object breaks all of that, and it fails as `from.split is not a function`
+ * a long way from the query that produced it.
+ *
+ * Returning the raw string also avoids a timezone hazard: `new Date('2026-08-17')`
+ * is midnight UTC, which renders as the 16th anywhere west of Greenwich.
+ */
+pg.types.setTypeParser(1082, (value: string) => value);
+
 type Queryable = Pick<pg.PoolClient, 'query'>;
 
 class PgPreparedStatement implements D1PreparedStatement {
@@ -128,7 +140,9 @@ export class PgDatabase implements D1DatabaseCompat {
 
     // Multi-statement DDL. Postgres allows it in a simple query only when
     // there are no bind parameters, which is true for every migration file.
-    await this.target().query(query);
+    // Still translated, because bootstrap.ts creates schema_migrations here
+    // with a TEXT column defaulting to CURRENT_TIMESTAMP.
+    await this.target().query(toPositionalParams(query).text);
   }
 
   private target(): Queryable {
@@ -168,8 +182,30 @@ export function openPostgresDatabase(connectionString: string): {
   return { pool, compat: new PgDatabase(pool) };
 }
 
+/**
+ * TLS is for connections that cross a network. Railway's `.railway.internal`
+ * host and a developer's localhost are both private and serve no certificate —
+ * asking for SSL there fails outright with "server does not support SSL".
+ */
 function requiresSsl(connectionString: string): boolean {
-  // Railway's internal `.railway.internal` host is on a private network and
-  // does not offer TLS; the public proxy host does.
-  return !connectionString.includes('.railway.internal');
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    // Not parseable as a URL; let pg deal with it and do not force SSL.
+    return false;
+  }
+
+  // An explicit sslmode in the URL always wins.
+  const sslmode = url.searchParams.get('sslmode');
+  if (sslmode) return sslmode !== 'disable';
+
+  const host = url.hostname;
+  const isPrivate =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host.endsWith('.railway.internal');
+
+  return !isPrivate;
 }

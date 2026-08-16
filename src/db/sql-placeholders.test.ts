@@ -136,3 +136,56 @@ describe('the real queries in this codebase', () => {
     expect(count).toBe(5);
   });
 });
+
+describe('CURRENT_TIMESTAMP substitution', () => {
+  // 24 call sites write CURRENT_TIMESTAMP into TEXT columns. Postgres refuses
+  // (text <- timestamptz), and its own rendering would not match the format
+  // already stored in the database anyway.
+  it('rewrites it to an expression yielding SQLite-format UTC', () => {
+    const out = rewrite('UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    expect(out).toContain("to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')");
+    expect(out).toContain('id = $1');
+    expect(out).not.toContain('CURRENT_TIMESTAMP');
+  });
+
+  it('rewrites every occurrence in a multi-column insert', () => {
+    const out = rewrite(
+      'INSERT INTO users (id, created_at, updated_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+    );
+    expect(out).not.toContain('CURRENT_TIMESTAMP');
+    expect(out.match(/to_char/g)).toHaveLength(2);
+  });
+
+  it('is case-insensitive', () => {
+    expect(rewrite('SELECT current_timestamp')).toContain('to_char');
+  });
+
+  it('only matches whole words', () => {
+    // A column called `current_timestamp_utc` must survive intact; a partial
+    // rewrite would produce valid SQL naming a column that does not exist.
+    const sql = 'SELECT current_timestamp_utc, my_current_timestamp FROM t';
+    expect(rewrite(sql)).toBe(sql);
+  });
+
+  it('leaves one inside a string literal alone', () => {
+    expect(rewrite("SELECT 'CURRENT_TIMESTAMP' AS label")).toBe(
+      "SELECT 'CURRENT_TIMESTAMP' AS label"
+    );
+  });
+
+  it('leaves CURRENT_DATE alone', () => {
+    // It targets real `date` columns, where Postgres' own value is correct.
+    expect(rewrite('SELECT * FROM t WHERE d = CURRENT_DATE')).toBe(
+      'SELECT * FROM t WHERE d = CURRENT_DATE'
+    );
+  });
+
+  it('does not disturb placeholder numbering', () => {
+    const { text, count } = toPositionalParams(
+      'UPDATE t SET a = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    );
+    expect(count).toBe(2);
+    expect(text).toContain('a = $1');
+    expect(text).toContain('id = $2');
+  });
+});
