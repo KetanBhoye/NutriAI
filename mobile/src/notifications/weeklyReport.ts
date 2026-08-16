@@ -22,6 +22,12 @@ import { remindersEnabled } from './reminders';
 const PREFIX = 'nutriai.weekly-report';
 /** Sunday. `Date.getDay()` counts from Sunday = 0. */
 const REPORT_DAY = 0;
+/**
+ * 19:00. Not 11:00, which is when the breakfast reminder fires — two
+ * notifications in the same second is the "reminders piling up" complaint this
+ * app has already had once, and the weekly one would lose that contest to a
+ * nudge people see every day.
+ */
 const REPORT_HOUR = 19;
 /** Four Sundays ahead: enough that a lapsed user still hears from the app. */
 const WEEKS_AHEAD = 4;

@@ -7,6 +7,7 @@ import { subscribeGoalsChanged } from '@/goalsBus';
 import { NudgeCard } from '@/features/nudge/NudgeCard';
 import { pickNudge } from '@/features/nudge/consequences';
 import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
+import { emitWeeklyBadgeChanged, markWeeklyBadgeSeen } from '@/features/nudge/weeklyBadge';
 import { FALLBACK_GOALS } from '@/nutrition';
 import { addDays, toLocalISODate, todayISO } from '@/dates';
 import { colors, fonts, type } from '@/theme';
@@ -92,6 +93,15 @@ export default function Trends() {
     () => (stats.data ? buildBars(stats.data, goalCalories) : { bars: [] as Bar[], goalLineBottom: 0 }),
     [stats.data, goalCalories]
   );
+  /**
+   * Opening this tab is the badge's whole purpose, so clear it here rather
+   * than on a timer. A badge that outlives the thing it points at is how
+   * people learn to ignore badges.
+   */
+  useEffect(() => {
+    void markWeeklyBadgeSeen(todayISO()).then(emitWeeklyBadgeChanged);
+  }, []);
+
   const missedDays = bars.filter((b) => b.missing).length;
 
   /**

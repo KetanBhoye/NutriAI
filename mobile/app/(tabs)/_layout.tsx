@@ -2,12 +2,14 @@ import { Tabs } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 import { colors } from '@/theme';
 import { useHealthAutoSync } from '@/health/useHealthAutoSync';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { initialiseReminders, scheduleDailyReminder } from '@/notifications/reminders';
 import { notifyIfUpdateAvailable } from '@/notifications/updateNotice';
 import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
+import { shouldShowWeeklyBadge, subscribeWeeklyBadge } from '@/features/nudge/weeklyBadge';
+import { todayISO } from '@/dates';
 import { useAuth } from '@/auth';
 import { subscribeGoalsChanged } from '@/goalsBus';
 
@@ -25,6 +27,32 @@ export default function TabsLayout() {
   // Only reached once signed in, so there's always a session to sync against.
   useHealthAutoSync(true);
   const { refreshUser } = useAuth();
+
+  /**
+   * A dot on Trends for the whole of Sunday, until the tab is opened.
+   *
+   * The 7pm notification arrives once and a phone that was face-down never
+   * shows it again; this is the quiet second chance for anyone who opens the
+   * app at any point that day.
+   */
+  const [weeklyBadge, setWeeklyBadge] = useState(false);
+  const refreshBadge = useCallback(() => {
+    void shouldShowWeeklyBadge(todayISO()).then(setWeeklyBadge);
+  }, []);
+
+  useEffect(() => {
+    refreshBadge();
+    // Trends clears it when opened, and a phone left running past midnight on
+    // Saturday should pick Sunday up without a relaunch.
+    const unsub = subscribeWeeklyBadge(refreshBadge);
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') refreshBadge();
+    });
+    return () => {
+      unsub();
+      sub.remove();
+    };
+  }, [refreshBadge]);
 
   // The OS fixes the notification text when it's scheduled, so refresh it on
   // each launch to reflect the current day's log. On a first run this also
@@ -92,6 +120,8 @@ export default function TabsLayout() {
         name="dashboard"
         options={{
           title: 'Trends',
+          tabBarBadge: weeklyBadge ? '' : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.accent, minWidth: 10, maxHeight: 10, borderRadius: 5 },
           tabBarIcon: ({ color, size }) => <Feather name="bar-chart-2" color={color} size={size} />,
         }}
       />

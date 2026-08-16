@@ -10,12 +10,24 @@ appId: app.nutriai.mobile
 
 - tapOn: 'Trends'
 - assertVisible: 'Trends'
+# Scrolled to, not assumed: the weekly-pattern card appears above these tiles
+# whenever there is one to show, so where they sit depends on the account's
+# recent logging rather than on the layout.
 - extendedWaitUntil:
-    visible: 'DAY STREAK'
+    visible: 'Trends'
     timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: 'DAY STREAK'
+    direction: DOWN
+    timeout: 30000
 - assertVisible: 'AVG KCAL'
 - assertVisible: 'DAYS LOGGED'
-- assertVisible: 'Last 14 days'
+- scrollUntilVisible:
+    element:
+      text: 'Last 14 days'
+    direction: DOWN
+    timeout: 30000
 
 # Figures must be readable, not cropped. Android used to cut the tops off
 # digits inside a tile that also showed a unit.
