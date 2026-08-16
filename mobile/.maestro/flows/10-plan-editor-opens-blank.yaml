@@ -25,7 +25,14 @@ appId: app.nutriai.mobile
     direction: DOWN
     timeout: 45000
 - tapOn: 'Edit plan'
-- assertVisible: 'Same questions as setup, starting from blank.*'
+# The editor keeps the scroll position it was opened from, and "Edit plan" is
+# five screens down — so its intro line is off the top before anything has gone
+# wrong. Reach for it rather than assuming where the view sits.
+- scrollUntilVisible:
+    element:
+      text: 'Same questions as setup, starting from blank.*'
+    direction: UP
+    timeout: 30000
 
 # Nothing is chosen, so nothing has been recalculated.
 - assertVisible: 'Pick an activity level to see your maintenance calories.'
