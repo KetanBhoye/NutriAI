@@ -1,4 +1,4 @@
-import { ProfileTracking } from '../types/index.js';
+import type { ProfileTracking } from '../types/index.js';
 import { randomUUID } from 'crypto';
 
 export class ProfileTrackingRepository {

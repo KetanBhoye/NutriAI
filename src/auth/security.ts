@@ -4,7 +4,7 @@ export function hashSha256(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
-export function randomToken(size: number = 32): string {
+export function randomToken(size = 32): string {
   return randomBytes(size).toString('hex');
 }
 

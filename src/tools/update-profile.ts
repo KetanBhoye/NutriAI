@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CallToolResult, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { ToolHandler, UpdateProfileParams } from '../types/index.js';
+import { type ToolHandler, UpdateProfileParams } from '../types/index.js';
 import {
   UserProfileRepository,
   ProfileTrackingRepository,

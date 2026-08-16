@@ -1,4 +1,4 @@
-import { User, RegisterUserParams } from '../types/index.js';
+import type { User, RegisterUserParams } from '../types/index.js';
 
 export class UserRepository {
   constructor(private db: any) {}

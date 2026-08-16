@@ -1,4 +1,4 @@
-import { UserProfile, ProfileWithCalculations } from '../types/index.js';
+import type { UserProfile, ProfileWithCalculations } from '../types/index.js';
 
 export class UserProfileRepository {
   constructor(private db: any) {}

@@ -1,4 +1,4 @@
-import { ToolHandler, RevokeUserParams } from '../types/index.js';
+import type { ToolHandler, RevokeUserParams } from '../types/index.js';
 import { createAuthError, createSuccessResponse, createErrorResponse } from '../utils/responses.js';
 import { UserRepository } from '../repositories/index.js';
 

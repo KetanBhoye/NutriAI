@@ -1,4 +1,4 @@
-import { ToolHandler, DeleteEntryParams } from '../types/index.js';
+import type { ToolHandler, DeleteEntryParams } from '../types/index.js';
 import { createAuthError, createSuccessResponse, createErrorResponse } from '../utils/responses.js';
 import { FoodEntryRepository } from '../repositories/index.js';
 

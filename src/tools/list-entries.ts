@@ -1,4 +1,4 @@
-import { ToolHandler, ListEntriesParams, FoodEntry } from '../types/index.js';
+import { type ToolHandler, type ListEntriesParams, FoodEntry } from '../types/index.js';
 import { createAuthError, createSuccessResponse, createErrorResponse } from '../utils/responses.js';
 import { FoodEntryRepository } from '../repositories/index.js';
 

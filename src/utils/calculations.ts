@@ -1,4 +1,4 @@
-import { UserProfile, ProfileTracking } from '../types/index.js';
+import type { UserProfile, ProfileTracking } from '../types/index.js';
 
 /**
  * Activity level multipliers for TDEE calculation

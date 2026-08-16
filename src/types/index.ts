@@ -1,14 +1,11 @@
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // Tool handler type
-export interface ToolHandler<T = Record<string, unknown>> {
-  (
+export type ToolHandler<T = Record<string, unknown>> = (
     params: T,
     userId?: string,
     env?: any,
-    isAdmin?: boolean
-  ): Promise<CallToolResult>;
-}
+    isAdmin?: boolean) => Promise<CallToolResult>
 
 // Food entry types
 export interface FoodEntry {

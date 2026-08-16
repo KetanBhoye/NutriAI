@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CallToolResult, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { ToolHandler, GetProfileHistoryParams } from '../types/index.js';
+import { type ToolHandler, GetProfileHistoryParams } from '../types/index.js';
 import { ProfileTrackingRepository } from '../repositories/index.js';
 
 const getProfileHistoryParamsSchema = z.object({

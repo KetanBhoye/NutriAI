@@ -1,4 +1,4 @@
-import { ToolHandler, RegisterUserParams } from '../types/index.js';
+import type { ToolHandler, RegisterUserParams } from '../types/index.js';
 import { createAuthError, createSuccessResponse, createErrorResponse } from '../utils/responses.js';
 import { hashApiKey } from '../auth/middleware.js';
 import { UserRepository } from '../repositories/index.js';
