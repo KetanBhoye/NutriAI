@@ -4,8 +4,11 @@ import { dashboardApi, goalsApi } from '@/api';
 import { useCachedResource } from '@/useCachedResource';
 import { writeCache } from '@/cache';
 import { subscribeGoalsChanged } from '@/goalsBus';
+import { NudgeCard } from '@/features/nudge/NudgeCard';
+import { pickNudge } from '@/features/nudge/consequences';
+import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
 import { FALLBACK_GOALS } from '@/nutrition';
-import { toLocalISODate } from '@/dates';
+import { addDays, toLocalISODate, todayISO } from '@/dates';
 import { colors, fonts, type } from '@/theme';
 import { Button, Card, EmptyState, Screen, SkeletonCard, StaleNotice, StatTile } from '@/components/ui';
 import { WeeklyInsights, WeeklyStats } from '@/types';
@@ -91,11 +94,94 @@ export default function Trends() {
   );
   const missedDays = bars.filter((b) => b.missing).length;
 
+  /**
+   * Re-arm Sunday's notice with the week that actually happened.
+   *
+   * This screen is the only place holding the finished numbers, so it is the
+   * only place that can turn "your weekly report is ready" into "you averaged
+   * 142 g protein — see what it did to the trend". Everything scheduled
+   * further out stays generic, because its text is fixed weeks before the week
+   * it describes.
+   */
+  useEffect(() => {
+    const daily = stats.data?.daily;
+    if (!daily?.length) return;
+
+    const byDate = new Map(daily.map((d) => [d.entry_date, d]));
+    const week = Array.from({ length: 7 }, (_, i) => {
+      const date = addDays(todayISO(), i - 6);
+      return byDate.get(date) ?? { entry_date: date, calories: 0, protein_g: 0 };
+    });
+    const goal = goals.data?.macros.calories ?? null;
+    const logged = week.filter((d) => d.calories >= (stats.data?.complete_day_threshold ?? 1200));
+    const plan = goals.data?.plan;
+
+    void scheduleWeeklyReport({
+      daysLogged: logged.length,
+      daysOnCalorieTarget: goal
+        ? logged.filter((d) => Math.abs(d.calories - goal) <= goal * 0.1).length
+        : 0,
+      avgProteinG: logged.length
+        ? logged.reduce((sum, d) => sum + d.protein_g, 0) / logged.length
+        : null,
+      proteinGoalG: goals.data?.macros.protein_g ?? null,
+      weightChangeKg: null,
+      losingWeight: plan ? plan.goal_weight_kg < plan.start_weight_kg : false,
+      streakDays: stats.data?.streak ?? 0,
+    }).catch(() => {});
+  }, [stats.data, goals.data]);
+
+  /**
+   * The week's pattern, in arithmetic, above the AI report.
+   *
+   * Deliberately derived on the client from data this screen already has: the
+   * numbers are the same ones drawn in the chart above it, so the card can
+   * never disagree with the picture the user is looking at.
+   */
+  const nudge = useMemo(() => {
+    const daily = stats.data?.daily;
+    if (!daily?.length) return null;
+
+    /**
+     * Seven calendar days, including the ones with nothing in them.
+     *
+     * `daily` only contains days that have entries, so a week with three days
+     * logged arrives as an array of three — and a gap is invisible rather than
+     * zero. Filling the blanks is what lets "three of the last seven days are
+     * missing" be true; without it that nudge could never fire at all.
+     */
+    const byDate = new Map(daily.map((d) => [d.entry_date, d]));
+    const recent = Array.from({ length: 7 }, (_, i) => {
+      const date = addDays(todayISO(), i - 6);
+      const found = byDate.get(date);
+      return {
+        entry_date: date,
+        calories: found?.calories ?? 0,
+        protein_g: found?.protein_g ?? 0,
+      };
+    });
+
+    const plan = goals.data?.plan;
+    return pickNudge({
+      recent,
+      calorieGoal: goals.data?.macros.calories ?? null,
+      proteinGoal: goals.data?.macros.protein_g ?? null,
+      losingWeight: plan ? plan.goal_weight_kg < plan.start_weight_kg : false,
+      trainedRecently: (goals.data?.activity ?? []).some(
+        (a) => a.exercise_minutes != null && a.exercise_minutes > 0
+      ),
+    });
+  }, [stats.data, goals.data]);
+
   return (
     <Screen refreshing={stats.refreshing || report.refreshing} onRefresh={refreshAll}>
       <Text style={styles.title}>Trends</Text>
 
       {stats.stale || report.stale ? <StaleNotice /> : null}
+
+      {/* Above the report: this is the checkable arithmetic, and the prose
+          below is commentary on it rather than the only account of the week. */}
+      {nudge ? <NudgeCard nudge={nudge} /> : null}
 
       <Card style={styles.reportCard}>
         <View style={styles.reportHead}>

@@ -7,6 +7,7 @@ import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { initialiseReminders, scheduleDailyReminder } from '@/notifications/reminders';
 import { notifyIfUpdateAvailable } from '@/notifications/updateNotice';
+import { scheduleWeeklyReport } from '@/notifications/weeklyReport';
 import { useAuth } from '@/auth';
 import { subscribeGoalsChanged } from '@/goalsBus';
 
@@ -30,6 +31,10 @@ export default function TabsLayout() {
   // asks for notification permission, because reminders default to on.
   useEffect(() => {
     void initialiseReminders();
+    // Armed generically here; Trends re-arms the imminent one with the week's
+    // real figures once it has them. See notifications/weeklyCopy.ts for why
+    // only the soonest notification may quote numbers.
+    void scheduleWeeklyReport().catch(() => {});
     // Local, not a server push — see updateNotice.ts. It can only fire while
     // the app is running, so launch is the moment to check.
     void notifyIfUpdateAvailable();
