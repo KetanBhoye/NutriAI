@@ -743,7 +743,20 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
           activity.activity_date
         );
 
-        if (existingTracking) {
+        /**
+         * A health sync fills a gap; it never corrects a person.
+         *
+         * The app force-syncs health data whenever the Plan tab loads, so a
+         * weigh-in typed by hand was posted and then immediately replaced by
+         * whatever the phone's health store held for that day — usually an
+         * older reading, sometimes none at all. Weighing yourself is a
+         * deliberate act, and the number the scale showed is not something the
+         * app gets to overrule.
+         */
+        const fromHealth = activity.source === 'apple_health';
+        if (existingTracking && fromHealth) {
+          // Already recorded for this day — leave it alone.
+        } else if (existingTracking) {
           await profileTrackingRepo.updateTracking(existingTracking.id, {
             weight_kg,
             recorded_date: activity.activity_date,

@@ -285,7 +285,14 @@ export default function Plan() {
     }
   };
 
-  const load = async (isRefresh = false) => {
+  /**
+   * @param syncHealth Force a health sync first. True everywhere except the
+   *   reload that follows a manual save: syncing there posts the phone's own
+   *   step count and weight straight over what the user just typed, so their
+   *   entry appeared not to save at all. The server now refuses that overwrite
+   *   too, but a client that never asks for it is one round trip better.
+   */
+  const load = async (isRefresh = false, syncHealth = true) => {
     if (isRefresh) setRefreshing(true);
     setError(null);
     try {
@@ -304,7 +311,7 @@ export default function Plan() {
       // Health Connect directly. Forcing a sync first is what makes the two
       // screens agree. Failure is ignored: a stale step count is worth far
       // less than the plan itself.
-      await autoSyncHealth(true).catch(() => {});
+      if (syncHealth) await autoSyncHealth(true).catch(() => {});
 
       // The profile, for the height a treadmill session needs to turn distance
       // into steps. It used to be fetched only when the plan editor opened, so
@@ -600,6 +607,9 @@ export default function Plan() {
     try {
       await enqueueActivity({
         activity_date: todayISO(),
+        // Typed by a person, not read off a watch. Without this the server
+        // files it as health data and the next background sync overwrites it.
+        source: 'manual',
         weight_kg: logWeight ? Number(logWeight) : null,
         steps: logSteps ? Number(logSteps) : null,
         // Omitted entirely when there's no session, not sent as null:
@@ -638,7 +648,10 @@ export default function Plan() {
       // still picks up anything another screen's flush sent in the meantime.
       // Skipping it on `synced === 0` is what made a logged weight look like
       // it had been ignored.
-      await load();
+      //
+      // Without a health sync: that is what was replacing the numbers the user
+      // had just entered.
+      await load(false, false);
     } finally {
       setLogBusy(false);
     }

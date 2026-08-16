@@ -48,6 +48,16 @@ export interface ActivityInput {
   exercise_type?: string | null;
   /** Net energy above resting — see `src/exercise.ts`. */
   exercise_kcal?: number | null;
+  distance_km?: number | null;
+  /**
+   * Who set these numbers.
+   *
+   * The server defaults to `apple_health`, which was wrong for everything this
+   * queue sends: a weigh-in and a step count typed on the Plan tab are the
+   * user's own, and marking them as health data let the next background sync
+   * overwrite them. Saying so is what protects them.
+   */
+  source?: "manual" | "apple_health";
 }
 
 type QueuedOp =

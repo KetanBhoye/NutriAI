@@ -50,15 +50,42 @@ export class DailyActivityRepository {
           exercise_minutes, stand_hours, distance_km, exercise_type, exercise_kcal, source
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, activity_date) DO UPDATE SET
-          steps = COALESCE(excluded.steps, steps),
+          /*
+           * A health sync must not overwrite what a person typed.
+           *
+           * The app force-syncs Apple Health / Health Connect whenever the Plan
+           * tab loads, so a hand-logged step count was posted, then immediately
+           * replaced by whatever the phone had counted — and the user saw their
+           * entry "not save". Manual wins for the rest of that day; they can
+           * always type again, whereas a silent overwrite gives them nowhere to
+           * stand.
+           *
+           * Only the fields a person actually sets are protected. Active
+           * energy, resting energy and stand hours come from the phone alone,
+           * so a sync keeps filling those in either way.
+           */
+          steps = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN steps
+            ELSE COALESCE(excluded.steps, steps) END,
+          exercise_minutes = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_minutes
+            ELSE COALESCE(excluded.exercise_minutes, exercise_minutes) END,
+          exercise_type = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_type
+            ELSE COALESCE(excluded.exercise_type, exercise_type) END,
+          exercise_kcal = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN exercise_kcal
+            ELSE COALESCE(excluded.exercise_kcal, exercise_kcal) END,
+          distance_km = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN distance_km
+            ELSE COALESCE(excluded.distance_km, distance_km) END,
           active_energy_kcal = COALESCE(excluded.active_energy_kcal, active_energy_kcal),
           resting_energy_kcal = COALESCE(excluded.resting_energy_kcal, resting_energy_kcal),
-          exercise_minutes = COALESCE(excluded.exercise_minutes, exercise_minutes),
           stand_hours = COALESCE(excluded.stand_hours, stand_hours),
-          distance_km = COALESCE(excluded.distance_km, distance_km),
-          exercise_type = COALESCE(excluded.exercise_type, exercise_type),
-          exercise_kcal = COALESCE(excluded.exercise_kcal, exercise_kcal),
-          source = excluded.source,
+          -- The day stays marked manual once a person has touched it.
+          source = CASE
+            WHEN excluded.source = 'apple_health' AND source = 'manual' THEN source
+            ELSE excluded.source END,
           updated_at = CURRENT_TIMESTAMP
         `
       )
