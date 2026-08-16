@@ -1,10 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ApiError } from './client';
-import * as entriesApi from './entries';
-import * as goalsApi from './goals';
-import type { CreateEntryInput } from './entries';
-import type { GoalPlanInput } from './goals';
-import type { FoodEntry, MealType } from '../types';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ApiError } from "./client";
+import * as entriesApi from "./entries";
+import * as goalsApi from "./goals";
+import type { CreateEntryInput } from "./entries";
+import type { GoalPlanInput } from "./goals";
+import type { FoodEntry, MealType } from "../types";
 
 /**
  * Durable queue for the writes a user would hate to lose.
@@ -24,10 +24,20 @@ import type { FoodEntry, MealType } from '../types';
  * server will never accept.
  */
 
-const QUEUE_KEY = 'nutriai.pending.v2';
+const QUEUE_KEY = "nutriai.pending.v2";
 
 export type EntryPatch = Partial<
-  Pick<FoodEntry, 'food_name' | 'calories' | 'protein_g' | 'carbs_g' | 'fat_g' | 'meal_type' | 'quantity' | 'unit'>
+  Pick<
+    FoodEntry,
+    | "food_name"
+    | "calories"
+    | "protein_g"
+    | "carbs_g"
+    | "fat_g"
+    | "meal_type"
+    | "quantity"
+    | "unit"
+  >
 >;
 
 export interface ActivityInput {
@@ -41,18 +51,18 @@ export interface ActivityInput {
 }
 
 type QueuedOp =
-  | { id: string; kind: 'create'; tempId: string; body: CreateEntryInput }
-  | { id: string; kind: 'update'; entryId: string; changes: EntryPatch }
-  | { id: string; kind: 'delete'; entryId: string }
-  | { id: string; kind: 'activity'; body: ActivityInput }
-  | { id: string; kind: 'goals'; body: GoalPlanInput };
+  | { id: string; kind: "create"; tempId: string; body: CreateEntryInput }
+  | { id: string; kind: "update"; entryId: string; changes: EntryPatch }
+  | { id: string; kind: "delete"; entryId: string }
+  | { id: string; kind: "activity"; body: ActivityInput }
+  | { id: string; kind: "goals"; body: GoalPlanInput };
 
 /** Which parts of the app a queued write belongs to, for reporting failures. */
-export type OpKind = QueuedOp['kind'];
+export type OpKind = QueuedOp["kind"];
 
 /** Local ids for rows that haven't reached the server yet. */
 export function isPendingId(id: string): boolean {
-  return id.startsWith('tmp-');
+  return id.startsWith("tmp-");
 }
 
 export function newPendingId(): string {
@@ -102,14 +112,20 @@ export function subscribePending(listener: Listener): () => void {
  * values on the next refresh, looking like the app had ignored the save.
  */
 type RejectionListener = (kind: OpKind, message: string) => void;
-const rejectionListeners = new Set<{ kinds: OpKind[]; listener: RejectionListener }>();
+const rejectionListeners = new Set<{
+  kinds: OpKind[];
+  listener: RejectionListener;
+}>();
 
 /**
  * Subscribes to refusals of the given kinds. The queue is shared across
  * screens, so each states what it can speak for — Today shouldn't announce a
  * rejected plan save, and the Plan tab shouldn't announce a rejected meal.
  */
-export function subscribeRejections(kinds: OpKind[], listener: RejectionListener): () => void {
+export function subscribeRejections(
+  kinds: OpKind[],
+  listener: RejectionListener,
+): () => void {
   const entry = { kinds, listener };
   rejectionListeners.add(entry);
   return () => rejectionListeners.delete(entry);
@@ -129,9 +145,12 @@ export async function refreshPendingCount(): Promise<void> {
 
 const opId = () => `op-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-export async function enqueueCreate(tempId: string, body: CreateEntryInput): Promise<void> {
+export async function enqueueCreate(
+  tempId: string,
+  body: CreateEntryInput,
+): Promise<void> {
   const ops = await read();
-  ops.push({ id: opId(), kind: 'create', tempId, body });
+  ops.push({ id: opId(), kind: "create", tempId, body });
   await write(ops);
 }
 
@@ -140,19 +159,22 @@ export async function enqueueCreate(tempId: string, body: CreateEntryInput): Pro
  * than PATCH an id the server has never seen — otherwise the original values
  * would sync and silently overwrite the edit.
  */
-export async function enqueueUpdate(entryId: string, changes: EntryPatch): Promise<void> {
+export async function enqueueUpdate(
+  entryId: string,
+  changes: EntryPatch,
+): Promise<void> {
   const ops = await read();
 
   if (isPendingId(entryId)) {
-    const create = ops.find((o) => o.kind === 'create' && o.tempId === entryId);
-    if (create && create.kind === 'create') {
+    const create = ops.find((o) => o.kind === "create" && o.tempId === entryId);
+    if (create && create.kind === "create") {
       Object.assign(create.body, stripUndefined(changes));
       await write(ops);
       return;
     }
   }
 
-  ops.push({ id: opId(), kind: 'update', entryId, changes });
+  ops.push({ id: opId(), kind: "update", entryId, changes });
   await write(ops);
 }
 
@@ -161,12 +183,12 @@ export async function enqueueDelete(entryId: string): Promise<void> {
   let ops = await read();
 
   if (isPendingId(entryId)) {
-    ops = ops.filter((o) => !(o.kind === 'create' && o.tempId === entryId));
+    ops = ops.filter((o) => !(o.kind === "create" && o.tempId === entryId));
     await write(ops);
     return;
   }
 
-  ops.push({ id: opId(), kind: 'delete', entryId });
+  ops.push({ id: opId(), kind: "delete", entryId });
   await write(ops);
 }
 
@@ -181,8 +203,8 @@ export async function enqueueDelete(entryId: string): Promise<void> {
 export async function enqueueActivity(input: ActivityInput): Promise<void> {
   const ops = await read();
   const pendingForDay = ops.find(
-    (o): o is Extract<QueuedOp, { kind: 'activity' }> =>
-      o.kind === 'activity' && o.body.activity_date === input.activity_date
+    (o): o is Extract<QueuedOp, { kind: "activity" }> =>
+      o.kind === "activity" && o.body.activity_date === input.activity_date,
   );
 
   if (pendingForDay) {
@@ -191,7 +213,7 @@ export async function enqueueActivity(input: ActivityInput): Promise<void> {
     return;
   }
 
-  ops.push({ id: opId(), kind: 'activity', body: input });
+  ops.push({ id: opId(), kind: "activity", body: input });
   await write(ops);
 }
 
@@ -201,72 +223,90 @@ export async function enqueueActivity(input: ActivityInput): Promise<void> {
  * the user already moved on from.
  */
 export async function enqueueGoals(plan: GoalPlanInput): Promise<void> {
-  const ops = (await read()).filter((o) => o.kind !== 'goals');
-  ops.push({ id: opId(), kind: 'goals', body: plan });
+  const ops = (await read()).filter((o) => o.kind !== "goals");
+  ops.push({ id: opId(), kind: "goals", body: plan });
   await write(ops);
 }
 
 function stripUndefined<T extends object>(o: T): Partial<T> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
 }
 
 /** As above, but null also means "not supplied" — see `enqueueActivity`. */
 function stripNullish<T extends object>(o: T): Partial<T> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v != null)) as Partial<T>;
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v != null),
+  ) as Partial<T>;
 }
 
 // ── draining ──────────────────────────────────────────────────────────────
 
-let flushing = false;
+let flushing: Promise<number> | null = null;
 
 /**
  * Sends queued writes oldest-first. Returns the number that synced.
- * Safe to call often — concurrent calls collapse into the one in flight.
+ *
+ * Concurrent calls **join** the flush in flight rather than returning 0.
+ * Returning 0 was a lie with consequences: Today flushes on mount and on
+ * foreground, so a weigh-in saved in that window got `synced === 0`, the Plan
+ * tab reported "saved on this device — it'll sync when you're back online",
+ * and it skipped its reload. The weight had in fact reached the server; the
+ * screen just never re-read it, so the number appeared not to update. A
+ * caller cannot tell "nothing to send" from "someone else is sending" from
+ * "it failed" if all three are 0.
  */
-export async function flush(): Promise<number> {
-  if (flushing) return 0;
-  flushing = true;
+export function flush(): Promise<number> {
+  if (flushing) return flushing;
+  flushing = drain().finally(() => {
+    flushing = null;
+  });
+  return flushing;
+}
+
+async function drain(): Promise<number> {
   let synced = 0;
+  let ops = await read();
 
-  try {
-    let ops = await read();
-
-    while (ops.length > 0) {
-      const next = ops[0]!;
-      try {
-        if (next.kind === 'create') {
-          await entriesApi.createEntry(next.body);
-        } else if (next.kind === 'update') {
-          await entriesApi.updateEntry(next.entryId, next.changes);
-        } else if (next.kind === 'delete') {
-          await entriesApi.deleteEntry(next.entryId);
-        } else if (next.kind === 'activity') {
-          await goalsApi.logActivity(next.body);
-        } else {
-          await goalsApi.saveGoals(next.body);
-        }
+  while (ops.length > 0) {
+    const next = ops[0]!;
+    try {
+      if (next.kind === "create") {
+        await entriesApi.createEntry(next.body);
+      } else if (next.kind === "update") {
+        await entriesApi.updateEntry(next.entryId, next.changes);
+      } else if (next.kind === "delete") {
+        await entriesApi.deleteEntry(next.entryId);
+      } else if (next.kind === "activity") {
+        await goalsApi.logActivity(next.body);
+      } else {
+        await goalsApi.saveGoals(next.body);
+      }
+      ops = ops.slice(1);
+      await write(ops);
+      synced += 1;
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      // 4xx will never succeed on retry (and a 404 delete is already the
+      // outcome we wanted) — drop it rather than wedging the queue, but say
+      // so: the row is about to snap back to the server's version.
+      if (status >= 400 && status < 500) {
         ops = ops.slice(1);
         await write(ops);
-        synced += 1;
-      } catch (e) {
-        const status = e instanceof ApiError ? e.status : 0;
-        // 4xx will never succeed on retry (and a 404 delete is already the
-        // outcome we wanted) — drop it rather than wedging the queue, but say
-        // so: the row is about to snap back to the server's version.
-        if (status >= 400 && status < 500) {
-          ops = ops.slice(1);
-          await write(ops);
-          if (!(next.kind === 'delete' && status === 404)) {
-            notifyRejected(next.kind, e instanceof ApiError ? e.message : 'The server rejected that change.');
-          }
-          continue;
+        if (!(next.kind === "delete" && status === 404)) {
+          notifyRejected(
+            next.kind,
+            e instanceof ApiError
+              ? e.message
+              : "The server rejected that change.",
+          );
         }
-        // Network or 5xx: stop here so ordering is preserved, try again later.
-        break;
+        continue;
       }
+      // Network or 5xx: stop here so ordering is preserved, try again later.
+      break;
     }
-  } finally {
-    flushing = false;
   }
 
   return synced;

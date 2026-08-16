@@ -32,6 +32,7 @@ import {
   nearestRate,
 } from '@/nutrition';
 import { EXERCISE_KINDS, describeExercise, netExerciseKcal } from '@/exercise';
+import { treadmillSummary } from '@/treadmill';
 import { autoSyncHealth } from '@/health/autoSync';
 import { GoalsPayload, ProfileBasics } from '@/types';
 import { editorTargets } from '@/features/goals/editorTargets';
@@ -112,6 +113,17 @@ export default function Plan() {
   const [logSteps, setLogSteps] = useState('');
   const [logExercise, setLogExercise] = useState<string | null>(null);
   const [logMinutes, setLogMinutes] = useState('');
+  /** Treadmill only — the two settings the machine shows. */
+  const [logSpeed, setLogSpeed] = useState('');
+  const [logIncline, setLogIncline] = useState('');
+  /**
+   * Whether the step count on screen is the user's own number.
+   *
+   * A treadmill session derives steps, but overwriting a figure someone typed
+   * themselves would be rude and invisible — so the derived value only fills
+   * the box while it is untouched.
+   */
+  const [stepsEdited, setStepsEdited] = useState(false);
   const [logBusy, setLogBusy] = useState(false);
   const [logMsg, setLogMsg] = useState<string | null>(null);
   /** SVG needs a concrete width; measured from the container. */
@@ -293,6 +305,16 @@ export default function Plan() {
       // screens agree. Failure is ignored: a stale step count is worth far
       // less than the plan itself.
       await autoSyncHealth(true).catch(() => {});
+
+      // The profile, for the height a treadmill session needs to turn distance
+      // into steps. It used to be fetched only when the plan editor opened, so
+      // in normal view mode height was unknown and the stride fell back to an
+      // average adult — a 195 cm user's session was counted as a 170 cm one.
+      // Cheap, and a failure here must not stop the plan loading.
+      void profileApi
+        .getProfile()
+        .then((p) => setProfile(p))
+        .catch(() => {});
 
       const { data: payload, stale: fromCache } = await cached('goals', () => goalsApi.getGoals());
       setStale(fromCache);
@@ -515,12 +537,60 @@ export default function Plan() {
    * The net energy of a logged session, priced against today's weight — the
    * same figure the server adds to the day's expenditure.
    */
+  const isTreadmill = logExercise === 'treadmill';
+
+  /**
+   * A treadmill session, priced from what the machine was set to.
+   *
+   * Null unless the treadmill is selected and there is a time and a speed to
+   * work from — incline defaults to flat, because a blank incline box means
+   * "no incline", not "unknown".
+   */
+  const treadmill = useMemo(() => {
+    if (!isTreadmill) return null;
+    const minutes = Number(logMinutes);
+    const speedKmh = Number(logSpeed);
+    if (!Number.isFinite(minutes) || minutes <= 0) return null;
+    if (!Number.isFinite(speedKmh) || speedKmh <= 0) return null;
+
+    return treadmillSummary({
+      speedKmh,
+      inclinePct: Number(logIncline) || 0,
+      minutes,
+      weightKg: data?.latest_weight ?? data?.plan?.start_weight_kg ?? 70,
+      heightCm: profile?.height_cm ?? null,
+    });
+  }, [
+    isTreadmill,
+    logMinutes,
+    logSpeed,
+    logIncline,
+    data?.latest_weight,
+    data?.plan?.start_weight_kg,
+    profile?.height_cm,
+  ]);
+
   const loggedBurn = useMemo(() => {
+    // The treadmill has its own equations: a MET value cannot express what an
+    // incline costs, and the incline is the reason people use one.
+    if (isTreadmill) return treadmill?.kcal ?? 0;
+
     const minutes = Number(logMinutes);
     if (!logExercise || !Number.isFinite(minutes) || minutes <= 0) return 0;
     const weight = data?.latest_weight ?? data?.plan?.start_weight_kg ?? 70;
     return netExerciseKcal(logExercise, minutes, weight);
-  }, [logExercise, logMinutes, data?.latest_weight, data?.plan?.start_weight_kg]);
+  }, [isTreadmill, treadmill, logExercise, logMinutes, data?.latest_weight, data?.plan?.start_weight_kg]);
+
+  /**
+   * Put the derived steps in the steps box, where they are visible and
+   * editable, rather than adding them invisibly at save time. A number that
+   * appears in the log without ever being shown is the sort of thing people
+   * stop trusting.
+   */
+  useEffect(() => {
+    if (!treadmill || stepsEdited) return;
+    setLogSteps(treadmill.steps > 0 ? String(treadmill.steps) : '');
+  }, [treadmill, stepsEdited]);
 
   const saveLog = async () => {
     if (!logWeight && !logSteps && !loggedBurn) return;
@@ -541,6 +611,12 @@ export default function Plan() {
               exercise_type: logExercise,
               exercise_minutes: Number(logMinutes),
               exercise_kcal: loggedBurn,
+              // Distance is worth keeping for a treadmill: it is the one
+              // session where the app knows it exactly rather than inferring
+              // it from a step count.
+              ...(treadmill && treadmill.distanceKm > 0
+                ? { distance_km: Number(treadmill.distanceKm.toFixed(2)) }
+                : {}),
             }
           : {}),
       });
@@ -548,13 +624,21 @@ export default function Plan() {
       setLogSteps('');
       setLogExercise(null);
       setLogMinutes('');
+      setLogSpeed('');
+      setLogIncline('');
+      setStepsEdited(false);
       const synced = await flushQueue();
-      if (synced > 0) {
-        setLogMsg('Saved for today.');
-        await load();
-      } else {
-        setLogMsg("Saved on this device — it'll sync when you're back online.");
-      }
+      setLogMsg(
+        synced > 0
+          ? 'Saved for today.'
+          : "Saved on this device — it'll sync when you're back online."
+      );
+      // Reload either way. When the write synced this is what puts the new
+      // weight on screen; when it only queued, re-reading is harmless and
+      // still picks up anything another screen's flush sent in the meantime.
+      // Skipping it on `synced === 0` is what made a logged weight look like
+      // it had been ignored.
+      await load();
     } finally {
       setLogBusy(false);
     }
@@ -670,7 +754,12 @@ export default function Plan() {
                 placeholder="—"
                 style={styles.half}
                 value={logSteps}
-                onChangeText={setLogSteps}
+                onChangeText={(v) => {
+                  // Once it's their number, the treadmill estimate stops
+                  // overwriting it.
+                  setStepsEdited(true);
+                  setLogSteps(v);
+                }}
               />
             </View>
             {/* Steps miss everything that isn't walking. A day with a game of
@@ -699,6 +788,50 @@ export default function Plan() {
                   <Text style={styles.burnValue}>{loggedBurn ? `${loggedBurn} kcal` : '—'}</Text>
                 </View>
               </View>
+            ) : null}
+
+            {/* The two settings on the machine's display. Asked for only on the
+                treadmill, because they are the only place the app can know
+                them — and without the grade an hour of hill walking is priced
+                the same as an hour on the flat. */}
+            {isTreadmill ? (
+              <>
+                <View style={styles.exerciseRow}>
+                  <TextField
+                    testID="log-speed"
+                    label="Speed (km/h)"
+                    keyboardType="decimal-pad"
+                    placeholder="e.g. 6"
+                    style={styles.half}
+                    value={logSpeed}
+                    onChangeText={(v) => setLogSpeed(v.replace(/[^0-9.]/g, ''))}
+                  />
+                  <TextField
+                    testID="log-incline"
+                    label="Incline (%)"
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    style={styles.half}
+                    value={logIncline}
+                    onChangeText={(v) => setLogIncline(v.replace(/[^0-9.]/g, ''))}
+                  />
+                </View>
+
+                {treadmill ? (
+                  <Text style={styles.treadmillNote}>
+                    {treadmill.distanceKm.toFixed(2)} km · about{' '}
+                    <Text style={styles.treadmillFigure}>
+                      {treadmill.steps.toLocaleString()} steps
+                    </Text>
+                    , added to today's count above. Edit that box to use your own number.
+                  </Text>
+                ) : (
+                  <Text style={styles.treadmillNote}>
+                    Add a speed and a time and this works out the distance, the energy and the
+                    steps — a phone on the handrail counts none of them.
+                  </Text>
+                )}
+              </>
             ) : null}
 
             {/* Above the button, not below it. The Plan tab is several screens
@@ -1126,6 +1259,15 @@ const styles = StyleSheet.create({
   burnLabel: { ...type.overline, color: colors.textDim },
   burnValue: { ...type.figureSmall, fontSize: 16, fontFamily: fonts.semibold, color: colors.accent, marginTop: 2 },
   burnNote: { color: colors.textDim, fontSize: 11.5, lineHeight: 16, marginTop: 10 },
+  treadmillNote: {
+    ...type.caption,
+    fontSize: 12,
+    color: colors.textDim,
+    lineHeight: 17,
+    marginTop: -4,
+    marginBottom: 12,
+  },
+  treadmillFigure: { color: colors.accent },
   logMsg: { color: colors.accent, fontSize: 13, textAlign: 'center', marginBottom: 10 },
   errorNote: {
     color: colors.danger,

@@ -29,6 +29,19 @@ vi.mock('@/api', () => ({
 }));
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { addDays, todayISO } from '@/dates';
+
+/**
+ * Reminders are identified by the date they are for, so the tests name real
+ * days too. Matching on an offset (`.0.`, `.1.`) was how the identifiers used
+ * to work, and it is exactly the ambiguity that let a stale reminder survive a
+ * reschedule and arrive in place of the current one.
+ */
+// Functions, not constants: the suite runs on a fake clock set in
+// `beforeEach`, and a constant evaluated at module load would capture the real
+// date instead of the pretend one.
+const today = () => todayISO();
+const tomorrow = () => addDays(todayISO(), 1);
 import {
   initialiseReminders,
   remindersEnabled,
@@ -147,7 +160,7 @@ describe('scheduleMealReminders', () => {
 
     const todayIds = scheduled()
       .map((s) => s.identifier!)
-      .filter((id) => id.includes('.0.'));
+      .filter((id) => id.includes(`.${today()}.`));
 
     expect(todayIds.some((id) => id.endsWith('.lunch'))).toBe(false);
     expect(todayIds.some((id) => id.endsWith('.dinner'))).toBe(true);
@@ -159,7 +172,7 @@ describe('scheduleMealReminders', () => {
     await scheduleMealReminders();
 
     expect(cancelScheduledNotificationAsync).toHaveBeenCalledWith(
-      expect.stringContaining('.0.lunch')
+      expect.stringContaining(`.${today()}.lunch`)
     );
   });
 
@@ -168,11 +181,11 @@ describe('scheduleMealReminders', () => {
 
     await scheduleMealReminders();
 
-    const today = scheduled().filter((s) => s.identifier!.includes('.0.'));
-    const tomorrow = scheduled().filter((s) => s.identifier!.includes('.1.'));
+    const todays = scheduled().filter((s) => s.identifier!.includes(`.${today()}.`));
+    const tomorrows = scheduled().filter((s) => s.identifier!.includes(`.${tomorrow()}.`));
 
-    expect(today.some((s) => /1,?500 kcal/.test(s.content.body))).toBe(true);
-    expect(tomorrow.every((s) => !/kcal left/.test(s.content.body))).toBe(true);
+    expect(todays.some((s) => /1,?500 kcal/.test(s.content.body))).toBe(true);
+    expect(tomorrows.every((s) => !/kcal left/.test(s.content.body))).toBe(true);
   });
 
   it('clears everything when reminders are off', async () => {
@@ -197,5 +210,40 @@ describe('sendPreviewReminder', () => {
 
     const [call] = scheduled();
     expect(call!.content.body.length).toBeGreaterThan(0);
+  });
+});
+
+describe('identifiers are dated, not offset', () => {
+  it('names the day a reminder is for, so it cannot mean a different day later', async () => {
+    await scheduleMealReminders();
+
+    // `…meal-reminder.2026-08-14.lunch` is that day's lunch whenever it was
+    // written. The offset scheme it replaced (`…meal-reminder.0.lunch`) meant
+    // "today" relative to the last scheduling run, so after midnight or a day
+    // away the same id claimed a different day — and a reschedule could leave
+    // the older notification armed while believing it had replaced it.
+    for (const s of scheduled()) {
+      expect(s.identifier).toMatch(/\.\d{4}-\d{2}-\d{2}\.(breakfast|lunch|snack|dinner)$/);
+    }
+  });
+
+  it('sweeps the old offset identifiers, which nothing else would ever reclaim', async () => {
+    await scheduleMealReminders();
+
+    const cancelled = cancelScheduledNotificationAsync.mock.calls.map((c) => c[0] as string);
+
+    // Left armed, these keep firing alongside the dated ones — two reminders,
+    // one of them older, which is what people reported.
+    expect(cancelled).toContain('nutriai.meal-reminder.0.breakfast');
+    expect(cancelled).toContain('nutriai.meal-reminder.3.dinner');
+  });
+
+  it('cancels days that have already gone, which a dated id no longer overwrites', async () => {
+    await scheduleMealReminders();
+
+    const cancelled = cancelScheduledNotificationAsync.mock.calls.map((c) => c[0] as string);
+    const yesterday = addDays(todayISO(), -1);
+
+    expect(cancelled).toContain(`nutriai.meal-reminder.${yesterday}.dinner`);
   });
 });

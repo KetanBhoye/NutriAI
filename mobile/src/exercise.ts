@@ -23,6 +23,15 @@ export interface ExerciseKind {
  * doubles" is smaller than the error in guessing the duration.
  */
 export const EXERCISE_KINDS: ExerciseKind[] = [
+  /**
+   * Treadmill is priced by `src/treadmill.ts`, not by this MET value.
+   *
+   * The MET here is a fallback for anything that reads the table generically
+   * (a session logged by the Coach, say) — but the log form asks for speed and
+   * incline and uses the ACSM equations, because a 10% grade roughly doubles
+   * the cost and one MET number cannot express that.
+   */
+  { key: 'treadmill', label: 'Treadmill', met: 5.0 },
   { key: 'walk', label: 'Walk', met: 3.5 },
   { key: 'run', label: 'Run', met: 9.8 },
   { key: 'cycle', label: 'Cycling', met: 7.5 },

@@ -178,7 +178,16 @@ describe('flush', () => {
     expect(heard).toEqual([]);
   });
 
-  it('collapses concurrent calls into the one in flight', async () => {
+  it('joins a flush already in flight instead of reporting nothing synced', async () => {
+    /**
+     * This used to return 0 to the second caller, and that 0 caused a real
+     * bug: Today flushes on mount and on foreground, so a weigh-in saved in
+     * that window saw `synced === 0`, told the user "saved on this device —
+     * it'll sync when you're back online", and skipped its reload. The weight
+     * had reached the server; the screen just never re-read it, so the number
+     * looked stuck. A caller must be able to tell "someone else is sending"
+     * from "nothing was sent".
+     */
     let release!: () => void;
     const inFlight = new Promise<void>((resolve) => {
       release = resolve;
@@ -191,10 +200,12 @@ describe('flush', () => {
     await Promise.resolve();
     const second = flush();
 
-    // Two screens both calling flush() must not send the write twice.
-    expect(await second).toBe(0);
     release();
+
+    // Both callers learn the truth...
     expect(await first).toBe(1);
+    expect(await second).toBe(1);
+    // ...and the write still went out exactly once.
     expect(createEntry).toHaveBeenCalledTimes(1);
   });
 });
