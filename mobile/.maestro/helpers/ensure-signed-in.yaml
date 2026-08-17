@@ -4,6 +4,25 @@
 # on purpose, so any flow can find itself signed out. Every authenticated flow
 # starts by running this, which makes each one independently runnable — the
 # property you want at 2am when only one of them is failing.
+#
+# ── Google Password Manager ───────────────────────────────────────────────
+# On any device signed in to a Google account, GPM interrupts this flow twice,
+# and both times its sheet covers the screen so the app underneath is fine
+# while the test fails:
+#
+#   1. "Use your saved password for NutriAI?" — autofill, on field focus,
+#      before anything is typed.
+#   2. "Save password to Google Password Manager?" — after a successful
+#      sign-in.
+#
+# Neither existed until the emulator had a Google account, which is why the
+# suite passed for months and then began failing with no app change. The
+# reliable cure is to turn the autofill service off on the test device:
+#
+#   adb shell settings put secure autofill_service null
+#
+# These guards stay anyway, because the next device will not have had that
+# done to it.
 appId: app.nutriai.mobile
 ---
 - runFlow:
@@ -12,17 +31,23 @@ appId: app.nutriai.mobile
         id: 'login-screen'
     commands:
       - tapOn: 'Email'
+      - runFlow:
+          when:
+            visible: 'Use your saved password.*'
+          commands:
+            - tapOn: 'No thanks'
       - inputText: ${EMAIL}
+
       - tapOn: 'Password'
+      - runFlow:
+          when:
+            visible: 'Use your saved password.*'
+          commands:
+            - tapOn: 'No thanks'
       - inputText: ${PASSWORD}
+
       - tapOn: 'Sign in'
 
-      # Google Password Manager offers to save the credentials right after a
-      # successful sign-in, and its sheet covers the whole screen — so the
-      # assertion below fails on a device where the app signed in perfectly.
-      # It only appears once the device has an active Google account, which is
-      # why the suite passed for months and then started failing without any
-      # app change.
       - runFlow:
           when:
             visible: 'Save password.*'
