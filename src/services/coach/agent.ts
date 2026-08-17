@@ -17,6 +17,10 @@ import {
 } from '../../tools/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { lookupMacrosGrounded } from './grounded-macros.js';
+import type { D1DatabaseCompat } from '../../db/types.js';
+import { recordAiUsage } from '../ai/metering.js';
+import { checkQuota, planFor } from '../ai/quota.js';
+import { findGlobalFood, saveVerifiedFood } from '../food/global-repo.js';
 import { CONSERVATIVE_ESTIMATION_RULES } from './macro-sanity.js';
 
 const DATE = { type: 'STRING', description: 'YYYY-MM-DD; omit for today' } as const;
@@ -225,10 +229,89 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
     },
   },
   lookup_nutrition: {
-    run: async (a) => {
+    run: async (a, userId, env) => {
       const foods = typeof a.foods === 'string' ? a.foods : JSON.stringify(a.foods ?? '');
+      const db = (env as { DB?: D1DatabaseCompat })?.DB;
+
+      /*
+       * This is the single most expensive call in the product — a grounded
+       * search is billed per query at roughly seventeen coach turns — so it is
+       * gated and metered where nothing else is.
+       *
+       * Order matters: the shared repo is consulted first, because a hit there
+       * is a search not performed and costs nothing. Only a genuine miss
+       * reaches the quota check, and only an allowed miss reaches Vertex.
+       */
+      if (db) {
+        const cached = await findGlobalFood(db, foods).catch(() => null);
+        if (cached) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  items: [
+                    {
+                      name: cached.canonical_name,
+                      calories: Math.round(cached.calories_per_unit),
+                      protein_g: Math.round(cached.protein_g_per_unit ?? 0),
+                      carbs_g: Math.round(cached.carbs_g_per_unit ?? 0),
+                      fat_g: Math.round(cached.fat_g_per_unit ?? 0),
+                    },
+                  ],
+                  sources: [`NutriAI food repository (${cached.source})`],
+                }),
+              },
+            ],
+          };
+        }
+
+        const plan = await planFor(db, userId);
+        const decision = await checkQuota(db, userId, plan, 'grounded');
+        if (!decision.allowed) {
+          // Not an error: the model is told to fall back to its own estimate,
+          // which is what it did before this tool existed. The user gets a
+          // slightly less precise number rather than a failure.
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `lookup unavailable (${decision.reason}): estimate the values yourself and say they are estimates.`,
+              },
+            ],
+          };
+        }
+      }
+
       try {
         const { items, sources } = await lookupMacrosGrounded(foods);
+
+        if (db) {
+          // Meter first — a failure to save the food must not lose the cost.
+          await recordAiUsage(db, {
+            userId,
+            feature: 'grounded',
+            model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+            groundedQueries: 1,
+          });
+
+          // Every item looked up is a food the next person does not have to pay
+          // for. This is what makes the repo grow from normal use.
+          for (const item of items) {
+            await saveVerifiedFood(
+              db,
+              {
+                canonicalName: item.name,
+                caloriesPerUnit: item.calories,
+                proteinGPerUnit: item.protein_g ?? null,
+                carbsGPerUnit: item.carbs_g ?? null,
+                fatGPerUnit: item.fat_g ?? null,
+              },
+              'grounded'
+            );
+          }
+        }
+
         return { content: [{ type: 'text', text: JSON.stringify({ items, sources }) }] };
       } catch (err) {
         return {
