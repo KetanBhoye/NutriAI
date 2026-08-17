@@ -222,6 +222,21 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
     res.sendFile(resolve(publicDir, 'signup.html'));
   });
 
+  /**
+   * The privacy policy, at a stable public URL.
+   *
+   * Both stores require one, and it has to be reachable without signing in —
+   * a reviewer opens it in a browser with no session. HealthKit raises the bar
+   * further: an app that reads health data and has no policy is rejected
+   * outright. `/privacy-policy` is an alias because that is the path people
+   * type and the one already written into some store forms.
+   */
+  const privacyPage = (_req: express.Request, res: express.Response) => {
+    res.sendFile(resolve(publicDir, 'privacy.html'));
+  };
+  app.get('/privacy', privacyPage);
+  app.get('/privacy-policy', privacyPage);
+
   // The PWA is a client-routed SPA: every /app/* path that isn't a built asset
   // must return index.html so a deep link or a home-screen launch into
   // /app/dashboard resolves instead of 404ing.
