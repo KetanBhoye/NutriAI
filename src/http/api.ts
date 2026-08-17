@@ -2171,8 +2171,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
 
       const prefs = await env.DB
         .prepare(
-          `SELECT daily_calorie_goal, daily_protein_goal_g, daily_carbs_goal_g,
-                  daily_fat_goal_g, daily_step_goal
+          `SELECT daily_calorie_goal, daily_protein_goal_g, daily_carbs_goal_g, daily_fat_goal_g
              FROM user_tracking_preferences WHERE user_id = ?`
         )
         .bind(userId)
@@ -2181,8 +2180,28 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
           daily_protein_goal_g: number | null;
           daily_carbs_goal_g: number | null;
           daily_fat_goal_g: number | null;
-          daily_step_goal: number | null;
         }>();
+
+      /**
+       * The step goal lives on the goal *plan*, not on tracking preferences.
+       *
+       * Worth stating because the two look interchangeable from the app: the
+       * Plan tab edits calorie, macro and step targets in one form, so it reads
+       * as one record. It is two, and selecting `daily_step_goal` from
+       * preferences does not fail at type-check or in any test — it throws at
+       * runtime, on every share, for every user.
+       *
+       * Read separately and tolerantly: someone with no active plan still has a
+       * card to share.
+       */
+      const planRow = await env.DB
+        .prepare(
+          `SELECT daily_step_goal FROM goal_plans WHERE user_id = ? AND is_active = 1
+             ORDER BY created_at DESC LIMIT 1`
+        )
+        .bind(userId)
+        .first<{ daily_step_goal: number | null }>()
+        .catch(() => null);
 
       // Steps for the day, else the most recent day with steps.
       const stepRow = await env.DB
@@ -2253,7 +2272,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
          */
         carbs_goal_g: prefs?.daily_carbs_goal_g ?? null,
         fat_goal_g: prefs?.daily_fat_goal_g ?? null,
-        steps_goal: prefs?.daily_step_goal ?? null,
+        steps_goal: planRow?.daily_step_goal ?? null,
         streak,
         weight_kg: latestWeight,
         weight_change_kg: weightChange,
