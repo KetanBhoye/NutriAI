@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } from 'react-native';
+import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link } from 'expo-router';
 import { useAuth } from '@/auth';
 import { ApiError } from '@/api';
 import { Button, TextField } from '@/components/ui';
-import { colors, fonts } from '@/theme';
+import { colors, fonts, space } from '@/theme';
+import { API_URL } from '@/config';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 
 export default function SignUp() {
@@ -15,14 +16,18 @@ export default function SignUp() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   const onSubmit = async () => {
     setError(null);
     if (name.trim().length < 1) return setError('Please enter your name.');
     if (password.length < 8) return setError('Password must be at least 8 characters.');
+    // Checked here as well as disabling the button: consent has to be a real
+    // decision, and an unchecked box must never reach the server.
+    if (!accepted) return setError('Please accept the Terms and Privacy Policy to continue.');
     setBusy(true);
     try {
-      await signUp(name.trim(), email.trim(), password);
+      await signUp(name.trim(), email.trim(), password, accepted);
       // On success the auth gate redirects into onboarding automatically.
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not create account. Try again.');
@@ -63,9 +68,44 @@ export default function SignUp() {
           onSubmitEditing={onSubmit}
         />
 
+        {/*
+          Unticked by default, and the button stays disabled until it is ticked.
+          A pre-ticked box is not consent under GDPR, and health data is
+          special-category — so this is the one control on the screen that must
+          not be "helpful".
+        */}
+        <Pressable
+          style={styles.consent}
+          onPress={() => setAccepted((v) => !v)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: accepted }}
+          accessibilityLabel="Accept the Terms of Service and Privacy Policy"
+        >
+          <View style={[styles.box, accepted && styles.boxOn]}>
+            {accepted ? <Text style={styles.tick}>✓</Text> : null}
+          </View>
+          <Text style={styles.consentText}>
+            I agree to the{' '}
+            <Text style={styles.legalLink} onPress={() => Linking.openURL(`${API_URL}/terms`)}>
+              Terms of Service
+            </Text>{' '}
+            and{' '}
+            <Text style={styles.legalLink} onPress={() => Linking.openURL(`${API_URL}/privacy`)}>
+              Privacy Policy
+            </Text>
+            , including how my health data is used.
+          </Text>
+        </Pressable>
+
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Button title="Sign up" onPress={onSubmit} busy={busy} style={styles.button} />
+        <Button
+          title="Sign up"
+          onPress={onSubmit}
+          busy={busy}
+          disabled={!accepted}
+          style={styles.button}
+        />
 
         <GoogleSignInButton mode="signup" />
 
@@ -79,6 +119,15 @@ export default function SignUp() {
 }
 
 const styles = StyleSheet.create({
+  consent: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: space.md },
+  box: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5,
+    borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginTop: 1,
+  },
+  boxOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  tick: { color: colors.onAccent, fontSize: 14, fontWeight: '900', lineHeight: 16 },
+  consentText: { flex: 1, color: colors.textDim, fontSize: 13, lineHeight: 19 },
+  legalLink: { color: colors.accent, textDecorationLine: 'underline' },
   safe: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
   container: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 32 },

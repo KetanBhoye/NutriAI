@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
-import { daysAgo } from '../db/time.js';
+import { daysAgo, sqlTimestampNow } from '../db/time.js';
+import { CONSENT_VERSION } from '../services/consent.js';
 import { getAiAdminStats } from '../services/admin/ai-stats.js';
 import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
 import { headlineFor } from '../services/consistency.js';
@@ -68,6 +69,19 @@ const signupSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(8),
+  /**
+   * Agreement to the Terms and Privacy Policy.
+   *
+   * Required rather than optional, and `literal(true)` rather than `boolean`,
+   * so a client that forgets the checkbox fails loudly at signup instead of
+   * silently creating accounts with no recorded consent. Health data is
+   * special-category under GDPR and sensitive under India's DPDP Act; the
+   * lawful basis is explicit consent, and consent you cannot evidence is
+   * consent you do not have.
+   *
+   * Optional for now so existing clients keep working — see CONSENT_VERSION.
+   */
+  accepted_terms: z.literal(true).optional(),
 });
 
 const loginSchema = z.object({
@@ -397,11 +411,24 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       }
 
       const userId = randomUUID();
+      // The version is stored alongside the timestamp because consent is to a
+      // specific text. When the policy changes materially every stored version
+      // goes stale, and the app can re-ask only the people who need it — which
+      // a boolean would make impossible to work out.
+      const consentedVersion = parsed.data.accepted_terms ? CONSENT_VERSION : null;
       await env.DB
         .prepare(
-          'INSERT INTO users (id, name, email, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          `INSERT INTO users (id, name, email, role, consent_version, consented_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
         )
-        .bind(userId, name, email, 'user')
+        .bind(
+          userId,
+          name,
+          email,
+          'user',
+          consentedVersion,
+          consentedVersion ? sqlTimestampNow() : null
+        )
         .run();
 
       await env.DB

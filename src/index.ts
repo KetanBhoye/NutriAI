@@ -246,6 +246,11 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   app.get('/privacy', privacyPage);
   app.get('/privacy-policy', privacyPage);
 
+  /** The other half of what users agree to at signup. */
+  app.get('/terms', (_req, res) => {
+    res.sendFile(resolve(publicDir, 'terms.html'));
+  });
+
   // The PWA is a client-routed SPA: every /app/* path that isn't a built asset
   // must return index.html so a deep link or a home-screen launch into
   // /app/dashboard resolves instead of 404ing.

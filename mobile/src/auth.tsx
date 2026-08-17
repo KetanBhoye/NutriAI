@@ -22,7 +22,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string, acceptedTerms: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -141,10 +141,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await refreshUser();
   };
 
-  const signUp = async (name: string, email: string, password: string) => {
+  const signUp = async (
+    name: string,
+    email: string,
+    password: string,
+    acceptedTerms: boolean
+  ) => {
     await api('/api/auth/signup', {
       method: 'POST',
-      body: { name, email, password },
+      // Only sent when actually true: the server records the policy version
+      // against the account, and a field that is always present would make
+      // "did they agree?" unanswerable.
+      body: { name, email, password, ...(acceptedTerms ? { accepted_terms: true } : {}) },
       captureCookie: true,
     });
     await refreshUser();
