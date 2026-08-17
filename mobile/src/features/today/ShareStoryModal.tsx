@@ -158,6 +158,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
             <Text style={styles.kcal}>{stats.calories.consumed.toLocaleString()}</Text>
             <Text style={styles.kcalLabel}>
               KCAL{stats.calories.goal ? ` · GOAL ${stats.calories.goal.toLocaleString()}` : ''}
+              {stats.steps != null ? ` · ${stats.steps.toLocaleString()} STEPS` : ''}
             </Text>
 
             <View style={styles.track}>
@@ -171,18 +172,6 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
               <Figure value={`${Math.round(stats.fat_g)}g`} label="FAT" />
             </View>
 
-            <View style={styles.stats}>
-              <Figure value={stats.steps != null ? stats.steps.toLocaleString() : '—'} label="STEPS" />
-              <Figure value={`${stats.streak}`} label="STREAK" />
-              <Figure
-                value={
-                  stats.weight_change_kg != null
-                    ? `${stats.weight_change_kg > 0 ? '+' : ''}${stats.weight_change_kg.toFixed(1)}`
-                    : '—'
-                }
-                label="KG MOVED"
-              />
-            </View>
 
             <View style={styles.rule} />
             <Text style={styles.footer}>{stats.name}</Text>

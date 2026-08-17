@@ -12,7 +12,25 @@ import { StyleSheet } from 'react-native';
  * The palette keys off what the day actually earned, so a streak card and a
  * steps card don't look identical in a feed.
  */
-export type CardTheme = 'perfect' | 'streak' | 'weight' | 'protein' | 'steps' | 'dialed' | 'default';
+/**
+ * Day themes are warm — magenta, gold, green. Week themes are cool — violet,
+ * indigo, teal. That split is deliberate and is the main thing keeping the two
+ * cards apart in a feed: side by side they were previously the same object with
+ * different numbers, because a shared palette beats any layout difference at
+ * thumbnail size.
+ */
+export type CardTheme =
+  | 'perfect'
+  | 'streak'
+  | 'weight'
+  | 'protein'
+  | 'steps'
+  | 'dialed'
+  | 'default'
+  | 'week-best'
+  | 'week-strong'
+  | 'week-steady'
+  | 'week-building';
 
 interface Palette {
   /** Base fill — near-black, faintly tinted toward the accent. */
@@ -41,6 +59,16 @@ const PALETTES: Record<CardTheme, Palette> = {
   dialed: { base: '#0b1412', glowA: '#4ade80', glowB: '#5ad1ff', ring: '#4ade80' },
   // Muted violet so a plain day still looks considered.
   default: { base: '#0f1115', glowA: '#a98bff', glowB: '#5ad1ff', ring: '#a98bff' },
+
+  // ── Week cards. Cool throughout, so a week never reads as a day. ──────────
+  // Electric violet into cyan: the rarest week, and unmistakably not a day card.
+  'week-best': { base: '#0d0a1c', glowA: '#8b5cf6', glowB: '#22d3ee', ring: '#a78bfa' },
+  // Indigo into teal — confident, still calm.
+  'week-strong': { base: '#0a0f1e', glowA: '#6366f1', glowB: '#2dd4bf', ring: '#818cf8' },
+  // Slate blue: a solid week that isn't claiming to be a triumph.
+  'week-steady': { base: '#0a0e18', glowA: '#3b82f6', glowB: '#38bdf8', ring: '#60a5fa' },
+  // Deep blue-grey. Quiet on purpose — this is a week someone is still building.
+  'week-building': { base: '#0b0d14', glowA: '#475569', glowB: '#38bdf8', ring: '#64748b' },
 };
 
 export function ShareCardBackground({ theme, width, height }: { theme: CardTheme; width: number; height: number }) {

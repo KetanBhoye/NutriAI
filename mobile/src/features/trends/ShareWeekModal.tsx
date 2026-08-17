@@ -21,7 +21,17 @@ import { weekShareCaption } from './weekShareCopy';
  * is a bug report waiting to happen.
  */
 
-const CARD_W = Math.min(Dimensions.get('window').width - 72, 300);
+/**
+ * Sized from the *height* available in the sheet, not just the width.
+ *
+ * A 9:16 card 300pt wide is 533pt tall, which overflowed the sheet on a normal
+ * phone: the brand mark and the "TOP N%" line were clipped behind the share
+ * buttons. The exported PNG was fine — it is re-rendered at 1080×1920 — so this
+ * only ever broke the preview, which is precisely the thing someone looks at
+ * before deciding to post.
+ */
+const { width: WIN_W, height: WIN_H } = Dimensions.get('window');
+const CARD_W = Math.min(WIN_W - 72, 300, Math.round(((WIN_H * 0.5) * 9) / 16));
 
 /** What the exported image is, regardless of how small the preview is drawn. */
 const STORY_W = 1080;

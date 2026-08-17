@@ -34,18 +34,22 @@ export function canShareWeek(data: Consistency): boolean {
   return data.score >= MIN_SHAREABLE_SCORE && data.days_logged >= MIN_SHAREABLE_DAYS;
 }
 
-/** Reuses the daily card's palettes so the two read as one product. */
+/**
+ * Week cards use the cool half of the palette set, never the day card's warm
+ * magenta/gold. Rendered side by side on the old shared palette the two were
+ * indistinguishable at thumbnail size — same gradient, same shape, different
+ * numbers — which is exactly what "they should not overlap" meant.
+ */
 export function themeFor(data: Consistency): CardTheme {
-  if (data.is_personal_best && data.score > 0) return 'perfect';
+  if (data.is_personal_best && data.score > 0) return 'week-best';
   switch (data.headline.band) {
     case 'excellent':
-      return 'streak';
     case 'strong':
-      return 'dialed';
+      return 'week-strong';
     case 'steady':
-      return 'steps';
+      return 'week-steady';
     default:
-      return 'default';
+      return 'week-building';
   }
 }
 

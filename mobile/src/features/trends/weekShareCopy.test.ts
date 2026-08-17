@@ -102,19 +102,34 @@ describe('the install link', () => {
 });
 
 describe('the palette', () => {
-  it('uses the rarest treatment for a personal best', () => {
-    expect(themeFor(week({ is_personal_best: true }))).toBe('perfect');
+  const DAY_THEMES = ['perfect', 'streak', 'weight', 'protein', 'steps', 'dialed', 'default'];
+
+  it('never uses a day card palette', () => {
+    // The point of the split. Rendered side by side on the shared palette, a
+    // week and a day were the same object with different numbers — a shared
+    // gradient beats any layout difference at thumbnail size.
+    for (const band of ['excellent', 'strong', 'steady', 'building'] as const) {
+      for (const best of [true, false]) {
+        const theme = themeFor(week({ is_personal_best: best, headline: { band, title: '', detail: '' } }));
+        expect(DAY_THEMES).not.toContain(theme);
+        expect(theme.startsWith('week-')).toBe(true);
+      }
+    }
   });
 
-  it('varies by band, so two shares do not look identical in a feed', () => {
-    const themes = (['excellent', 'strong', 'steady', 'building'] as const).map((band) =>
+  it('gives a personal best its own treatment', () => {
+    expect(themeFor(week({ is_personal_best: true }))).toBe('week-best');
+  });
+
+  it('varies by band, so two weeks do not look identical in a feed', () => {
+    const themes = (['excellent', 'steady', 'building'] as const).map((band) =>
       themeFor(week({ headline: { band, title: '', detail: '' } }))
     );
-    expect(new Set(themes).size).toBe(4);
+    expect(new Set(themes).size).toBe(3);
   });
 
   it('does not award the personal-best treatment to a zero score', () => {
-    expect(themeFor(week({ is_personal_best: true, score: 0 }))).not.toBe('perfect');
+    expect(themeFor(week({ is_personal_best: true, score: 0 }))).not.toBe('week-best');
   });
 });
 

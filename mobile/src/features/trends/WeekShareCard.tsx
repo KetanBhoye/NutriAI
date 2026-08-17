@@ -8,115 +8,142 @@ import { themeFor, weekRangeLabel, weekShareCopy } from './weekShareCopy';
 /**
  * The weekly story card.
  *
- * Design brief was "rich but minimal — someone seeing it on a story should
- * wonder what app that is". What that actually means in a 9:16 frame someone
- * scrolls past in under a second:
+ * Rewritten after seeing it rendered next to the day card, which showed three
+ * things a spec could not:
  *
- *   - One thing is big. The score owns the card; everything else is support.
- *     Two competing focal points read as a dashboard, and nobody screenshots a
- *     dashboard.
- *   - Generous emptiness. The margins are wide and the stats sit in a single
- *     line near the bottom, so the card breathes instead of filling up.
- *   - One accent colour, taken from the week's own result, so a personal best
- *     and an ordinary week are visibly different objects in a feed.
- *   - The eight-week trend is the signature. It is the one element no other
- *     tracker's card has, and it is what makes the image legible as *progress*
- *     rather than a number someone typed.
- *   - Branding is small and bottom-aligned. A logo big enough to read at a
- *     glance turns the card into an advert, which is the fastest way to stop
- *     people posting it.
+ *  - They were the same object. Same warm gradient, same big-number-over-a-
+ *    stat-grid layout. At thumbnail size nothing distinguished a week from a
+ *    day. Week cards are now cool-palette only (see themeFor), and the trend
+ *    is the hero rather than a footnote.
+ *  - The stat labels collided — "DAYS LOGGED DAY STREAK" ran together, because
+ *    three flexed columns had no gap and the labels were wider than their
+ *    share. Now two columns with room, and short labels.
+ *  - Zero-score weeks drew as 2px stubs that read as a rendering fault. A week
+ *    with nothing logged is real data and now draws as a baseline dot, which
+ *    says "nothing here" instead of "something broke".
  *
- * Laid out in points and snapshotted at 1080×1920 by the modal, so everything
- * here is proportional to `w`.
+ * The division of labour with the day card: a day card is a *moment* — what
+ * you ate, what you hit. A week card is a *trajectory* — the shape of eight
+ * weeks. Neither repeats the other's stats.
+ *
+ * Laid out in points and snapshotted at 1080×1920, so every dimension derives
+ * from `w`.
  */
 
 interface Props {
   data: Consistency;
   stats: { streak: number; averageCalories: number };
-  /** Card width in points; every dimension derives from it. */
+  /** Card width in points. */
   w: number;
 }
 
 const ACCENTS: Record<string, string> = {
-  perfect: '#f472b6',
-  streak: '#fbbf24',
-  dialed: colors.accent,
-  steps: colors.cyan,
-  default: colors.purple,
+  'week-best': '#a78bfa',
+  'week-strong': '#818cf8',
+  'week-steady': '#60a5fa',
+  'week-building': '#94a3b8',
 };
 
 export function WeekShareCard({ data, stats, w }: Props) {
   const h = Math.round((w * 16) / 9);
   const theme = themeFor(data);
-  const accent = ACCENTS[theme] ?? colors.accent;
+  const accent = ACCENTS[theme] ?? colors.cyan;
   const copy = weekShareCopy(data);
-  const pad = w * 0.1;
+  const pad = w * 0.085;
 
-  // Trend bars. Scaled against at least 100 so a modest week is not drawn
-  // full-height merely because it was the best of the eight.
+  // Scaled against at least 100 so a modest week is not drawn full height
+  // merely because it was the best of the eight.
   const peak = Math.max(100, ...data.history.map((p) => p.score));
-  const trendH = w * 0.28;
+  const chartH = w * 0.42;
 
   return (
     <View style={{ width: w, height: h }}>
       <ShareCardBackground theme={theme} width={w} height={h} />
 
       <View style={[styles.body, { padding: pad }]}>
-        <View>
-          <Text style={[styles.eyebrow, { fontSize: w * 0.038, color: accent }]}>
+        <View style={styles.head}>
+          <Text style={[styles.eyebrow, { fontSize: w * 0.034, color: accent }]}>
             {copy.eyebrow}
           </Text>
-          <Text style={[styles.range, { fontSize: w * 0.036 }]}>
+          <Text style={[styles.range, { fontSize: w * 0.032 }]}>
             {weekRangeLabel(data.week_start)}
           </Text>
         </View>
 
-        {/* The hero. Nothing else on the card competes with it. */}
         <View style={styles.hero}>
           <View style={styles.scoreRow}>
-            <Text style={[styles.score, { fontSize: w * 0.42, color: accent }]}>{data.score}</Text>
-            <Text style={[styles.outOf, { fontSize: w * 0.075, marginBottom: w * 0.06 }]}>/100</Text>
+            <Text style={[styles.score, { fontSize: w * 0.34, color: accent }]}>{data.score}</Text>
+            <Text style={[styles.outOf, { fontSize: w * 0.055, marginBottom: w * 0.045 }]}>
+              /100
+            </Text>
           </View>
-          <Text style={[styles.label, { fontSize: w * 0.042 }]}>CONSISTENCY</Text>
-          <Text style={[styles.headline, { fontSize: w * 0.078 }]}>{copy.headline}</Text>
+          <Text style={[styles.label, { fontSize: w * 0.036 }]}>CONSISTENCY SCORE</Text>
+          <Text style={[styles.headline, { fontSize: w * 0.062 }]}>{copy.headline}</Text>
         </View>
 
-        {/* The signature element: eight weeks at a glance. */}
-        <View style={{ height: trendH, flexDirection: 'row', alignItems: 'flex-end', gap: w * 0.014 }}>
-          {data.history.map((point, i) => {
-            const current = i === data.history.length - 1;
-            return (
-              <View
-                key={point.weekStart}
-                style={{
-                  flex: 1,
-                  height: Math.max(w * 0.008, (point.score / peak) * trendH),
-                  borderRadius: w * 0.008,
-                  backgroundColor: current ? accent : 'rgba(255,255,255,0.16)',
-                }}
-              />
-            );
-          })}
+        {/*
+          The hero visual. A week card exists to show a direction, and this is
+          the only element on either card that shows one — it is what makes the
+          image legible as progress rather than a number someone typed.
+        */}
+        <View>
+          <View style={[styles.chart, { height: chartH, gap: w * 0.016 }]}>
+            {data.history.map((point, i) => {
+              const current = i === data.history.length - 1;
+              const empty = point.score === 0;
+              return (
+                <View key={point.weekStart} style={styles.col}>
+                  {empty ? (
+                    // A week with nothing logged: a baseline dot, not a stub.
+                    <View
+                      style={{
+                        width: w * 0.018,
+                        height: w * 0.018,
+                        borderRadius: w * 0.009,
+                        backgroundColor: 'rgba(255,255,255,0.22)',
+                      }}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: '100%',
+                        height: Math.max(w * 0.02, (point.score / peak) * chartH),
+                        borderRadius: w * 0.012,
+                        backgroundColor: current ? accent : 'rgba(255,255,255,0.16)',
+                      }}
+                    />
+                  )}
+                </View>
+              );
+            })}
+          </View>
+          <View style={[styles.axis, { marginTop: w * 0.028 }]}>
+            <Text style={[styles.axisText, { fontSize: w * 0.028 }]}>8 WEEKS AGO</Text>
+            <Text style={[styles.axisText, { fontSize: w * 0.028, color: accent }]}>THIS WEEK</Text>
+          </View>
         </View>
-        <Text style={[styles.trendLabel, { fontSize: w * 0.032, marginTop: w * 0.025 }]}>
-          8 WEEKS
-        </Text>
 
-        <View style={[styles.stats, { marginTop: w * 0.07, paddingTop: w * 0.055 }]}>
-          <Stat w={w} value={`${data.days_logged}/7`} label="DAYS LOGGED" />
-          <Stat w={w} value={String(stats.streak)} label="DAY STREAK" />
-          <Stat w={w} value={stats.averageCalories ? String(stats.averageCalories) : '—'} label="AVG KCAL" />
+        {/*
+          Two stats, not three. Both are week-scale facts the day card never
+          shows, and two columns leave the labels room to sit on one line.
+        */}
+        <View style={[styles.stats, { paddingTop: w * 0.045, gap: w * 0.06 }]}>
+          <Stat w={w} value={`${data.days_logged}/7`} label="DAYS ON PLAN" />
+          <Stat
+            w={w}
+            value={data.personal_best !== null ? String(Math.max(data.personal_best, data.score)) : String(data.score)}
+            label="PERSONAL BEST"
+          />
         </View>
 
         <View style={styles.footer}>
           <View style={styles.brand}>
-            <BrandMark size={w * 0.075} />
-            <Text style={[styles.brandText, { fontSize: w * 0.038 }]}>NutriAI</Text>
+            <BrandMark size={w * 0.07} />
+            <Text style={[styles.brandText, { fontSize: w * 0.036 }]}>NutriAI</Text>
           </View>
-          {/* Smallest line on the card, and only when the server sent one. */}
           {data.comparison ? (
-            <Text style={[styles.peer, { fontSize: w * 0.032 }]}>
-              Top {Math.max(1, 100 - data.comparison.better_than_percent)}%
+            <Text style={[styles.peer, { fontSize: w * 0.03 }]}>
+              TOP {Math.max(1, 100 - data.comparison.better_than_percent)}%
             </Text>
           ) : null}
         </View>
@@ -128,25 +155,29 @@ export function WeekShareCard({ data, stats, w }: Props) {
 function Stat({ w, value, label }: { w: number; value: string; label: string }) {
   return (
     <View style={{ flex: 1 }}>
-      <Text style={[styles.statValue, { fontSize: w * 0.072 }]}>{value}</Text>
-      <Text style={[styles.statLabel, { fontSize: w * 0.03, marginTop: w * 0.012 }]}>{label}</Text>
+      <Text style={[styles.statValue, { fontSize: w * 0.068 }]}>{value}</Text>
+      <Text style={[styles.statLabel, { fontSize: w * 0.028, marginTop: w * 0.01 }]}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   body: { flex: 1, justifyContent: 'space-between' },
-  eyebrow: { fontWeight: '800', letterSpacing: 2 },
-  range: { color: 'rgba(255,255,255,0.45)', marginTop: 4, letterSpacing: 0.5 },
+  head: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  eyebrow: { fontWeight: '800', letterSpacing: 2.5 },
+  range: { color: 'rgba(255,255,255,0.4)', letterSpacing: 0.5 },
 
-  hero: { marginTop: 'auto' },
+  hero: {},
   scoreRow: { flexDirection: 'row', alignItems: 'flex-end' },
   score: { fontWeight: '800', letterSpacing: -3, includeFontPadding: false },
-  outOf: { color: 'rgba(255,255,255,0.35)', fontWeight: '600', marginLeft: 4 },
-  label: { color: 'rgba(255,255,255,0.5)', fontWeight: '700', letterSpacing: 3, marginTop: -4 },
-  headline: { color: colors.text, fontWeight: '700', marginTop: 10 },
+  outOf: { color: 'rgba(255,255,255,0.32)', fontWeight: '600', marginLeft: 4 },
+  label: { color: 'rgba(255,255,255,0.45)', fontWeight: '700', letterSpacing: 2.5, marginTop: -2 },
+  headline: { color: colors.text, fontWeight: '700', marginTop: 10, lineHeight: undefined },
 
-  trendLabel: { color: 'rgba(255,255,255,0.3)', fontWeight: '700', letterSpacing: 2 },
+  chart: { flexDirection: 'row', alignItems: 'flex-end' },
+  col: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
+  axis: { flexDirection: 'row', justifyContent: 'space-between' },
+  axisText: { color: 'rgba(255,255,255,0.3)', fontWeight: '700', letterSpacing: 1.4 },
 
   stats: {
     flexDirection: 'row',
@@ -157,12 +188,11 @@ const styles = StyleSheet.create({
   statLabel: { color: 'rgba(255,255,255,0.4)', fontWeight: '600', letterSpacing: 1.2 },
 
   footer: {
-    marginTop: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandText: { color: 'rgba(255,255,255,0.65)', fontWeight: '700', letterSpacing: 0.3 },
-  peer: { color: 'rgba(255,255,255,0.4)', fontWeight: '600', letterSpacing: 0.6 },
+  brandText: { color: 'rgba(255,255,255,0.6)', fontWeight: '700', letterSpacing: 0.3 },
+  peer: { color: 'rgba(255,255,255,0.42)', fontWeight: '800', letterSpacing: 1.4 },
 });
