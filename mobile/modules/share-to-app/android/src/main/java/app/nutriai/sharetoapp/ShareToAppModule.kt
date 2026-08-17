@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import org.json.JSONObject
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -162,11 +163,97 @@ class ShareToAppModule : Module() {
       context.startActivity(intent)
       true
     }
+
+    /**
+     * Opens Snapchat's *camera* with the card attached as a sticker.
+     *
+     * The other direction entirely from `shareSnapToPreview`. There, our card
+     * is the Snap and the user's only choice is whether to send it. Here the
+     * card is an overlay and the background is theirs — they point the camera
+     * at the meal, or pick any photo, and our design floats on top of it.
+     *
+     * Worth the second entry point because it changes what the thing *is*: a
+     * full-frame card posted to a Story is an advert with someone's numbers on
+     * it, while a sticker over their own photo is their post, which we happened
+     * to caption. The second gets shared; the first gets skipped.
+     *
+     * The sticker PNG must have a transparent background — see the note in
+     * StickerFrame.tsx. A card captured with its own background works here but
+     * looks like a screenshot pasted over the photo.
+     *
+     * Position and size are fractions and dp respectively, matching Snap's
+     * documented sticker JSON. The defaults put it slightly above centre, where
+     * it covers the least of a typical hand-held food shot.
+     */
+    AsyncFunction("shareSnapSticker") {
+      uri: String,
+      clientId: String,
+      appName: String,
+      widthDp: Int,
+      heightDp: Int,
+      posY: Double
+      ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("No application context")
+
+      if (clientId.isBlank()) {
+        throw IllegalStateException("No Snap Creative Kit client ID configured")
+      }
+
+      val stickerUri = Uri.parse(uri)
+      val sticker = JSONObject().apply {
+        put("uri", stickerUri.toString())
+        put("posX", 0.5)
+        put("posY", posY)
+        put("rotation", 0)
+        put("widthDp", widthDp)
+        put("heightDp", heightDp)
+      }
+
+      val intent = Intent(Intent.ACTION_SEND).apply {
+        setPackage(SNAPCHAT_PACKAGE)
+        // The camera deep link, not the preview one: that is the whole
+        // difference between "here is your Snap" and "here is your sticker,
+        // now go take a Snap".
+        setDataAndType(Uri.parse(CREATIVE_KIT_CAMERA), INTENT_TYPE_ALL)
+        putExtra(CLIENT_ID_EXTRA, clientId)
+        putExtra(CLIENT_APP_NAME_EXTRA, appName)
+        putExtra(STICKER_EXTRA, sticker.toString())
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        putExtra(
+          RESULT_INTENT_EXTRA,
+          PendingIntent.getActivity(
+            context,
+            CREATIVE_KIT_REQUEST_CODE,
+            Intent(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE
+            else PendingIntent.FLAG_ONE_SHOT
+          )
+        )
+      }
+
+      if (intent.resolveActivity(context.packageManager) == null) {
+        throw IllegalStateException(
+          "Snapchat cannot receive a Creative Kit sticker (not installed, too old, or missing a <queries> entry)"
+        )
+      }
+
+      // The sticker rides in an extra rather than the intent data, so the flag
+      // above does not cover it. Same reasoning as the preview flow.
+      context.grantUriPermission(SNAPCHAT_PACKAGE, stickerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      context.startActivity(intent)
+      true
+    }
   }
 
   private companion object {
     const val SNAPCHAT_PACKAGE = "com.snapchat.android"
     const val CREATIVE_KIT_PREVIEW = "snapchat://creativekit/preview"
+    const val CREATIVE_KIT_CAMERA = "snapchat://creativekit/camera"
+    const val INTENT_TYPE_ALL = "*/*"
+    const val STICKER_EXTRA = "sticker"
     const val CLIENT_ID_EXTRA = "CLIENT_ID"
     const val CLIENT_APP_NAME_EXTRA = "CLIENT_APP_NAME"
     const val CAPTION_TEXT_EXTRA = "captionText"

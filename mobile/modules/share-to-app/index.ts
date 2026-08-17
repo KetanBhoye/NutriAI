@@ -4,10 +4,14 @@ import { requireOptionalNativeModule } from 'expo';
 /**
  * Hands a captured card straight to a named app (Snapchat, Instagram, …).
  *
- * `requireOptionalNativeModule` rather than the throwing variant: the module is
- * Android-only and is absent from the iOS binary, so importing it eagerly would
- * crash the app at startup on iPhone. Every function below degrades to "not
- * available" and the caller falls back to the system share sheet.
+ * `requireOptionalNativeModule` rather than the throwing variant: a JS-only
+ * context (tests, or a build where the module failed to link) would otherwise
+ * crash at import time. Every function below degrades to "not available" and
+ * the caller falls back to the system share sheet.
+ *
+ * The direct-send functions are Android-only — iOS has no way to hand content
+ * to a named app. `shareSnapToPreview` is the exception and works on both, via
+ * an Intent on Android and Snap's Creative Kit SDK on iOS.
  */
 const native = requireOptionalNativeModule<{
   isAppInstalled(packageName: string): boolean;
@@ -17,6 +21,14 @@ const native = requireOptionalNativeModule<{
     clientId: string,
     appName: string,
     caption: string | null
+  ): Promise<boolean>;
+  shareSnapSticker(
+    uri: string,
+    clientId: string,
+    appName: string,
+    widthDp: number,
+    heightDp: number,
+    posY: number
   ): Promise<boolean>;
 }>('ShareToApp');
 
@@ -73,9 +85,52 @@ export async function shareSnapToPreview(
   appName: string,
   caption?: string
 ): Promise<boolean> {
-  if (Platform.OS !== 'android' || !native || !clientId) return false;
+  // Both platforms, unlike everything else in this module: Android reaches the
+  // preview with an Intent, iOS with Snap's SDK, and the caller should not have
+  // to know which.
+  if (!native || !clientId) return false;
   try {
     return await native.shareSnapToPreview(uri, clientId, appName, caption ?? null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens Snapchat's camera with the card riding as a sticker on top.
+ *
+ * The counterpart to `shareSnapToPreview`, and a different product rather than
+ * a different code path. There, our card *is* the Snap: the background is ours,
+ * and the user's only decision is whether to send it. Here the background is
+ * theirs — their meal, their gym, whatever they point the camera at — and our
+ * design is a label on it.
+ *
+ * Which matters because of how the two get received. A full-frame card on
+ * someone's Story is recognisably an app's output, and it is skipped. The same
+ * numbers over a photo they took is their post, and it gets watched.
+ *
+ * `widthDp`/`heightDp` size the sticker inside Snapchat, and `posY` places it
+ * vertically as a 0–1 fraction. They are passed rather than fixed because only
+ * the caller knows the shape it just captured.
+ */
+export async function shareSnapSticker(
+  uri: string,
+  clientId: string,
+  appName: string,
+  size: { widthDp: number; heightDp: number; posY?: number }
+): Promise<boolean> {
+  if (!native || !clientId) return false;
+  try {
+    return await native.shareSnapSticker(
+      uri,
+      clientId,
+      appName,
+      Math.round(size.widthDp),
+      Math.round(size.heightDp),
+      // Slightly above centre: the middle of a hand-held food shot is usually
+      // the food, and covering that defeats the point of a sticker.
+      size.posY ?? 0.42
+    );
   } catch {
     return false;
   }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { shareSnapToPreview } from './index';
+import { shareSnapSticker, shareSnapToPreview } from './index';
 
 /**
  * The routing decisions in the share wrapper.
@@ -18,6 +18,9 @@ const native = vi.hoisted(() => ({
   isAppInstalled: vi.fn(() => true),
   shareImage: vi.fn(async () => true),
   shareSnapToPreview: vi.fn(async () => true),
+  // Typed with an args signature so assertions can read individual
+  // arguments — vi.fn(async () => true) infers a zero-arity call tuple.
+  shareSnapSticker: vi.fn(async (..._args: unknown[]) => true),
 }));
 
 const state = vi.hoisted(() => ({ platform: 'android' }));
@@ -77,13 +80,17 @@ describe('when a real Snap is not possible', () => {
     expect(native.shareSnapToPreview).not.toHaveBeenCalled();
   });
 
-  it('declines on iOS, where Creative Kit needs Snap\'s SDK', async () => {
+  it('still goes native on iOS, where the SDK does the same job', async () => {
+    // The one function in this module that is not Android-only. Android reaches
+    // the preview with an Intent and iOS with Snap's SDK, but the caller should
+    // not have to know which — a platform check here would silently drop iPhone
+    // users back to the share sheet, which is the original bug.
     state.platform = 'ios';
 
-    const sent = await shareSnapToPreview('content://card.png', 'client-123', 'NutriAI');
+    const sent = await shareSnapToPreview('file:///card.png', 'client-123', 'NutriAI');
 
-    expect(sent).toBe(false);
-    expect(native.shareSnapToPreview).not.toHaveBeenCalled();
+    expect(sent).toBe(true);
+    expect(native.shareSnapToPreview).toHaveBeenCalled();
   });
 
   it('reports failure rather than throwing when the intent cannot start', async () => {
@@ -95,5 +102,48 @@ describe('when a real Snap is not possible', () => {
     await expect(
       shareSnapToPreview('content://card.png', 'client-123', 'NutriAI')
     ).resolves.toBe(false);
+  });
+});
+
+describe('sending a sticker instead of a card', () => {
+  it('rounds the sizes, because the native side takes ints', async () => {
+    // Captured dimensions are points and arrive fractional on a 2.75x screen.
+    // Kotlin's Int parameters reject a Double outright, so an unrounded value
+    // fails the whole share rather than being coerced.
+    await shareSnapSticker('content://sticker.png', 'client-123', 'NutriAI', {
+      widthDp: 260.4,
+      heightDp: 273.19,
+    });
+
+    expect(native.shareSnapSticker).toHaveBeenCalledWith(
+      'content://sticker.png',
+      'client-123',
+      'NutriAI',
+      260,
+      273,
+      0.42
+    );
+  });
+
+  it('defaults the sticker above centre rather than over the subject', async () => {
+    // The middle of a hand-held food shot is the food. Covering it defeats the
+    // point of a sticker, which is that the photo stays the post.
+    await shareSnapSticker('content://sticker.png', 'client-123', 'NutriAI', {
+      widthDp: 260,
+      heightDp: 273,
+    });
+
+    const posY = native.shareSnapSticker.mock.calls[0]?.[5];
+    expect(Number(posY)).toBeLessThan(0.5);
+  });
+
+  it('declines without a client ID, like the preview path', async () => {
+    const sent = await shareSnapSticker('content://sticker.png', '', 'NutriAI', {
+      widthDp: 260,
+      heightDp: 273,
+    });
+
+    expect(sent).toBe(false);
+    expect(native.shareSnapSticker).not.toHaveBeenCalled();
   });
 });

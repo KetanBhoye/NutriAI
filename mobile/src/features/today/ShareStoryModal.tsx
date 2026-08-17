@@ -9,9 +9,11 @@ import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 import { formatCardDate, pickCaption } from './shareCaption';
-import { SNAPCHAT, shareImageTo, shareSnapToPreview } from '@modules/share-to-app';
+import { SNAPCHAT, shareImageTo, shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
 import { SNAP_CLIENT_ID } from '@/config';
 import { ShareCardBackground } from './ShareCardBackground';
+import { DayShareSticker } from './DayShareSticker';
+import { ShareModeToggle, type ShareMode } from '../share/ShareModeToggle';
 
 interface ShareStoryModalProps {
   visible: boolean;
@@ -46,6 +48,13 @@ const STORY_W = 1080;
 const STORY_H = 1920;
 
 /**
+ * The sticker is captured at its natural size, so these points become the
+ * pixels Snapchat receives — see the matching note in ShareWeekModal.
+ */
+const STICKER_W = Math.min(WIN_W - 96, 280);
+const STICKER_DP = 260;
+
+/**
  * Shareable story card. The web app draws an equivalent on a <canvas>; here
  * it's real views snapshotted with react-native-view-shot, so it inherits the
  * app's own type scale and colours instead of duplicating them in draw calls.
@@ -55,6 +64,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
   const [stats, setStats] = useState<ShareStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [mode, setMode] = useState<ShareMode>('card');
 
   useEffect(() => {
     if (!visible) return;
@@ -80,13 +90,18 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
    * so the text is redrawn sharp rather than stretched.
    */
   const capture = () =>
-    captureRef(shotRef, {
-      format: 'png',
-      quality: 1,
-      result: 'tmpfile',
-      width: STORY_W,
-      height: STORY_H,
-    });
+    mode === 'sticker'
+      ? // Natural size, and no forced 9:16 frame: a sticker letterboxed into a
+        // story-shaped canvas arrives in Snapchat as a small badge adrift in a
+        // huge transparent box the user cannot crop.
+        captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' })
+      : captureRef(shotRef, {
+          format: 'png',
+          quality: 1,
+          result: 'tmpfile',
+          width: STORY_W,
+          height: STORY_H,
+        });
 
   const share = async () => {
     setSharing(true);
@@ -156,10 +171,22 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     setError(null);
     try {
       const uri = await capture();
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      const snapped = await shareSnapToPreview(contentUri, SNAP_CLIENT_ID, 'NutriAI');
+      // getContentUriAsync is Android-only — it throws on iOS, where Creative
+      // Kit reads the file:// URL directly.
+      const snapUri =
+        Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
+
+      const snapped =
+        mode === 'sticker'
+          ? await shareSnapSticker(snapUri, SNAP_CLIENT_ID, 'NutriAI', {
+              widthDp: STICKER_DP,
+              heightDp: Math.round(STICKER_DP * 1.05),
+            })
+          : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
       if (snapped) return;
-      const opened = await shareImageTo(contentUri, SNAPCHAT);
+      // Rung two is Android-only; on iOS the sheet is the only thing below.
+      const opened =
+        Platform.OS === 'android' ? await shareImageTo(snapUri, SNAPCHAT) : false;
       if (!opened) await share();
     } catch {
       await share().catch(() => setError("Couldn't share that card."));
@@ -183,6 +210,11 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
         )
       ) : (
         <View style={styles.wrap}>
+          {mode === 'sticker' ? (
+            <View ref={shotRef} collapsable={false}>
+              <DayShareSticker stats={stats} w={STICKER_W} />
+            </View>
+          ) : (
           <ViewShot ref={shotRef} style={styles.card}>
             <ShareCardBackground theme={caption.theme} width={CARD_W} height={CARD_H} />
 
@@ -228,6 +260,11 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
             <View style={styles.rule} />
             <Text style={styles.footer}>{stats.name}</Text>
           </ViewShot>
+          )}
+
+          <View style={styles.modeRow}>
+            <ShareModeToggle mode={mode} onChange={setMode} disabled={sharing} />
+          </View>
 
           {/* Instagram first on Android, because "share to a story" is the
               thing people actually came here to do; the sheet is the fallback
@@ -279,6 +316,7 @@ function Figure({ value, label }: { value: string; label: string }) {
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
+  modeRow: { alignSelf: 'stretch', marginTop: 14 },
   // Opaque: a transparent snapshot renders black in most share targets.
   card: {
     width: CARD_W,

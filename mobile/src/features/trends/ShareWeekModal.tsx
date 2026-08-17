@@ -8,8 +8,10 @@ import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
 import { DOWNLOAD_URL, SNAP_CLIENT_ID } from '@/config';
 import type { Consistency } from '@/api/dashboard';
-import { SNAPCHAT, shareImageTo, shareSnapToPreview } from '@modules/share-to-app';
+import { SNAPCHAT, shareImageTo, shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
 import { WeekShareCard } from './WeekShareCard';
+import { WeekShareSticker } from './WeekShareSticker';
+import { ShareModeToggle, type ShareMode } from '../share/ShareModeToggle';
 import { weekShareCaption } from './weekShareCopy';
 
 /**
@@ -38,6 +40,24 @@ const CARD_W = Math.min(WIN_W - 72, 300, Math.round(((WIN_H * 0.5) * 9) / 16));
 const STORY_W = 1080;
 const STORY_H = 1920;
 
+/**
+ * The sticker is drawn at the size it will be *used*, not shrunk to fit.
+ *
+ * Unlike the card — which is previewed small and re-rendered at 1080×1920 — a
+ * sticker is captured at its natural size, so the points here become the pixels
+ * Snapchat receives. Too small and the type is soft on a big phone; too large
+ * and it stops being a sticker.
+ */
+const STICKER_W = Math.min(WIN_W - 96, 280);
+
+/**
+ * How big Snapchat draws it, in dp, before the user drags or pinches it.
+ *
+ * About three quarters of a phone's width: wide enough to read at a glance in a
+ * Story, narrow enough that the photo underneath is still the subject.
+ */
+const STICKER_DP = 260;
+
 interface Props {
   visible: boolean;
   data: Consistency;
@@ -52,6 +72,7 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
   const caption = `${weekShareCaption(data)}\n${DOWNLOAD_URL}`;
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ShareMode>('card');
 
   /**
    * The on-screen card is ~300pt wide so it fits in a sheet. Capturing at that
@@ -60,13 +81,24 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
    * so the text is redrawn sharp rather than stretched.
    */
   const capture = () =>
-    captureRef(shotRef, {
-      format: 'png',
-      quality: 1,
-      result: 'tmpfile',
-      width: STORY_W,
-      height: STORY_H,
-    });
+    mode === 'sticker'
+      ? /**
+         * No width/height for a sticker, unlike the card.
+         *
+         * Forcing 1080×1920 would letterbox the sticker inside a 9:16 frame —
+         * the transparent margins are invisible, so it would look right in the
+         * preview and land in Snapchat as a small badge floating in a huge
+         * empty box the user cannot resize. Captured at its natural size, the
+         * PNG is the sticker and nothing else.
+         */
+        captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' })
+      : captureRef(shotRef, {
+          format: 'png',
+          quality: 1,
+          result: 'tmpfile',
+          width: STORY_W,
+          height: STORY_H,
+        });
 
   const share = async () => {
     setSharing(true);
@@ -117,10 +149,22 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
     setError(null);
     try {
       const uri = await capture();
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      const snapped = await shareSnapToPreview(contentUri, SNAP_CLIENT_ID, 'NutriAI');
+      // getContentUriAsync is Android-only — it throws on iOS, where Creative
+      // Kit reads the file:// URL directly.
+      const snapUri =
+        Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
+
+      const snapped =
+        mode === 'sticker'
+          ? await shareSnapSticker(snapUri, SNAP_CLIENT_ID, 'NutriAI', {
+              widthDp: STICKER_DP,
+              heightDp: Math.round(STICKER_DP * 1.05),
+            })
+          : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
       if (snapped) return;
-      const opened = await shareImageTo(contentUri, SNAPCHAT);
+      // Rung two is Android-only; on iOS the sheet is the only thing below.
+      const opened =
+        Platform.OS === 'android' ? await shareImageTo(snapUri, SNAPCHAT) : false;
       if (!opened) await share();
     } catch {
       await share().catch(() => setError("Couldn't share that card."));
@@ -159,9 +203,15 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
     <Sheet visible={visible} onClose={onClose} title="Share your week">
       <View style={styles.preview}>
         <View ref={shotRef} collapsable={false}>
-          <WeekShareCard data={data} stats={stats} w={CARD_W} />
+          {mode === 'sticker' ? (
+            <WeekShareSticker data={data} w={STICKER_W} />
+          ) : (
+            <WeekShareCard data={data} stats={stats} w={CARD_W} />
+          )}
         </View>
       </View>
+
+      <ShareModeToggle mode={mode} onChange={setMode} disabled={sharing} />
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 

@@ -189,6 +189,10 @@ const config: ExpoConfig = {
     // an explicit intent at them. Android 11+ hides installed packages by
     // default, and an explicit intent at an undeclared one throws.
     './plugins/withShareTargetQueries',
+    // The iOS half of the same feature: Creative Kit reads its client ID from
+    // Info.plist at launch, and needs `snapchat` in LSApplicationQueriesSchemes
+    // to detect that Snapchat is installed at all.
+    './plugins/withSnapCreativeKit',
     // Registers the Health Connect permission delegate in MainActivity.onCreate
     // (the library's plugin doesn't) — without this, requesting permissions crashes.
     './plugins/withHealthConnectPermissionDelegate',

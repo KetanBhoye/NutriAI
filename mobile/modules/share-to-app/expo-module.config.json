@@ -1,6 +1,9 @@
 {
-  "platforms": ["android"],
+  "platforms": ["android", "ios"],
   "android": {
     "modules": ["app.nutriai.sharetoapp.ShareToAppModule"]
+  },
+  "ios": {
+    "modules": ["ShareToAppModule"]
   }
 }
