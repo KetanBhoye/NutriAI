@@ -17,9 +17,27 @@ interface ShareStoryModalProps {
   onClose: () => void;
 }
 
-/** 9:16 so it drops straight into an Instagram/WhatsApp story without cropping. */
-const CARD_W = Math.min(Dimensions.get('window').width - 72, 300);
+/**
+ * 9:16 so it drops straight into an Instagram/WhatsApp story without cropping.
+ *
+ * Sized from the height available in the sheet as well as the width: adding a
+ * third share button pushed the last one off the bottom of the screen, because
+ * a 300pt-wide 9:16 card is 533pt tall and left nothing for the buttons.
+ */
+const { width: WIN_W, height: WIN_H } = Dimensions.get('window');
+const CARD_W = Math.min(WIN_W - 72, 300, Math.round(((WIN_H * 0.46) * 9) / 16));
 const CARD_H = Math.round((CARD_W * 16) / 9);
+
+/**
+ * Everything inside the card is expressed against the 300pt width it was
+ * drawn at. The type used to be fixed pixels, so the moment the card had to
+ * shrink to make room for a third button the sub-line wrapped, the KCAL row
+ * wrapped, and the footer was pushed clean out of the frame. Scaling keeps the
+ * composition identical on any screen — and the exported 1080×1920 is
+ * re-rendered anyway, so this only ever governed the preview.
+ */
+const S = CARD_W / 300;
+const s = (n: number) => Math.round(n * S);
 
 /** What the exported image is, regardless of how small the preview is drawn. */
 const STORY_W = 1080;
@@ -122,6 +140,41 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     }
   };
 
+  /**
+   * Snapchat.
+   *
+   * Android gets a targeted ACTION_SEND straight into Snapchat's send screen.
+   * iOS cannot hand an image to a *named* app without Snap's Creative Kit SDK
+   * and a registered Client ID, so it falls through to the share sheet, where
+   * Snapchat appears anyway — one extra tap, not a dead end.
+   *
+   * Identical to the weekly card's implementation on purpose: two share flows
+   * that behave differently is a bug report waiting to happen.
+   */
+  const shareToSnapchat = async () => {
+    if (Platform.OS !== 'android') {
+      await share();
+      return;
+    }
+    setSharing(true);
+    setError(null);
+    try {
+      const uri = await capture();
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
+        type: 'image/png',
+        packageName: 'com.snapchat.android',
+        // FLAG_GRANT_READ_URI_PERMISSION, or Snapchat gets a URI it cannot read.
+        flags: 1,
+        extra: { 'android.intent.extra.STREAM': contentUri },
+      });
+    } catch {
+      await share().catch(() => setError("Couldn't share that card."));
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const caption = stats ? pickCaption(stats) : null;
   const pct = stats?.calories.goal
     ? Math.min(100, (stats.calories.consumed / stats.calories.goal) * 100)
@@ -147,12 +200,18 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
             </View>
 
             {/* Editorial headline — the reason the card is worth posting */}
+            {/*
+              The slack sits above the headline rather than between it and the
+              number. Rendered, a gap in the middle read as a void — the
+              headline and the figure are one thought and were drifting apart —
+              while the same space at the top edge reads as composition.
+            */}
+            <View style={styles.spacer} />
+
             <View style={styles.headlineBlock}>
               <Text style={styles.headline}>{caption.headline}</Text>
               <Text style={styles.sub}>{caption.sub}</Text>
             </View>
-
-            <View style={styles.spacer} />
 
             {/* Hero figure */}
             <Text style={styles.kcal}>{stats.calories.consumed.toLocaleString()}</Text>
@@ -183,7 +242,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
               Facebook app to work at all. */}
           {Platform.OS === 'android' ? (
             <Button
-              title={sharing ? 'Preparing…' : 'Share to Instagram story'}
+              title={sharing ? 'Preparing…' : 'Instagram story'}
               onPress={shareToInstagram}
               disabled={sharing}
               style={styles.shareBtn}
@@ -191,7 +250,15 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
           ) : null}
 
           <Button
-            title={sharing ? 'Preparing…' : Platform.OS === 'android' ? 'More sharing options' : 'Share'}
+            title="Snapchat"
+            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+            onPress={shareToSnapchat}
+            disabled={sharing}
+            style={styles.shareBtn}
+          />
+
+          <Button
+            title={sharing ? 'Preparing…' : Platform.OS === 'android' ? 'More…' : 'Share'}
             onPress={share}
             disabled={sharing}
             variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
@@ -223,7 +290,7 @@ const styles = StyleSheet.create({
     width: CARD_W,
     height: CARD_H,
     borderRadius: 22,
-    padding: 22,
+    padding: s(22),
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.10)',
     // Clips the oversized background rings to the rounded corners.
@@ -231,37 +298,39 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  brand: { fontFamily: fonts.extrabold, fontSize: 12, letterSpacing: 3, color: colors.accent },
-  date: { fontFamily: fonts.medium, fontSize: 10, letterSpacing: 1.2, color: colors.textDim },
-  headlineBlock: { marginTop: 26 },
+  brand: { fontFamily: fonts.extrabold, fontSize: s(12), letterSpacing: 3 * S, color: colors.accent },
+  date: { fontFamily: fonts.medium, fontSize: s(10), letterSpacing: 1.2 * S, color: colors.textDim },
+  // marginBottom, not just top: with the slack moved above the headline there
+  // was nothing holding the sub-line off the figure, and rendered they touched.
+  headlineBlock: { marginTop: s(26), marginBottom: s(22) },
   headline: {
     fontFamily: fonts.extrabold,
-    fontSize: 34,
+    fontSize: s(34),
     lineHeight: 36,
     letterSpacing: -1,
     color: colors.text,
   },
-  sub: { fontFamily: fonts.medium, fontSize: 13, color: colors.textDim, marginTop: 10 },
+  sub: { fontFamily: fonts.medium, fontSize: s(13), color: colors.textDim, marginTop: s(10) },
   spacer: { flex: 1 },
   kcal: {
     fontFamily: fonts.extrabold,
-    fontSize: 60,
+    fontSize: s(60),
     lineHeight: 62,
     letterSpacing: -2,
     color: colors.accent,
     fontVariant: ['tabular-nums'],
   },
-  kcalLabel: { fontFamily: fonts.medium, fontSize: 10, letterSpacing: 1.4, color: colors.textDim, marginTop: 4 },
+  kcalLabel: { fontFamily: fonts.medium, fontSize: s(10), letterSpacing: 1.2 * S, color: colors.textDim, marginTop: s(4) },
   track: {
-    height: 6,
+    height: s(6),
     backgroundColor: 'rgba(255,255,255,0.14)',
     borderRadius: 999,
     overflow: 'hidden',
-    marginTop: 14,
-    marginBottom: 18,
+    marginTop: s(14),
+    marginBottom: s(18),
   },
   fill: { height: '100%', backgroundColor: colors.accent, borderRadius: 999 },
-  stats: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  stats: { flexDirection: 'row', gap: s(8), marginBottom: s(8) },
   figure: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.06)',
@@ -274,13 +343,13 @@ const styles = StyleSheet.create({
   },
   figureValue: {
     fontFamily: fonts.bold,
-    fontSize: 16,
+    fontSize: s(16),
     color: colors.text,
     fontVariant: ['tabular-nums'],
   },
-  figureLabel: { fontFamily: fonts.medium, fontSize: 8, letterSpacing: 1, color: colors.textDim, marginTop: 3 },
-  rule: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginTop: 14, marginBottom: 10 },
-  footer: { fontFamily: fonts.semibold, fontSize: 11, color: colors.textDim, letterSpacing: 0.4 },
+  figureLabel: { fontFamily: fonts.medium, fontSize: s(8), letterSpacing: 1 * S, color: colors.textDim, marginTop: s(3) },
+  rule: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginTop: s(14), marginBottom: s(10) },
+  footer: { fontFamily: fonts.semibold, fontSize: s(11), color: colors.textDim, letterSpacing: 0.4 },
   shareBtn: { marginTop: 18, alignSelf: 'stretch' },
   secondaryBtn: { marginTop: 8, alignSelf: 'stretch' },
   error: { ...type.body, color: colors.danger, textAlign: 'center', marginTop: 10 },

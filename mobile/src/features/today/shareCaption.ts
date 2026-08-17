@@ -38,9 +38,13 @@ function pick(date: string, theme: CardTheme, options: Array<[string, string]>):
 /**
  * Picks the card's headline from whatever the day actually earned.
  *
- * Order matters: the rarest achievement wins, so a 30-day streak outranks
- * hitting protein. A card that led with the smallest win would undersell the
- * day, and this is the screen people judge the app by.
+ * Order matters: the rarest achievement wins, so a clean sweep outranks
+ * hitting protein alone. A card that led with the smallest win would undersell
+ * the day, and this is the screen people judge the app by.
+ *
+ * Every tier here is a *day* fact. Streaks and weight trends are deliberately
+ * absent — they are the weekly card's story, and a day card that tells it too
+ * is just a worse weekly card.
  */
 export function pickCaption(s: ShareStats): Caption {
   const d = s.date;
@@ -59,34 +63,16 @@ export function pickCaption(s: ShareStats): Caption {
     ]);
   }
 
-  if (s.streak >= 30) {
-    return pick(d, 'streak', [
-      [`${s.streak} DAYS.\nSTILL HERE.`, 'A month of not quitting.'],
-      [`${s.streak} DAYS\nDEEP.`, 'This is not a phase any more.'],
-    ]);
-  }
-
-  if (s.streak >= 14) {
-    return pick(d, 'streak', [
-      [`${s.streak} DAYS.\nLOCKED IN.`, 'Two weeks of showing up.'],
-      [`${s.streak} STRAIGHT.`, 'Discipline beats motivation.'],
-    ]);
-  }
-
-  if (s.streak >= 7) {
-    return pick(d, 'streak', [
-      [`${s.streak} DAYS.\nNO MISSES.`, 'Consistency is the whole game.'],
-      [`A WEEK\nSTRONG.`, 'Every day logged. Every day counted.'],
-    ]);
-  }
-
-  if (lost) {
-    const kg = Math.abs(s.weight_change_kg!).toFixed(1);
-    return pick(d, 'weight', [
-      [`${kg} KG\nDOWN.`, 'The trend is going the right way.'],
-      ['MOVING\nTHE LINE.', `${kg}kg down and still climbing.`],
-    ]);
-  }
+  /*
+   * Streak and weight-trend tiers used to live here, above every day-scale
+   * achievement — so a good day led with "A WEEK STRONG / Every day logged",
+   * which is a *week* claim on a card about one day. Seeing it rendered next
+   * to the weekly card made it obvious they were competing for the same story.
+   *
+   * Both moved out rather than down: the weekly card owns the streak, and the
+   * weight trend belongs to Plan. What is left is what actually happened
+   * today, which is the only thing this card can honestly claim.
+   */
 
   if (proteinHit) {
     return pick(d, 'protein', [

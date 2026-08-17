@@ -34,13 +34,31 @@ describe('pickCaption', () => {
     expect(caption.theme).toBe('perfect');
   });
 
-  it('ranks a long streak above a single day\'s wins', () => {
+  it('never makes a week-scale claim on a card about one day', () => {
+    // Streak tiers used to outrank every day achievement, so a good day led
+    // with "A WEEK STRONG / Every day logged" — a week statement on a day
+    // card, competing with the weekly card for the same story. The day's own
+    // wins now lead, and the streak is the weekly card's to tell.
     const caption = pickCaption(
       stats({ streak: 31, protein: { consumed: 200, goal: 150 }, steps: 12000 })
     );
 
-    expect(caption.headline).toContain('31 DAYS');
-    expect(caption.theme).toBe('streak');
+    expect(caption.theme).not.toBe('streak');
+    expect(`${caption.headline} ${caption.sub}`).not.toMatch(/\b31\b|streak|week/i);
+  });
+
+  it('leads with what the day itself earned', () => {
+    const caption = pickCaption(
+      stats({
+        streak: 31,
+        calories: { consumed: 1900, goal: 2000 },
+        protein: { consumed: 200, goal: 150 },
+        steps: 12000,
+      })
+    );
+    // Protein + under calories + 10k steps is a clean sweep, and that is a
+    // fact about today.
+    expect(caption.theme).toBe('perfect');
   });
 
   it('celebrates hitting protein when the streak is short', () => {
@@ -48,15 +66,15 @@ describe('pickCaption', () => {
     expect(caption.theme).toBe('protein');
   });
 
-  it('calls out weight coming off above a protein day', () => {
-    // The scale moving is the outcome people actually want; a macro target hit
-    // is the means. Rank them that way.
+  it('does not lead with the weight trend either', () => {
+    // Same reasoning as the streak: a multi-week trend is not something a
+    // single day earned, and Plan already tells that story properly.
     const caption = pickCaption(
       stats({ weight_change_kg: -0.8, protein: { consumed: 200, goal: 150 } })
     );
 
-    expect(caption.theme).toBe('weight');
-    expect(caption.headline + caption.sub).toContain('0.8');
+    expect(caption.theme).toBe('protein');
+    expect(`${caption.headline} ${caption.sub}`).not.toContain('0.8');
   });
 
   it('ignores weight moving the wrong way', () => {
