@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
 import { daysAgo } from '../db/time.js';
+import { getAiAdminStats } from '../services/admin/ai-stats.js';
+import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
 import { headlineFor } from '../services/consistency.js';
 import { compareToPopulation, getUserConsistency } from '../services/consistency-data.js';
 import { humanValidationError } from './validation.js';
@@ -106,6 +108,15 @@ const goalPlanSchema = z.object({
 }).refine((v) => v.target_date > v.start_date, {
   message: 'Target date must be after the start date',
 });
+
+const adminSettingsSchema = z.object({
+  ai_enabled: z.boolean().optional(),
+  // Bounded: a typo'd 0 would silently disable every AI feature, and a typo'd
+  // 100000 would remove the protection the ceiling exists to give.
+  ai_daily_budget_usd: z.number().min(0).max(1000).optional(),
+});
+
+const adminPlanSchema = z.object({ plan: z.enum(['free', 'pro']) });
 
 const coachChatSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -1900,6 +1911,99 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
   });
 
   // Admin-only overview: adoption + AI cost. Gated on the admin role.
+  /**
+   * Everything the AI cost panel needs: spend by feature, who is spending it,
+   * and whether the shared food repo is paying for itself.
+   *
+   * Separate from /overview, which reads project totals from Cloud Monitoring —
+   * that can tell you the bill but not who caused it. This reads `ai_usage`.
+   */
+  app.get('/api/admin/ai', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days || '30')));
+      const [stats, settings] = await Promise.all([
+        getAiAdminStats(env.DB, days),
+        allSettings(env.DB),
+      ]);
+      res.json({ ...stats, settings });
+    } catch (error) {
+      console.error('Admin AI stats error:', error);
+      res.status(500).json({ error: 'Failed to load AI stats' });
+    }
+  });
+
+  /**
+   * The operator knobs: the AI kill switch and the daily budget ceiling.
+   *
+   * Writes go to `app_settings` rather than the environment so they take effect
+   * within seconds instead of needing a redeploy — which matters because these
+   * are the two controls you reach for while something is actively going wrong.
+   */
+  app.put('/api/admin/settings', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+      const parsed = adminSettingsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: humanValidationError(parsed.error) });
+        return;
+      }
+
+      const by = req.sessionUser!.userId;
+      if (parsed.data.ai_enabled !== undefined) {
+        await setSetting(env.DB, SETTINGS.AI_ENABLED, parsed.data.ai_enabled ? 'on' : 'off', by);
+      }
+      if (parsed.data.ai_daily_budget_usd !== undefined) {
+        await setSetting(
+          env.DB,
+          SETTINGS.AI_DAILY_BUDGET_USD,
+          String(parsed.data.ai_daily_budget_usd),
+          by
+        );
+      }
+
+      res.json({ ok: true, settings: await allSettings(env.DB) });
+    } catch (error) {
+      console.error('Admin settings error:', error);
+      res.status(500).json({ error: 'Failed to save settings' });
+    }
+  });
+
+  /** Moves a user between plans, which is what actually gates the AI limits. */
+  app.patch('/api/admin/users/:userId/plan', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+      const parsed = adminPlanSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: humanValidationError(parsed.error) });
+        return;
+      }
+
+      const result = await env.DB
+        .prepare('UPDATE users SET plan = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind(parsed.data.plan, req.params.userId)
+        .run();
+
+      if (!result.changes) {
+        res.status(404).json({ error: 'No such user.' });
+        return;
+      }
+      res.json({ ok: true, plan: parsed.data.plan });
+    } catch (error) {
+      console.error('Admin plan error:', error);
+      res.status(500).json({ error: 'Failed to change plan' });
+    }
+  });
+
   app.get('/api/admin/overview', requireSession, async (req: AuthenticatedRequest, res) => {
     try {
       if (!req.sessionUser!.isAdmin) {

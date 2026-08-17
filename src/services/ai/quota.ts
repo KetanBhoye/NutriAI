@@ -1,6 +1,7 @@
 import type { D1DatabaseCompat } from '../../db/types.js';
 import { sqlTimestampNow } from '../../db/time.js';
 import { projectUsageSince, usageSince, type AiFeature } from './metering.js';
+import { getNumberSetting, getSetting, SETTINGS } from '../settings.js';
 
 /**
  * Who is allowed how much AI, and what happens when they run out.
@@ -63,10 +64,11 @@ const LIMITS: Record<Plan, Record<AiFeature, Limits>> = {
 };
 
 /**
- * Project-wide spend ceiling for a rolling day, in USD.
+ * Default project-wide spend ceiling for a rolling day, in USD.
  *
- * Overridable so it can be raised without a deploy during a launch. Set low
- * enough that hitting it is a signal rather than a catastrophe.
+ * The live value comes from `app_settings` so the admin dashboard can move it
+ * mid-incident; this is only the fallback for a fresh database. Set low enough
+ * that hitting it is a signal rather than a catastrophe.
  */
 const DAILY_PROJECT_CEILING_USD = Number(process.env.AI_DAILY_BUDGET_USD ?? '25');
 
@@ -77,7 +79,7 @@ function hoursAgo(hours: number, now = new Date()): string {
 export interface QuotaDecision {
   allowed: boolean;
   /** Present when refused; safe to show a user. */
-  reason?: 'daily' | 'monthly' | 'plan' | 'project_budget';
+  reason?: 'daily' | 'monthly' | 'plan' | 'project_budget' | 'disabled';
   /** A sentence the client can display verbatim. */
   message?: string;
 }
@@ -91,10 +93,27 @@ export async function checkQuota(
   feature: AiFeature,
   now = new Date()
 ): Promise<QuotaDecision> {
-  // The project ceiling is checked first and for everybody: it exists to bound
+  // The kill switch is first because it is the control you reach for while
+  // something is actively going wrong; nothing below it should be able to keep
+  // spending once it is off.
+  const enabled = await getSetting(db, SETTINGS.AI_ENABLED, 'on');
+  if (enabled === 'off') {
+    return {
+      allowed: false,
+      reason: 'disabled',
+      message: 'AI features are paused right now. Your logging still works normally.',
+    };
+  }
+
+  // The project ceiling is checked next and for everybody: it exists to bound
   // the bill, and a Pro user is not a reason to keep spending past it.
+  const ceiling = await getNumberSetting(
+    db,
+    SETTINGS.AI_DAILY_BUDGET_USD,
+    DAILY_PROJECT_CEILING_USD
+  );
   const project = await projectUsageSince(db, hoursAgo(24, now));
-  if (project.costUsd >= DAILY_PROJECT_CEILING_USD) {
+  if (project.costUsd >= ceiling) {
     return {
       allowed: false,
       reason: 'project_budget',
