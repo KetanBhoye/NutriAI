@@ -64,9 +64,34 @@ export class DailyActivityRepository {
            * Only the fields a person actually sets are protected. Active
            * energy, resting energy and stand hours come from the phone alone,
            * so a sync keeps filling those in either way.
+           *
+           * **Steps and distance are the exception, and only ever upward.**
+           *
+           * Taken literally, "manual wins for the rest of that day" froze the
+           * step count at whatever was stored the moment a day was first
+           * touched by hand. Someone typed 1,423 in the morning and walked
+           * another three thousand; the You tab read the phone directly and
+           * showed 4,457, while the Plan tab — and every calorie target
+           * computed from it — stayed on 1,423 until midnight. Two screens in
+           * the same app disagreeing about the same day.
+           *
+           * The reason the original rule was too strong here is that a step
+           * count is not a competing opinion about the day: it is a running
+           * total, and it only goes up. A *lower* reading from the phone is
+           * still the phone contradicting a person, and still loses. A higher
+           * one is the same day continuing, and the person's figure is never
+           * reduced by it.
+           *
+           * Not applied to exercise minutes or type: "45 min badminton" is a
+           * description of what someone did, and the phone reporting 57
+           * minutes of movement is not a better version of that sentence.
            */
           steps = CASE
-            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.steps
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual'
+              THEN CASE
+                WHEN COALESCE(excluded.steps, -1) > COALESCE(daily_activity.steps, -1)
+                  THEN excluded.steps
+                ELSE daily_activity.steps END
             ELSE COALESCE(excluded.steps, daily_activity.steps) END,
           exercise_minutes = CASE
             WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.exercise_minutes
@@ -77,8 +102,13 @@ export class DailyActivityRepository {
           exercise_kcal = CASE
             WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.exercise_kcal
             ELSE COALESCE(excluded.exercise_kcal, daily_activity.exercise_kcal) END,
+          -- Same running-total argument as steps above.
           distance_km = CASE
-            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual' THEN daily_activity.distance_km
+            WHEN excluded.source = 'apple_health' AND daily_activity.source = 'manual'
+              THEN CASE
+                WHEN COALESCE(excluded.distance_km, -1) > COALESCE(daily_activity.distance_km, -1)
+                  THEN excluded.distance_km
+                ELSE daily_activity.distance_km END
             ELSE COALESCE(excluded.distance_km, daily_activity.distance_km) END,
           active_energy_kcal = COALESCE(excluded.active_energy_kcal, daily_activity.active_energy_kcal),
           resting_energy_kcal = COALESCE(excluded.resting_energy_kcal, daily_activity.resting_energy_kcal),

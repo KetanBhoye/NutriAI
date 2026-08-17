@@ -68,6 +68,56 @@ describe('a health sync versus a hand-typed entry', () => {
     expect(res.body.activity.find((a: { activity_date: string }) => a.activity_date === DATE).steps).toBe(9111);
   });
 
+  it('lets the phone carry a hand-typed count upward as the day goes on', async () => {
+    // The bug this exists for: someone typed 1,423 in the morning and kept
+    // walking. "Manual wins for the rest of that day" froze the stored count
+    // there, so the You tab (which reads the phone directly) showed 4,457 while
+    // the Plan tab and every calorie target built on it stayed on 1,423.
+    //
+    // A step count is a running total, not a competing opinion, so a higher
+    // reading later in the same day is not the phone overruling anyone.
+    const app = await start();
+    const cookie = await signIn(app);
+
+    await request(app)
+      .post('/api/activity')
+      .set('Cookie', cookie)
+      .send({ activity_date: DATE, steps: 1423, source: 'manual' });
+
+    await request(app)
+      .post('/api/activity')
+      .set('Cookie', cookie)
+      .send({ activity_date: DATE, steps: 4457, source: 'apple_health' });
+
+    const res = await request(app).get('/api/activity').set('Cookie', cookie);
+    expect(
+      res.body.activity.find((a: { activity_date: string }) => a.activity_date === DATE).steps
+    ).toBe(4457);
+  });
+
+  it('never lets the phone reduce a hand-typed count', async () => {
+    // The other half of the rule, and the reason it is "upward only" rather
+    // than "newest wins": a phone left on a desk reports a fraction of the
+    // day, and that must not erase the figure someone deliberately entered.
+    const app = await start();
+    const cookie = await signIn(app);
+
+    await request(app)
+      .post('/api/activity')
+      .set('Cookie', cookie)
+      .send({ activity_date: DATE, steps: 9111, source: 'manual' });
+
+    await request(app)
+      .post('/api/activity')
+      .set('Cookie', cookie)
+      .send({ activity_date: DATE, steps: 4457, source: 'apple_health' });
+
+    const res = await request(app).get('/api/activity').set('Cookie', cookie);
+    expect(
+      res.body.activity.find((a: { activity_date: string }) => a.activity_date === DATE).steps
+    ).toBe(9111);
+  });
+
   it('keeps the weigh-in a person entered', async () => {
     const app = await start();
     const cookie = await signIn(app);

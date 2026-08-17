@@ -281,6 +281,30 @@ describePg('a health sync never overwrites what a person typed', () => {
     expect(find(pair.pg.body)?.steps).toBe(9000);
     expect(find(pair.sqlite.body)?.steps).toBe(9000);
   });
+
+  it('lets a later, higher health count through on both drivers', async () => {
+    // The upward exception: a step count is a running total, so a bigger
+    // reading later in the day is the same day continuing, not the phone
+    // overruling anyone. Proved on both drivers because it is expressed as a
+    // nested CASE inside ON CONFLICT DO UPDATE — the exact construct whose
+    // scoping differs between them, and getting it wrong here would freeze
+    // every hand-touched day at its first value on Postgres only.
+    const DAY2 = '2026-08-11';
+    expectSame(await both('post', '/api/activity', { activity_date: DAY2, steps: 1423, source: 'manual' }));
+    expectSame(await both('post', '/api/activity', { activity_date: DAY2, steps: 4457, source: 'apple_health' }));
+
+    const pair = await both('get', '/api/activity');
+    expectSame(pair);
+
+    const find = (body: unknown) => {
+      const rows = ((body as Record<string, unknown>).activity ??
+        (body as Record<string, unknown>).days ??
+        body) as Array<Record<string, unknown>>;
+      return Array.isArray(rows) ? rows.find((r) => r.activity_date === DAY2) : undefined;
+    };
+    expect(find(pair.pg.body)?.steps).toBe(4457);
+    expect(find(pair.sqlite.body)?.steps).toBe(4457);
+  });
 });
 
 describePg('numbers survive the round trip', () => {
