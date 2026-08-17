@@ -40,9 +40,20 @@ interface Props {
   stats: ShareStats;
   /** Sticker width in points. */
   w: number;
+  /**
+   * Height as a multiple of the width.
+   *
+   * Defaults to 9:16, but the caller passes the *device's* aspect for a Snap.
+   * Snapchat scales a sticker to fit its canvas, so a 9:16 image on a 9:19.5
+   * phone is fitted by height and overflows the width by the difference —
+   * about 20% on a modern iPhone, which clipped the rail off the left edge and
+   * pushed the streak ring off the right. Matching the frame's shape is what
+   * makes "full-frame" mean the same thing on both.
+   */
+  aspect?: number;
 }
 
-/** Full-frame: this overlay frames the photo rather than sitting on part of it. */
+/** Fallback only; a Snap passes the real frame aspect. */
 export const STICKER_ASPECT = 16 / 9;
 
 /**
@@ -57,8 +68,8 @@ const RAIL = 0.075;
 const TOP = 0.13;
 const BOTTOM = 0.14;
 
-export function DayShareSticker({ stats, w }: Props) {
-  const h = Math.round(w * STICKER_ASPECT);
+export function DayShareSticker({ stats, w, aspect = STICKER_ASPECT }: Props) {
+  const h = Math.round(w * aspect);
   const goal = stats.calories.goal;
   const consumed = stats.calories.consumed;
   const pct = goal ? Math.min(1, consumed / goal) : null;
@@ -151,14 +162,14 @@ export function DayShareSticker({ stats, w }: Props) {
 const styles = StyleSheet.create({
   eyebrow: { color: colors.accent, fontFamily: fonts.bold, letterSpacing: 3, ...overlayShadow },
   date: {
-    color: 'rgba(255,255,255,0.65)',
+    color: 'rgba(255,255,255,0.72)',
     fontFamily: fonts.semibold,
     letterSpacing: 0.8,
     ...overlayShadow,
   },
   caption: { color: colors.text, fontFamily: fonts.bold, ...overlayShadow },
   brand: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.62)',
     fontFamily: fonts.bold,
     letterSpacing: 3,
     ...overlayShadow,

@@ -54,10 +54,10 @@ const styles = StyleSheet.create({
   },
   row: { ...overlayShadow },
   grams: { color: colors.text, fontFamily: fonts.bold },
-  name: { color: 'rgba(255,255,255,0.6)', fontFamily: fonts.semibold },
+  name: { color: 'rgba(255,255,255,0.72)', fontFamily: fonts.semibold },
   track: {
     width: '86%',
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.28)',
     borderRadius: 999,
     overflow: 'hidden',
   },

@@ -88,17 +88,17 @@ const styles = StyleSheet.create({
   icon: { ...overlayShadow },
   value: { fontFamily: fonts.bold, letterSpacing: -1, includeFontPadding: false, ...overlayShadow },
   label: {
-    color: 'rgba(255,255,255,0.72)',
+    color: 'rgba(255,255,255,0.78)',
     fontFamily: fonts.bold,
     letterSpacing: 2,
     ...overlayShadow,
   },
-  caption: { color: 'rgba(255,255,255,0.62)', fontFamily: fonts.semibold, ...overlayShadow },
+  caption: { color: 'rgba(255,255,255,0.7)', fontFamily: fonts.semibold, ...overlayShadow },
   track: {
     width: '100%',
     // Translucent white, not a dark fill: a dark track would outline itself as
     // a rectangle on a bright photo, which is the thing this design avoids.
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.3)',
     borderRadius: 999,
     overflow: 'hidden',
   },

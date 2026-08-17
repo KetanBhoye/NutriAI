@@ -48,10 +48,24 @@ const STORY_W = 1080;
 const STORY_H = 1920;
 
 /**
- * The sticker is captured at its natural size, so these points become the
- * pixels Snapchat receives — see the matching note in ShareWeekModal.
+ * The sticker mirrors the *device's* frame, not a fixed 9:16.
+ *
+ * Snapchat scales a sticker to fit its canvas. Hand it a 9:16 image on a 9:19.5
+ * phone and it fits by height, overflowing the width by the ratio between them
+ * — which clipped the metrics off the left edge and pushed the streak ring off
+ * the right. Everything below therefore derives from the window's own shape.
  */
-const STICKER_W = CARD_W;
+const FRAME_ASPECT = WIN_H / WIN_W;
+
+/**
+ * Narrower than the card's preview, because it is taller.
+ *
+ * The card is 9:16; the sticker is now the phone's own shape, which is nearer
+ * 9:19.5. At the same width it would run past the bottom of the sheet and hide
+ * the share buttons, so the preview is sized by the *height* available. Only
+ * the preview shrinks — the export is a fixed resolution either way.
+ */
+const STICKER_W = Math.min(CARD_W, Math.round((WIN_H * 0.46) / FRAME_ASPECT));
 
 
 /**
@@ -106,7 +120,8 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
       quality: 1,
       result: 'tmpfile',
       width: STORY_W,
-      height: STORY_H,
+      // The sticker is exported at the frame's shape; the card stays 9:16.
+      height: mode === 'sticker' ? Math.round(STORY_W * FRAME_ASPECT) : STORY_H,
     });
 
   const share = async () => {
@@ -202,7 +217,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
                * screen and showed a fragment of one corner.
                */
               widthDp: WIN_W,
-              heightDp: Math.round(WIN_W * STICKER_ASPECT),
+              heightDp: Math.round(WIN_H),
               posY: 0.5,
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
@@ -236,7 +251,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
         <View style={styles.wrap}>
           {mode === 'sticker' ? (
             <View ref={shotRef} collapsable={false}>
-              <DayShareSticker stats={stats} w={STICKER_W} />
+              <DayShareSticker stats={stats} w={STICKER_W} aspect={FRAME_ASPECT} />
             </View>
           ) : (
           <ViewShot ref={shotRef} style={styles.card}>

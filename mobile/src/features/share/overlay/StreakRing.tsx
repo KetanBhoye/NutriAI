@@ -22,20 +22,26 @@ const WEEK = 7;
 
 export function StreakRing({ w, days }: { w: number; days: number }) {
   const size = w * 0.28;
+  /**
+   * The label is wider than the ring, so the block has to be sized to the
+   * *label*, not the circle. Sized to the ring, "DAY STREAK" overflowed its
+   * container on both sides and the right half ran off the edge of the Snap.
+   */
+  const block = w * 0.36;
   const stroke = w * 0.016;
   const r = (size - stroke) / 2;
   const circumference = 2 * Math.PI * r;
   const filled = Math.min(1, (days % WEEK === 0 ? WEEK : days % WEEK) / WEEK);
 
   return (
-    <View style={{ width: size, alignItems: 'center' }}>
+    <View style={{ width: block, alignItems: 'center' }}>
       <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
         <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
           <Circle
             cx={size / 2}
             cy={size / 2}
             r={r}
-            stroke="rgba(255,255,255,0.22)"
+            stroke="rgba(255,255,255,0.3)"
             strokeWidth={stroke}
             fill="none"
           />
@@ -57,7 +63,12 @@ export function StreakRing({ w, days }: { w: number; days: number }) {
         <BrandMark size={w * 0.05} />
         <Text style={[styles.days, { fontSize: w * 0.095, marginTop: w * 0.004 }]}>{days}</Text>
       </View>
-      <Text style={[styles.label, { fontSize: w * 0.026, marginTop: w * 0.008 }]}>DAY STREAK</Text>
+      <Text
+        numberOfLines={1}
+        style={[styles.label, { fontSize: w * 0.024, marginTop: w * 0.008 }]}
+      >
+        DAY STREAK
+      </Text>
     </View>
   );
 }
@@ -71,9 +82,9 @@ const styles = StyleSheet.create({
     ...overlayShadow,
   },
   label: {
-    color: 'rgba(255,255,255,0.72)',
+    color: 'rgba(255,255,255,0.78)',
     fontFamily: fonts.bold,
-    letterSpacing: 1.8,
+    letterSpacing: 1.2,
     ...overlayShadow,
   },
 });
