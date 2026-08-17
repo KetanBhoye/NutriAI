@@ -49,7 +49,18 @@ export function WeekShareCard({ data, stats, w }: Props) {
   const theme = themeFor(data);
   const accent = ACCENTS[theme] ?? colors.cyan;
   const copy = weekShareCopy(data);
+  /**
+   * Asymmetric, for the chrome the story sits under.
+   *
+   * Snapchat puts a music pill and a close button across the top of a Snap and
+   * a send tray across the bottom; Instagram does the same at both ends. Seen
+   * in Snapchat for the first time, the day card was losing its brand mark to
+   * the one and its footer to the other. Sides stay tight — nothing covers the
+   * left or right of a *posted* story.
+   */
   const pad = w * 0.085;
+  const padTop = w * 0.2;
+  const padBottom = w * 0.24;
 
   // Scaled against at least 100 so a modest week is not drawn full height
   // merely because it was the best of the eight.
@@ -60,7 +71,7 @@ export function WeekShareCard({ data, stats, w }: Props) {
     <View style={{ width: w, height: h }}>
       <ShareCardBackground theme={theme} width={w} height={h} />
 
-      <View style={[styles.body, { padding: pad }]}>
+      <View style={[styles.body, { paddingHorizontal: pad, paddingTop: padTop, paddingBottom: padBottom }]}>
         <View style={styles.head}>
           <Text style={[styles.eyebrow, { fontSize: w * 0.034, color: accent }]}>
             {copy.eyebrow}

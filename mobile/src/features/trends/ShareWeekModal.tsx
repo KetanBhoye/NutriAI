@@ -8,7 +8,7 @@ import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
 import { DOWNLOAD_URL, SNAP_CLIENT_ID } from '@/config';
 import type { Consistency } from '@/api/dashboard';
-import { SNAPCHAT, shareImageTo, shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
+import { shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
 import { WeekShareCard } from './WeekShareCard';
 import { WeekShareSticker } from './WeekShareSticker';
 import { ShareModeToggle, type ShareMode } from '../share/ShareModeToggle';
@@ -124,25 +124,18 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
   /**
    * Snapchat, into the camera preview where a Snap is actually composed.
    *
-   * Three routes, tried in order, because they degrade in quality rather than
-   * in kind:
+   * **No fallback, on purpose.** This used to drop to a plain send intent and
+   * then the system share sheet, which looked forgiving and was actively
+   * harmful: both of those deliver the card to Snapchat as a *chat
+   * attachment* — a message with a picture on it, no editor, no Story. The
+   * button appeared to work, the user got something that was not a Snap, and
+   * the real failure (a missing client ID, an unapproved portal entry,
+   * Snapchat not installed) was invisible to everyone including us. It cost
+   * days of debugging precisely because nothing ever reported an error.
    *
-   *   1. **Creative Kit preview** — the card opens in Snapchat's editor and can
-   *      go to a Story. This is the only one that produces a *Snap*.
-   *   2. **A plain send intent** — reaches Snapchat's "Send To" screen, where
-   *      the card arrives as a chat attachment. Not what the button promises,
-   *      but it does put the card in Snapchat.
-   *   3. **The system share sheet** — iOS, and Android without Snapchat.
-   *
-   * Route 2 was the whole implementation until a real device showed what it
-   * produces: a message with a picture on it, no Story option anywhere. It is
-   * kept only as the rung below Creative Kit, which needs a client ID the build
-   * may not have been given.
-   *
-   * Goes through the local `share-to-app` native module rather than
-   * expo-intent-launcher, which cannot put a Parcelable Uri in EXTRA_STREAM —
-   * with it, the intent failed every time and fell silently through to the
-   * system chooser, so the button was only ever pretending to be direct.
+   * So it either reaches Snapchat's camera preview or it says why. Anyone who
+   * genuinely wants to send the image as a file still has "More…" one row
+   * below, which is honest about being a file share.
    */
   const shareToSnapchat = async () => {
     setSharing(true);
@@ -161,13 +154,14 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
               heightDp: Math.round(STICKER_DP * 1.05),
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
-      if (snapped) return;
-      // Rung two is Android-only; on iOS the sheet is the only thing below.
-      const opened =
-        Platform.OS === 'android' ? await shareImageTo(snapUri, SNAPCHAT) : false;
-      if (!opened) await share();
+
+      if (!snapped) {
+        setError(
+          "Couldn't open Snapchat. Check that Snapchat is installed and up to date, then try again."
+        );
+      }
     } catch {
-      await share().catch(() => setError("Couldn't share that card."));
+      setError("Couldn't open Snapchat.");
     } finally {
       setSharing(false);
     }

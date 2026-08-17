@@ -670,6 +670,36 @@ needs an explicit `grantUriPermission` to Snapchat as well. Without it the
 preview can open on an empty canvas, which reads as a failed card render rather
 than a permissions problem.
 
+## `captureRef` returns a path on iOS and a URI on Android
+
+react-native-view-shot with `result: 'tmpfile'` hands back
+`/private/var/mobile/.../tmp/ReactNative/xxx.png` on iOS — a bare filesystem
+path, no scheme — while Android gives a `content://` URI. Swift's
+`URL(string:)` requires a scheme, so it silently produced an unusable relative
+URL for the iOS form, `Data(contentsOf:)` returned nil, and the Snapchat share
+gave up *before Creative Kit was ever called*.
+
+That failure was indistinguishable from Snapchat rejecting the client ID, and
+it sent hours of debugging at the Snap developer portal — checking platform
+identifiers, staging versus production IDs, whether the app was even installed
+— for a bug that was entirely ours and two lines long. Use
+`URL(fileURLWithPath:)` for anything that might be a path (`readableFileURL` in
+the module does the scheme check).
+
+Two things made it expensive, both since fixed:
+
+- **The share button fell back to the system share sheet on failure.** It
+  looked forgiving; it was camouflage. The user got a plausible-looking share
+  sheet, the card went out as a file, and nothing anywhere reported an error.
+  The button now shows an error instead — a broken integration should look
+  broken.
+- **The iOS module logged nothing.** Every failure path resolved `false` in
+  silence. It now logs through `NSLog` as well as `os_log`: os_log is the right
+  home, but it is *not* forwarded to a cable-attached console
+  (`devicectl process launch --console`), which is the only stream available
+  when debugging on a real phone. The first attempt at logging used os_log
+  alone and produced nothing at all.
+
 ## UI conventions
 
 - **Navigator headers are off app-wide** (`app/(tabs)/_layout.tsx`

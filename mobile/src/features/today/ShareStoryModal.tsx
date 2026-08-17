@@ -9,7 +9,7 @@ import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 import { formatCardDate, pickCaption } from './shareCaption';
-import { SNAPCHAT, shareImageTo, shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
+import { shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
 import { SNAP_CLIENT_ID } from '@/config';
 import { ShareCardBackground } from './ShareCardBackground';
 import { DayShareSticker } from './DayShareSticker';
@@ -51,8 +51,15 @@ const STORY_H = 1920;
  * The sticker is captured at its natural size, so these points become the
  * pixels Snapchat receives — see the matching note in ShareWeekModal.
  */
-const STICKER_W = Math.min(WIN_W - 96, 280);
-const STICKER_DP = 260;
+const STICKER_W = Math.min(WIN_W - 56, 330);
+
+/**
+ * How wide Snapchat draws it, in dp, before the user drags or pinches it.
+ *
+ * Wide and short by design: the sticker is a strip across the photo rather than
+ * a block in the middle of it, and the middle is usually the food.
+ */
+const STICKER_DP = 300;
 
 /**
  * Shareable story card. The web app draws an equivalent on a <canvas>; here
@@ -160,11 +167,18 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
   /**
    * Snapchat, into the camera preview where a Snap is actually composed.
    *
-   * Same three-rung ladder as the weekly card — Creative Kit preview, then a
-   * plain send intent, then the system sheet — and the same reason for it: a
-   * plain ACTION_SEND reaches Snapchat's "Send To" screen, which delivers the
-   * card as a chat attachment with no Story option. See ShareWeekModal for the
-   * full note; the two share flows behave identically on purpose.
+   * **No fallback, on purpose.** This used to drop to a plain send intent and
+   * then the system share sheet, which looked forgiving and was actively
+   * harmful: both of those deliver the card to Snapchat as a *chat
+   * attachment* — a message with a picture on it, no editor, no Story. The
+   * button appeared to work, the user got something that was not a Snap, and
+   * the real failure (a missing client ID, an unapproved portal entry,
+   * Snapchat not installed) was invisible to everyone including us. It cost
+   * days of debugging precisely because nothing ever reported an error.
+   *
+   * So it either reaches Snapchat's camera preview or it says why. Anyone who
+   * genuinely wants to send the image as a file still has "More…" one row
+   * below, which is honest about being a file share.
    */
   const shareToSnapchat = async () => {
     setSharing(true);
@@ -180,16 +194,20 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
         mode === 'sticker'
           ? await shareSnapSticker(snapUri, SNAP_CLIENT_ID, 'NutriAI', {
               widthDp: STICKER_DP,
-              heightDp: Math.round(STICKER_DP * 1.05),
+              // Wide and short now that the layout runs to the corners; the
+              // old near-square ratio would have Snapchat reserve a block of
+              // empty space under it.
+              heightDp: Math.round(STICKER_DP * 0.62),
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
-      if (snapped) return;
-      // Rung two is Android-only; on iOS the sheet is the only thing below.
-      const opened =
-        Platform.OS === 'android' ? await shareImageTo(snapUri, SNAPCHAT) : false;
-      if (!opened) await share();
+
+      if (!snapped) {
+        setError(
+          "Couldn't open Snapchat. Check that Snapchat is installed and up to date, then try again."
+        );
+      }
     } catch {
-      await share().catch(() => setError("Couldn't share that card."));
+      setError("Couldn't open Snapchat.");
     } finally {
       setSharing(false);
     }
@@ -318,11 +336,27 @@ const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
   modeRow: { alignSelf: 'stretch', marginTop: 14 },
   // Opaque: a transparent snapshot renders black in most share targets.
+  /**
+   * Padded for the chrome that sits on top of it, not for the frame it fills.
+   *
+   * Seen in Snapchat for the first time, the card was losing its ends: the
+   * brand mark and date sat behind the music pill and the close button, and the
+   * name along the bottom was under the send tray. Instagram does the same
+   * thing at both ends, and neither is a bug we can fix in their UI — the card
+   * has to assume roughly the top eighth and bottom sixth of a story are not
+   * ours.
+   *
+   * Horizontal padding stays tight, because nothing in either app covers the
+   * left and right of a *posted* story — the tool rail on the right only exists
+   * while the sender is still editing.
+   */
   card: {
     width: CARD_W,
     height: CARD_H,
     borderRadius: 22,
-    padding: s(22),
+    paddingTop: s(58),
+    paddingBottom: s(70),
+    paddingHorizontal: s(22),
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.10)',
     // Clips the oversized background rings to the rounded corners.

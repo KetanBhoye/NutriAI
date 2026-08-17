@@ -1,6 +1,82 @@
 import ExpoModulesCore
+import OSLog
 import SCSDKCreativeKit
 import UIKit
+
+/**
+ Why a share fell back, in Console.
+
+ Every failure path here resolves `false` so the caller can drop to the share
+ sheet, which is the right behaviour and also completely silent — the user sees
+ the system sheet and cannot tell whether Snapchat is missing, the client ID is
+ unapproved, or the card failed to render. All three look identical, and the
+ last two are our bugs. Logged at `error` level so it survives in a release
+ build and can be read with `log stream --predicate 'subsystem == "app.nutriai.mobile"'`.
+ */
+private let shareLog = Logger(subsystem: "app.nutriai.mobile", category: "share-to-app")
+
+/**
+ Also NSLog, not only os_log.
+
+ os_log is the right home for this — it survives in release builds and is
+ readable in Console.app — but it is *not* forwarded to a device's stdout, which
+ is the only stream reachable over a cable with `devicectl process launch
+ --console`. Diagnosing this on a real phone meant seeing nothing at all. NSLog
+ reaches both, and the volume here is a handful of lines per share.
+ */
+private func shareDiag(_ message: String) {
+  shareLog.error("\(message, privacy: .public)")
+  NSLog("[share-to-app] %@", message)
+}
+
+/**
+ Whether Snapchat is even on this phone.
+
+ Creative Kit fails with the same opaque error whether Snapchat is missing or
+ the client ID is unapproved, and those are wildly different problems: one is a
+ config fix, the other means there is nothing to debug. `canOpenURL` needs
+ `snapchat` in LSApplicationQueriesSchemes, which withSnapCreativeKit adds.
+ */
+
+/**
+ Turns whatever the JS side hands us into a readable file URL.
+
+ react-native-view-shot returns a *bare filesystem path* on iOS
+ (`/private/var/mobile/.../tmp/ReactNative/xxx.png`), while Android returns a
+ `content://` URI. `URL(string:)` requires a scheme, so it quietly produced a
+ useless relative URL for the iOS form, `Data(contentsOf:)` failed, and the
+ share bailed out *before Creative Kit was ever called* — which looked
+ identical to Snapchat rejecting us, and sent the debugging off after the
+ client ID and the portal for hours.
+
+ `URL(fileURLWithPath:)` is the right constructor for a path, and the scheme
+ check is what decides which one applies.
+ */
+private func readableFileURL(_ uri: String) -> URL? {
+  if let url = URL(string: uri), url.scheme != nil { return url }
+  return URL(fileURLWithPath: uri)
+}
+
+/**
+ Keeps the Creative Kit API alive until it answers.
+
+ `SCSDKSnapAPI` does not retain itself across `startSending`. Created as a local
+ it is released the moment the enclosing block returns, and the completion
+ handler is then simply never called — no error, no callback, nothing. On screen
+ that was a share button stuck on "Preparing…" forever, and in the log it was a
+ line saying the send had started followed by silence.
+
+ Held here for the lifetime of the call and cleared in the completion. Only one
+ share can be in flight at a time (the UI disables itself while `sharing` is
+ true), so a single slot is enough, and it is only ever touched on the main
+ queue.
+ */
+private var inFlightSnapAPI: SCSDKSnapAPI?
+
+private func snapchatInstalled() -> Bool {
+  guard let url = URL(string: "snapchat://") else { return false }
+  return UIApplication.shared.canOpenURL(url)
+}
 
 /**
  Hands a captured card to Snapchat as a *Snap*, not a chat attachment.
@@ -53,6 +129,7 @@ public class ShareToAppModule: Module {
       promise: Promise
     ) in
       guard !clientId.isEmpty else {
+        shareDiag("snap preview: no Creative Kit client ID in this build")
         promise.resolve(false)
         return
       }
@@ -67,15 +144,17 @@ public class ShareToAppModule: Module {
        URI permission grant.
        */
       guard
-        let url = URL(string: uri),
+        let url = readableFileURL(uri),
         let data = try? Data(contentsOf: url),
         let image = UIImage(data: data)
       else {
+        shareDiag("snap preview: could not load the captured card from \(uri)")
         promise.resolve(false)
         return
       }
 
       DispatchQueue.main.async {
+        shareDiag("snap preview: clientId=\(clientId.prefix(8))… snapchatInstalled=\(snapchatInstalled())")
         let photo = SCSDKSnapPhoto(image: image)
         let content = SCSDKPhotoSnapContent(snapPhoto: photo)
 
@@ -92,12 +171,18 @@ public class ShareToAppModule: Module {
          */
         content.attachmentUrl = "https://nutriai-app.up.railway.app/download"
 
-        // Constructed per send rather than held: the API object is cheap, and a
-        // retained one outlives the client ID if that ever becomes dynamic.
         let api = SCSDKSnapAPI()
+        inFlightSnapAPI = api
         api.startSending(content) { error in
+          inFlightSnapAPI = nil
           // Snapchat missing, too old, or a client ID the portal has not
-          // approved for this bundle. All of them mean "fall back".
+          // approved for this bundle. All of them mean "fall back" — but they
+          // are very different bugs, so say which one.
+          if let error {
+            shareDiag("snap preview FAILED: \(String(describing: error))")
+          } else {
+            shareDiag("snap preview opened OK")
+          }
           promise.resolve(error == nil)
         }
       }
@@ -126,15 +211,17 @@ public class ShareToAppModule: Module {
       promise: Promise
     ) in
       guard !clientId.isEmpty else {
+        shareDiag("snap sticker: no Creative Kit client ID in this build")
         promise.resolve(false)
         return
       }
 
       guard
-        let url = URL(string: uri),
+        let url = readableFileURL(uri),
         let data = try? Data(contentsOf: url),
         let image = UIImage(data: data)
       else {
+        shareDiag("snap sticker: could not load the captured sticker from \(uri)")
         promise.resolve(false)
         return
       }
@@ -147,7 +234,14 @@ public class ShareToAppModule: Module {
         content.attachmentUrl = "https://nutriai-app.up.railway.app/download"
 
         let api = SCSDKSnapAPI()
+        inFlightSnapAPI = api
         api.startSending(content) { error in
+          inFlightSnapAPI = nil
+          if let error {
+            shareDiag("snap sticker FAILED: \(String(describing: error))")
+          } else {
+            shareDiag("snap sticker opened OK")
+          }
           promise.resolve(error == nil)
         }
       }

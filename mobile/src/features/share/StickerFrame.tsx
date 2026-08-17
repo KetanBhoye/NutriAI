@@ -114,7 +114,15 @@ const styles = StyleSheet.create({
 });
 
 export const stickerStyles = StyleSheet.create({
-  figure: { fontFamily: fonts.bold, letterSpacing: -2, includeFontPadding: false },
+  // An explicit colour, because the default is the platform's — black on
+  // Android, which on this panel means an invisible number. Callers that want
+  // the accent override it; the ones that do not must still be readable.
+  figure: {
+    color: colors.text,
+    fontFamily: fonts.bold,
+    letterSpacing: -2,
+    includeFontPadding: false,
+  },
   unit: { color: 'rgba(255,255,255,0.34)', fontFamily: fonts.semibold },
   caption: { color: colors.text, fontFamily: fonts.semibold },
 });
