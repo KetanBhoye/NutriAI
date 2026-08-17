@@ -151,12 +151,12 @@ const config: ExpoConfig = {
     // Wires up the Health Connect SDK, the permissions-rationale activity and
     // the AndroidManifest <queries> entry for the Health Connect app.
     'react-native-health-connect',
-    // Registers the Health Connect permission delegate in MainActivity.onCreate
-    // (the library's plugin doesn't) — without this, requesting permissions crashes.
     // Lets the app see Snapchat/Instagram so the direct share buttons can fire
     // an explicit intent at them. Android 11+ hides installed packages by
     // default, and an explicit intent at an undeclared one throws.
     './plugins/withShareTargetQueries',
+    // Registers the Health Connect permission delegate in MainActivity.onCreate
+    // (the library's plugin doesn't) — without this, requesting permissions crashes.
     './plugins/withHealthConnectPermissionDelegate',
     // Adds the reversed-client-ID URL scheme to Info.plist so the OS can
     // redirect back into the app after the Google sign-in web flow.
