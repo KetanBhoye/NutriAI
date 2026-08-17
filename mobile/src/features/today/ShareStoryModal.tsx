@@ -97,18 +97,24 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
    * so the text is redrawn sharp rather than stretched.
    */
   const capture = () =>
-    mode === 'sticker'
-      ? // Natural size, and no forced 9:16 frame: a sticker letterboxed into a
-        // story-shaped canvas arrives in Snapchat as a small badge adrift in a
-        // huge transparent box the user cannot crop.
-        captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' })
-      : captureRef(shotRef, {
-          format: 'png',
-          quality: 1,
-          result: 'tmpfile',
-          width: STORY_W,
-          height: STORY_H,
-        });
+    /**
+     * Both modes capture at story resolution now.
+     *
+     * The sticker used to be captured at its natural size, which was right when
+     * it was a small badge — forcing a 9:16 canvas would have letterboxed it
+     * into a mostly-empty box. It stopped being right the moment the sticker
+     * became a *full-frame overlay*: the preview is only ~300pt wide, so the
+     * exported PNG was ~900px and Snapchat placed it at roughly half the screen
+     * width, with type to match. It looked like a design that had been shrunk,
+     * because it had been.
+     */
+    captureRef(shotRef, {
+      format: 'png',
+      quality: 1,
+      result: 'tmpfile',
+      width: STORY_W,
+      height: STORY_H,
+    });
 
   const share = async () => {
     setSharing(true);
@@ -193,10 +199,9 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
       const snapped =
         mode === 'sticker'
           ? await shareSnapSticker(snapUri, SNAP_CLIENT_ID, 'NutriAI', {
+              // Full-frame: the overlay is a 9:16 layer over the photo, so it
+              // should arrive the size of the photo.
               widthDp: STICKER_DP,
-              // Wide and short now that the layout runs to the corners; the
-              // old near-square ratio would have Snapchat reserve a block of
-              // empty space under it.
               heightDp: Math.round(STICKER_DP * STICKER_ASPECT),
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
