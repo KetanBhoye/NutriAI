@@ -6,9 +6,9 @@ import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
-import { DOWNLOAD_URL } from '@/config';
+import { DOWNLOAD_URL, SNAP_CLIENT_ID } from '@/config';
 import type { Consistency } from '@/api/dashboard';
-import { SNAPCHAT, shareImageTo } from '@modules/share-to-app';
+import { SNAPCHAT, shareImageTo, shareSnapToPreview } from '@modules/share-to-app';
 import { WeekShareCard } from './WeekShareCard';
 import { weekShareCaption } from './weekShareCopy';
 
@@ -90,16 +90,27 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
   };
 
   /**
-   * Snapchat, straight into its send screen.
+   * Snapchat, into the camera preview where a Snap is actually composed.
+   *
+   * Three routes, tried in order, because they degrade in quality rather than
+   * in kind:
+   *
+   *   1. **Creative Kit preview** — the card opens in Snapchat's editor and can
+   *      go to a Story. This is the only one that produces a *Snap*.
+   *   2. **A plain send intent** — reaches Snapchat's "Send To" screen, where
+   *      the card arrives as a chat attachment. Not what the button promises,
+   *      but it does put the card in Snapchat.
+   *   3. **The system share sheet** — iOS, and Android without Snapchat.
+   *
+   * Route 2 was the whole implementation until a real device showed what it
+   * produces: a message with a picture on it, no Story option anywhere. It is
+   * kept only as the rung below Creative Kit, which needs a client ID the build
+   * may not have been given.
    *
    * Goes through the local `share-to-app` native module rather than
    * expo-intent-launcher, which cannot put a Parcelable Uri in EXTRA_STREAM —
    * with it, the intent failed every time and fell silently through to the
    * system chooser, so the button was only ever pretending to be direct.
-   *
-   * Falls back to the share sheet when the module says no: on iOS, where it
-   * does not exist, and on Android when Snapchat is not installed. Snapchat
-   * appears in that sheet anyway, so the worst case is one extra tap.
    */
   const shareToSnapchat = async () => {
     setSharing(true);
@@ -107,6 +118,8 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
     try {
       const uri = await capture();
       const contentUri = await FileSystem.getContentUriAsync(uri);
+      const snapped = await shareSnapToPreview(contentUri, SNAP_CLIENT_ID, 'NutriAI');
+      if (snapped) return;
       const opened = await shareImageTo(contentUri, SNAPCHAT);
       if (!opened) await share();
     } catch {

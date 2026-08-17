@@ -206,6 +206,58 @@ npm run e2e -- -e EMAIL=you@example.com -e PASSWORD=secret
 
 ---
 
+## Sharing to Snapchat as a Snap
+
+The "Snap" button on the daily and weekly share cards needs a **Snap Creative
+Kit client ID** to do what it says. Without one it still works, but the card
+arrives in Snapchat as a *chat attachment* — a message with a picture on it,
+with no Story option. That is not a bug in the button; it is what Snapchat's
+ordinary share intent does with any image, from any app.
+
+Creative Kit is the only route to the camera preview (the editor where a Snap is
+actually composed), and Snapchat identifies the calling app solely by the client
+ID. It is not an SDK — the integration is a single intent, in
+`modules/share-to-app`.
+
+The **production** client ID is the default in `app.config.ts`, so an ordinary
+release needs nothing extra. It is the public OAuth client ID and ships in the
+APK regardless, which is why it is committed rather than kept in the
+environment: an env var would only add a way to forget it, and a release built
+without one looks completely normal until someone shares a card and gets a chat
+message.
+
+Two environments exist in the [portal](https://kit.snapchat.com/manage) (project
+`f16ec2c0-8635-4359-a3db-5db9b7b95d55`):
+
+| | Client ID | Works for |
+|---|---|---|
+| Production | `7b2c22b2-…` | everyone, **once the version is approved** |
+| Staging | `634f6a09-…` | only the Demo Users listed in the portal |
+
+To test against staging, override it for one build:
+
+```bash
+SNAP_CLIENT_ID=634f6a09-f811-4e8f-a028-70c013137dce npx expo run:android
+```
+
+Two things the portal needs, both easy to miss because neither errors:
+
+- **Creative Kit toggled on** for the version.
+- A **Platform Identifier** row per stage and platform (`app.nutriai.mobile`).
+  A client ID whose stage has no matching row is ignored.
+
+To confirm a build actually works, the Snap button opens Snapchat's *camera
+preview* with the card loaded and a Story option. If it opens a friend list, the
+Snap path was rejected and it fell through to the plain send intent — check, in
+order: the portal version is approved, Creative Kit is on, the platform
+identifier exists for that stage, and (on staging) the signed-in Snapchat
+account is a Demo User.
+
+**Snapchat blocks emulator logins.** Test on a real device; repeated attempts on
+an AVD get the account temporarily disabled.
+
+---
+
 ## Shipping a new version
 
 ```bash

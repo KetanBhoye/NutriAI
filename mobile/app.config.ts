@@ -18,6 +18,40 @@ const API_URL = process.env.API_URL ?? 'https://nutriai-app.up.railway.app';
 const GOOGLE_IOS_CLIENT_ID = '1015788885193-55jsd3u6f4t151vj5t8ceqb8aed4ocg8.apps.googleusercontent.com';
 const GOOGLE_IOS_URL_SCHEME = 'com.googleusercontent.apps.1015788885193-55jsd3u6f4t151vj5t8ceqb8aed4ocg8';
 
+/**
+ * Snap Creative Kit client ID, from https://kit.snapchat.com (project NutriAI,
+ * f16ec2c0-8635-4359-a3db-5db9b7b95d55).
+ *
+ * Without it, an image handed to Snapchat arrives as a *chat attachment*: a
+ * plain ACTION_SEND lands in Snapchat's "Send To" flow, which is a message with
+ * a picture on it, not a Snap. Creative Kit is the only route to the camera
+ * preview — the editor where the card becomes something you post to a Story —
+ * and Snapchat identifies the calling app solely by this ID.
+ *
+ * Hardcoded rather than required from the environment, for the same reason
+ * GOOGLE_IOS_CLIENT_ID above is: this is the *public* OAuth client ID, it ships
+ * inside the APK regardless, and there is nothing to protect. Making it an env
+ * var would only add a way to forget it — and a release built without it looks
+ * completely normal until someone shares a card and gets a chat message.
+ *
+ * **Currently pointed at STAGING**, deliberately and temporarily. The
+ * production version is in review, and until Snap approves it the production ID
+ * works for nobody; the staging one works for the Demo Users listed in the
+ * portal. Shipping staging means the handful of testers get real Snaps today
+ * while everyone else keeps the behaviour they already have.
+ *
+ * The cost of that choice is one extra release: approval does not reach a
+ * staging build, so when the review passes this must be switched back to
+ * production (`7b2c22b2-ef62-4d4e-b474-58a18676743f`) and shipped again. Had we
+ * shipped production instead, approval would have lit it up for everyone with
+ * no new build — that is the trade being made here, on purpose.
+ *
+ * The value lives in the source rather than an env var so the released binary
+ * is reproducible from the commit it was built at, which is the whole point of
+ * the clean-tree check in scripts/release.sh.
+ */
+const SNAP_CLIENT_ID = process.env.SNAP_CLIENT_ID ?? '634f6a09-f811-4e8f-a028-70c013137dce';
+
 // Health Connect record permissions the Android app requests (read-only).
 const HEALTH_CONNECT_PERMISSIONS = [
   'android.permission.health.READ_STEPS',
@@ -178,6 +212,7 @@ const config: ExpoConfig = {
   extra: {
     apiUrl: API_URL,
     googleIosClientId: GOOGLE_IOS_CLIENT_ID,
+    snapClientId: SNAP_CLIENT_ID,
     router: { origin: false },
   },
 };

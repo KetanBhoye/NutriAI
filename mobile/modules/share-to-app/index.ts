@@ -12,6 +12,12 @@ import { requireOptionalNativeModule } from 'expo';
 const native = requireOptionalNativeModule<{
   isAppInstalled(packageName: string): boolean;
   shareImage(uri: string, packageName: string, mimeType: string): Promise<boolean>;
+  shareSnapToPreview(
+    uri: string,
+    clientId: string,
+    appName: string,
+    caption: string | null
+  ): Promise<boolean>;
 }>('ShareToApp');
 
 export const SNAPCHAT = 'com.snapchat.android';
@@ -42,6 +48,34 @@ export async function shareImageTo(
   if (Platform.OS !== 'android' || !native) return false;
   try {
     return await native.shareImage(uri, packageName, mimeType);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens the card in Snapchat's camera preview — a real Snap, not a chat message.
+ *
+ * The distinction is the whole point of this function. `shareImageTo` reaches
+ * Snapchat's share receiver, which delivers the image as a chat attachment: a
+ * message with a picture on it, that cannot go to a Story. Creative Kit reaches
+ * the preview editor instead, where Story and Snapchat's creative tools are.
+ *
+ * Returns false when the build has no Creative Kit client ID, so callers keep a
+ * working button either way: no ID means the old share path, not a dead button.
+ * `SNAP_CLIENT_ID` is deliberately a parameter rather than an import — this
+ * module is a thin wrapper over the native layer and should not reach into app
+ * config.
+ */
+export async function shareSnapToPreview(
+  uri: string,
+  clientId: string,
+  appName: string,
+  caption?: string
+): Promise<boolean> {
+  if (Platform.OS !== 'android' || !native || !clientId) return false;
+  try {
+    return await native.shareSnapToPreview(uri, clientId, appName, caption ?? null);
   } catch {
     return false;
   }

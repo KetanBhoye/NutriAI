@@ -14,10 +14,13 @@ import path from 'node:path';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'modules/**/*.test.ts'],
     setupFiles: ['src/test/setup.ts'],
   },
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+      '@modules': path.resolve(__dirname, 'modules'),
+    },
   },
 });

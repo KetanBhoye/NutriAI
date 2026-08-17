@@ -23,6 +23,16 @@ export const GOOGLE_IOS_CLIENT_ID: string | undefined = Constants.expoConfig?.ex
   | undefined;
 
 /**
+ * Snap Creative Kit client ID (see app.config.ts).
+ *
+ * Empty string when the build wasn't given one — the share path checks for that
+ * and falls back, so treat "configured" as a question rather than an assumption.
+ */
+export const SNAP_CLIENT_ID: string = (Constants.expoConfig?.extra?.snapClientId as
+  | string
+  | undefined) ?? '';
+
+/**
  * The public install page, put on every shared card.
  *
  * Deliberately NOT derived from `API_URL`: a build pointed at the dev backend

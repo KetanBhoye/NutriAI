@@ -117,7 +117,7 @@ export function RemindersCard() {
 
       <Text style={styles.note}>
         A meal you've already logged doesn't get a reminder. Reminders are scheduled on this device,
-        so they work without a server — today's quote what you've logged as of the last time you
+        so they work without a server — but they quote what you've logged as of the last time you
         opened the app.
       </Text>
     </Card>

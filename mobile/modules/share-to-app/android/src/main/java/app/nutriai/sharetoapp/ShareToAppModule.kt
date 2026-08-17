@@ -1,8 +1,10 @@
 package app.nutriai.sharetoapp
 
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -71,5 +73,104 @@ class ShareToAppModule : Module() {
       context.startActivity(intent)
       true
     }
+
+    /**
+     * Sends the card to Snapchat as a *Snap*, not a chat attachment.
+     *
+     * `shareImage` above hands Snapchat a plain ACTION_SEND, which its generic
+     * share receiver turns into the "Send To" flow — the picture arrives in a
+     * chat, as a message. That is not what a share button on a story card is
+     * for, and it was the behaviour on a real device.
+     *
+     * Creative Kit Lite is the documented route to the camera preview: the
+     * editor where the recipient list, the Story option and Snapchat's own
+     * creative tools live. Mechanically it is the same ACTION_SEND, and the
+     * three additions below are the entire difference:
+     *
+     *   - the intent *data* is `snapchat://creativekit/preview`, which selects
+     *     the preview entry point rather than the share receiver;
+     *   - `CLIENT_ID` identifies the calling app. Snapchat ignores the deep
+     *     link without it and falls back to the chat flow, which is why this
+     *     cannot be done anonymously;
+     *   - `CLIENT_APP_NAME` is the attribution Snapchat prints on the Snap.
+     *
+     * See https://github.com/Snapchat/creative-kit (Creative Kit Lite). No SDK
+     * is involved — the contract is this Intent.
+     */
+    AsyncFunction("shareSnapToPreview") { uri: String, clientId: String, appName: String, caption: String? ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("No application context")
+
+      if (clientId.isBlank()) {
+        throw IllegalStateException("No Snap Creative Kit client ID configured")
+      }
+
+      val fileUri = Uri.parse(uri)
+      val intent = Intent(Intent.ACTION_SEND).apply {
+        setPackage(SNAPCHAT_PACKAGE)
+        // setDataAndType, not `type =`: setting the type alone clears the data
+        // Uri, and losing it is exactly what silently demotes this back to a
+        // chat attachment.
+        setDataAndType(Uri.parse(CREATIVE_KIT_PREVIEW), "image/*")
+        putExtra(CLIENT_ID_EXTRA, clientId)
+        putExtra(CLIENT_APP_NAME_EXTRA, appName)
+        putExtra(Intent.EXTRA_STREAM, fileUri)
+        if (!caption.isNullOrBlank()) putExtra(CAPTION_TEXT_EXTRA, caption)
+        /**
+         * How Snapchat gets back to us when the user finishes or cancels.
+         *
+         * Snap's reference implementation sets this on every Creative Kit
+         * intent, so it is part of the contract rather than an optional extra —
+         * matched here rather than trimmed, because the failure mode for
+         * getting this wrong is Snapchat quietly treating the intent as an
+         * ordinary share, which is indistinguishable from the bug being fixed.
+         *
+         * FLAG_IMMUTABLE is required from Android 12; the PendingIntent carries
+         * an empty Intent because we want the callback, not a destination.
+         */
+        putExtra(
+          RESULT_INTENT_EXTRA,
+          PendingIntent.getActivity(
+            context,
+            CREATIVE_KIT_REQUEST_CODE,
+            Intent(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE
+            else PendingIntent.FLAG_ONE_SHOT
+          )
+        )
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      }
+
+      if (intent.resolveActivity(context.packageManager) == null) {
+        throw IllegalStateException(
+          "Snapchat cannot receive a Creative Kit preview (not installed, too old, or missing a <queries> entry)"
+        )
+      }
+
+      /**
+       * The flag alone is not always enough.
+       *
+       * FLAG_GRANT_READ_URI_PERMISSION grants against the intent's *data* Uri,
+       * and here the data is the creativekit deep link — the image rides in
+       * EXTRA_STREAM instead. An explicit grant to Snapchat covers it; without
+       * this the preview can open on an empty canvas, which looks like the card
+       * failed to render rather than like a permissions problem.
+       */
+      context.grantUriPermission(SNAPCHAT_PACKAGE, fileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      context.startActivity(intent)
+      true
+    }
+  }
+
+  private companion object {
+    const val SNAPCHAT_PACKAGE = "com.snapchat.android"
+    const val CREATIVE_KIT_PREVIEW = "snapchat://creativekit/preview"
+    const val CLIENT_ID_EXTRA = "CLIENT_ID"
+    const val CLIENT_APP_NAME_EXTRA = "CLIENT_APP_NAME"
+    const val CAPTION_TEXT_EXTRA = "captionText"
+    const val RESULT_INTENT_EXTRA = "RESULT_INTENT"
+    const val CREATIVE_KIT_REQUEST_CODE = 100
   }
 }

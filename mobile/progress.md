@@ -638,6 +638,38 @@ that height, keeps `KeyboardAvoidingView` for iOS only, and dismisses the
 keyboard before closing so Android never tears down a focused `TextInput` with
 its window. Don't reintroduce `behavior="height"` here.
 
+## Sharing to Snapchat needs Creative Kit, not an intent
+
+An explicit `ACTION_SEND` at `com.snapchat.android` reaches Snapchat's *share
+receiver*, and the card arrives as a **chat attachment** — a message with a
+picture on it, no Story option, no editor. That looked like a working direct
+share for two releases, because it does open Snapchat with the image loaded; the
+gap only shows up on the receiving end. It is not fixable by adjusting the
+intent's type, flags or extras: the share receiver is a different entry point
+from the camera preview, and a plain send can only ever reach the first one.
+
+Creative Kit Lite is the documented route to the preview, and it is still an
+`ACTION_SEND` — the difference is three additions (`modules/share-to-app`):
+the intent *data* is `snapchat://creativekit/preview` (set via `setDataAndType`,
+because setting `type` alone clears the data Uri and silently demotes it back to
+a chat attachment), a `CLIENT_ID` extra, and `CLIENT_APP_NAME` for attribution.
+No SDK, no gradle dependency.
+
+`CLIENT_ID` is the catch: it comes from registering the app at
+kit.snapchat.com and requires Snapchat's approval. Snapchat ignores the deep
+link without it and falls back to the chat flow, so **this cannot be done
+anonymously** — a build with no `SNAP_CLIENT_ID` in its environment degrades to
+the old send intent by design, rather than firing an intent that gets rejected.
+That fallback is deliberate but it is also indistinguishable from the bug, so
+when someone reports "it still sends as a chat", check the build's client ID
+before reading any code.
+
+Also worth knowing: `FLAG_GRANT_READ_URI_PERMISSION` grants against the intent's
+data Uri, which here is the deep link — the image rides in `EXTRA_STREAM`, so it
+needs an explicit `grantUriPermission` to Snapchat as well. Without it the
+preview can open on an empty canvas, which reads as a failed card render rather
+than a permissions problem.
+
 ## UI conventions
 
 - **Navigator headers are off app-wide** (`app/(tabs)/_layout.tsx`

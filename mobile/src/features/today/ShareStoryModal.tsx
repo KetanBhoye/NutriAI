@@ -9,7 +9,8 @@ import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
 import { colors, fonts, type } from '@/theme';
 import { formatCardDate, pickCaption } from './shareCaption';
-import { SNAPCHAT, shareImageTo } from '@modules/share-to-app';
+import { SNAPCHAT, shareImageTo, shareSnapToPreview } from '@modules/share-to-app';
+import { SNAP_CLIENT_ID } from '@/config';
 import { ShareCardBackground } from './ShareCardBackground';
 
 interface ShareStoryModalProps {
@@ -142,16 +143,13 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
   };
 
   /**
-   * Snapchat, straight into its send screen.
+   * Snapchat, into the camera preview where a Snap is actually composed.
    *
-   * Goes through the local `share-to-app` native module rather than
-   * expo-intent-launcher, which cannot put a Parcelable Uri in EXTRA_STREAM —
-   * with it, the intent failed every time and fell silently through to the
-   * system chooser, so the button was only ever pretending to be direct.
-   *
-   * Falls back to the share sheet when the module says no: on iOS, where it
-   * does not exist, and on Android when Snapchat is not installed. Snapchat
-   * appears in that sheet anyway, so the worst case is one extra tap.
+   * Same three-rung ladder as the weekly card — Creative Kit preview, then a
+   * plain send intent, then the system sheet — and the same reason for it: a
+   * plain ACTION_SEND reaches Snapchat's "Send To" screen, which delivers the
+   * card as a chat attachment with no Story option. See ShareWeekModal for the
+   * full note; the two share flows behave identically on purpose.
    */
   const shareToSnapchat = async () => {
     setSharing(true);
@@ -159,6 +157,8 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     try {
       const uri = await capture();
       const contentUri = await FileSystem.getContentUriAsync(uri);
+      const snapped = await shareSnapToPreview(contentUri, SNAP_CLIENT_ID, 'NutriAI');
+      if (snapped) return;
       const opened = await shareImageTo(contentUri, SNAPCHAT);
       if (!opened) await share();
     } catch {
