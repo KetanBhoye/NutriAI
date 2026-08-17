@@ -28,13 +28,11 @@ const chrome = computed(() => !route.meta.noChrome);
       </Transition>
     </RouterView>
 
-    <nav v-if="chrome" class="tabbar">
-      <RouterLink to="/" class="tab">Today</RouterLink>
-      <RouterLink to="/coach" class="tab">Coach</RouterLink>
-      <RouterLink to="/dashboard" class="tab">Trends</RouterLink>
-      <RouterLink to="/goals" class="tab">Plan</RouterLink>
-      <RouterLink to="/profile" class="tab">You</RouterLink>
-    </nav>
+    <!--
+      The consumer tab bar is gone with the screens it pointed at. The admin
+      console is a single page, so a nav with one destination would be chrome
+      for its own sake.
+    -->
   </div>
 </template>
 

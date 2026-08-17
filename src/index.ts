@@ -142,8 +142,17 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   // it made "/app/" fall through to the /app redirect and loop. The MCP server
   // metadata is still served for connectors at /health, /openapi.json, /mcp,
   // and the old info page is reachable at /info.
+  /**
+   * The front door is the landing page, not the app.
+   *
+   * It used to redirect to /app/, which made sense when /app was the consumer
+   * PWA. That app is now the admin console, so sending every visitor there
+   * would drop them on a sign-in screen for a dashboard they cannot use. The
+   * landing page is what a person arriving from a shared card or the store
+   * listing should see.
+   */
   app.get('/', (_req, res) => {
-    res.redirect('/app/');
+    res.sendFile(resolve(publicDir, 'index.html'));
   });
 
   app.get('/info', (_req, res) => {
