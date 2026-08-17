@@ -25,6 +25,18 @@ import { getNumberSetting, getSetting, SETTINGS } from '../settings.js';
 
 export type Plan = 'free' | 'pro';
 
+/**
+ * The plan a new account starts on.
+ *
+ * Everyone is on pro while the app is in early access — nothing is gated, the
+ * quota ceilings are still placeholders, and the people using it were invited
+ * personally. Set explicitly at signup rather than left to the column default,
+ * because SQLite cannot alter a default in place: relying on it would have
+ * meant Postgres and SQLite disagreeing about what a new user gets, which is
+ * the exact class of divergence the driver-parity work exists to prevent.
+ */
+export const DEFAULT_PLAN: Plan = 'pro';
+
 interface Limits {
   /** Calls of this feature per rolling 24h. */
   perDay: number;

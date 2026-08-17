@@ -7,6 +7,7 @@ import request from 'supertest';
 import { createApp } from './index.js';
 import { getConfig } from './config.js';
 import { clearSettingsCache } from './services/settings.js';
+import { DEFAULT_PLAN } from './services/ai/quota.js';
 
 /**
  * The admin controls that can cost money or change what users are allowed.
@@ -171,6 +172,37 @@ describe('the operator knobs', () => {
       .set('Cookie', admin)
       .send({ ai_daily_budget_usd: 0 });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('the plan a new account starts on', () => {
+  /**
+   * A one-off "set everyone to pro" fixes the users who exist that day and says
+   * nothing about tomorrow's. That is exactly what happened in production: an
+   * account created hours after the backfill landed on free, because the column
+   * default still said so. These pin the signup paths themselves, which is the
+   * only place that keeps being true as people keep signing up.
+   */
+  it('puts a new email signup on pro', async () => {
+    const { id } = await signUpPlain();
+    const row = await running.env.DB
+      .prepare('SELECT plan FROM users WHERE id = ?')
+      .bind(id)
+      .first<{ plan: string }>();
+    expect(row?.plan).toBe(DEFAULT_PLAN);
+  });
+
+  it('sets the plan explicitly rather than leaning on the column default', async () => {
+    // This suite runs on SQLite, where the column default is still 'free' —
+    // SQLite cannot alter a default in place, so only Postgres got the new one.
+    // That asymmetry is what makes the test above meaningful: it can only pass
+    // if the insert names the column, which is what keeps the two drivers
+    // agreeing about what a new user gets.
+    const defaultOnThisDriver = await running.env.DB
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+      .bind()
+      .first<{ sql: string }>();
+    expect(defaultOnThisDriver?.sql).toContain("'free'");
   });
 });
 

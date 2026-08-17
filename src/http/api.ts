@@ -3,6 +3,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
 import { daysAgo, sqlTimestampNow } from '../db/time.js';
 import { CONSENT_VERSION } from '../services/consent.js';
+import { DEFAULT_PLAN } from '../services/ai/quota.js';
 import { getAiAdminStats } from '../services/admin/ai-stats.js';
 import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
 import { headlineFor } from '../services/consistency.js';
@@ -374,9 +375,9 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         const userId = randomUUID();
         await env.DB
           .prepare(
-            'INSERT INTO users (id, name, email, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+            'INSERT INTO users (id, name, email, role, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
           )
-          .bind(userId, name, email, 'user')
+          .bind(userId, name, email, 'user', DEFAULT_PLAN)
           .run();
         user = { id: userId, name, email };
       }
@@ -422,14 +423,15 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const consentedVersion = parsed.data.accepted_terms ? CONSENT_VERSION : null;
       await env.DB
         .prepare(
-          `INSERT INTO users (id, name, email, role, consent_version, consented_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+          `INSERT INTO users (id, name, email, role, plan, consent_version, consented_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
         )
         .bind(
           userId,
           name,
           email,
           'user',
+          DEFAULT_PLAN,
           consentedVersion,
           consentedVersion ? sqlTimestampNow() : null
         )
