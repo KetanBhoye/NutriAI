@@ -1,26 +1,36 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, fonts } from '@/theme';
 import type { ShareStats } from '@/api/dashboard';
-import { StickerFrame, stickerStyles } from '../share/StickerFrame';
-import { formatCardDate } from './shareCaption';
+import { MacroMetrics } from '../share/overlay/MacroMetrics';
+import { ProgressMetric } from '../share/overlay/ProgressMetric';
+import { StreakRing } from '../share/overlay/StreakRing';
+import { overlayShadow } from '../share/overlay/shadow';
+import { formatCardDate, pickCaption } from './shareCaption';
 
 /**
- * The day, as a sticker to drop on your own photo.
+ * The day as a full-frame overlay on the user's own photo.
  *
- * Laid out to the corners rather than down the middle. A centred stack reads as
- * a *panel someone pasted on*; anchoring the two numbers to opposite corners
- * and letting the detail sit along the bottom reads as a HUD over the photo,
- * which is what a Snapchat overlay is. It also lets the whole thing be wide and
- * short instead of squarish, so it covers a strip of the picture rather than
- * the middle of it — and the middle is where the food usually is.
+ * Three attempts got here, and the two dead ends are worth recording because
+ * both looked fine in a preview and wrong on an actual Snap:
  *
- * Steps sit on the left because they are the half people react to. Calories
- * against goal is the number that means something to the person logging;
- * "4,604 steps" is the one a friend replies to. Putting the social number first
- * in reading order is the difference between a stat card and a post.
+ *  1. **A dark rounded panel.** A card pasted onto a photo, sitting over the
+ *     middle — the part someone framed the shot around.
+ *  2. **The same panel with its contents pushed to the corners.** No better:
+ *     the panel was the problem, not the arrangement inside it.
  *
- * The card version stays a poster — headline, caption, big single figure. This
- * is deliberately the other shape, because it has a different job.
+ * So the metrics are distributed around the *edges of the frame* and the middle
+ * is left alone. The photo is the post; this is the layer that annotates it,
+ * and everything here is arranged so a person standing in the centre of their
+ * own picture is never covered.
+ *
+ * Only data the user actually has appears. There is no water row, no
+ * "0 of 8 glasses" — NutriAI does not track water, and a shared card is exactly
+ * the wrong place to invent a number. Metrics without a goal render as a figure
+ * with no bar rather than a bar at zero.
+ *
+ * Positions are fractions of the sticker's own width and height, never pixels,
+ * so the composition survives being previewed at 340pt and captured at Story
+ * resolution — and survives the aspect differences between phones.
  */
 
 interface Props {
@@ -29,102 +39,112 @@ interface Props {
   w: number;
 }
 
+/** Full-frame: this overlay frames the photo rather than sitting on part of it. */
+export const STICKER_ASPECT = 16 / 9;
+
+/**
+ * The band the composition lives in.
+ *
+ * Top and bottom are left clear for the host app's chrome — Snapchat puts a
+ * music pill and close button across the top and a send tray across the bottom
+ * — and the middle 40% is left clear for the subject of the photo.
+ */
+const RAIL_LEFT = 0.07;
+const RAIL_RIGHT = 0.07;
+const TOP = 0.1;
+const BOTTOM = 0.12;
+
 export function DayShareSticker({ stats, w }: Props) {
+  const h = Math.round(w * STICKER_ASPECT);
   const goal = stats.calories.goal;
   const consumed = stats.calories.consumed;
-  const pct = goal ? Math.min(100, (consumed / goal) * 100) : 0;
+  const pct = goal ? Math.min(1, consumed / goal) : null;
 
-  /**
-   * Green while there is room, amber once the goal is passed. Never red — a day
-   * over target is an ordinary day, and this is something the person chose to
-   * show people.
-   */
+  // Amber once the goal is passed, never red: a day over target is an ordinary
+  // day, and this is something the person chose to show people.
   const over = goal !== null && consumed > goal;
   const accent = over ? '#fbbf24' : colors.accent;
+  const caption = pickCaption(stats);
+
+  const stepGoal = stats.steps_goal ?? null;
 
   return (
-    <StickerFrame
-      w={w}
-      accent={accent}
-      eyebrow="TODAY"
-      meta={formatCardDate(stats.date)}
-      note={stats.streak > 1 ? `${stats.streak} DAY STREAK` : null}
-    >
-      {/*
-        The two corners. Steps left, calories right, baselines shared — the
-        alignment is what makes them read as a pair rather than two stacks that
-        happen to be adjacent.
-      */}
-      <View style={[styles.corners, { marginTop: w * 0.05 }]}>
-        <View style={styles.corner}>
-          <Text style={[stickerStyles.figure, { fontSize: w * 0.115 }]}>
-            {stats.steps != null ? stats.steps.toLocaleString() : '—'}
-          </Text>
-          <Text style={[styles.label, { fontSize: w * 0.03 }]}>STEPS</Text>
-        </View>
-
-        <View style={[styles.corner, styles.right]}>
-          <View style={styles.figureRow}>
-            <Text style={[stickerStyles.figure, { fontSize: w * 0.115, color: accent }]}>
-              {consumed.toLocaleString()}
-            </Text>
-            {goal ? (
-              <Text style={[stickerStyles.unit, { fontSize: w * 0.038, marginBottom: w * 0.012 }]}>
-                {` / ${goal.toLocaleString()}`}
-              </Text>
-            ) : null}
-          </View>
-          <Text style={[styles.label, { fontSize: w * 0.03, textAlign: 'right' }]}>KCAL</Text>
-        </View>
+    <View style={{ width: w, height: h }}>
+      {/* Top-left: whose day, and which one. */}
+      <View style={{ position: 'absolute', left: w * RAIL_LEFT, top: h * TOP }}>
+        <Text style={[styles.eyebrow, { fontSize: w * 0.036 }]}>TODAY</Text>
+        <Text style={[styles.date, { fontSize: w * 0.032, marginTop: w * 0.006 }]}>
+          {formatCardDate(stats.date)}
+        </Text>
       </View>
 
-      {/*
-        The fastest read on the sticker: mostly-full or barely-started lands
-        before anyone parses a four-digit number.
-      */}
-      {goal ? (
-        <View
-          style={[styles.track, { height: w * 0.016, borderRadius: w * 0.008, marginTop: w * 0.04 }]}
-        >
-          <View
-            style={{
-              width: `${pct}%`,
-              height: '100%',
-              borderRadius: w * 0.008,
-              backgroundColor: accent,
-            }}
-          />
+      {/* Upper-left rail: steps. */}
+      <View style={{ position: 'absolute', left: w * RAIL_LEFT, top: h * (TOP + 0.075) }}>
+        <ProgressMetric
+          w={w}
+          icon="👟"
+          label="STEPS"
+          value={stats.steps != null ? stats.steps.toLocaleString() : '—'}
+          caption={stepGoal ? `Goal ${stepGoal.toLocaleString()}` : null}
+          progress={stepGoal && stats.steps != null ? stats.steps / stepGoal : null}
+        />
+      </View>
+
+      {/* Mid-left: calories, the number the day is about. */}
+      <View style={{ position: 'absolute', left: w * RAIL_LEFT, top: h * 0.33 }}>
+        <ProgressMetric
+          w={w}
+          icon="🔥"
+          label="KCAL"
+          value={goal ? `${consumed.toLocaleString()}` : consumed.toLocaleString()}
+          caption={goal ? `${Math.round((consumed / goal) * 100)}% of ${goal.toLocaleString()}` : null}
+          progress={pct}
+          accent={accent}
+          emphasis
+        />
+      </View>
+
+      {/* Lower-left: macros. */}
+      <View style={{ position: 'absolute', left: w * RAIL_LEFT, top: h * 0.52 }}>
+        <MacroMetrics
+          w={w}
+          macros={[
+            { label: 'Protein', grams: stats.protein.consumed, goal: stats.protein.goal },
+            { label: 'Carbs', grams: stats.carbs_g, goal: stats.carbs_goal_g },
+            { label: 'Fat', grams: stats.fat_g, goal: stats.fat_goal_g },
+          ]}
+        />
+      </View>
+
+      {/* Right, opposite the calorie block: the streak. */}
+      {stats.streak > 0 ? (
+        <View style={{ position: 'absolute', right: w * RAIL_RIGHT, top: h * 0.36 }}>
+          <StreakRing w={w} days={stats.streak} />
         </View>
       ) : null}
 
       {/*
-        Macros as one quiet line rather than three tiles. At sticker size the
-        tiles from the card become boxes with numbers too small to read, and the
-        detail here is only there to make the headline figures credible.
+        Bottom-left: the line that makes it a post rather than a readout. The
+        same copy the full card uses as its headline, so the two share a voice.
       */}
-      <Text style={[styles.macros, { fontSize: w * 0.036, marginTop: w * 0.038 }]}>
-        {Math.round(stats.protein.consumed)}g protein
-        <Text style={styles.dot}> · </Text>
-        {Math.round(stats.carbs_g)}g carbs
-        <Text style={styles.dot}> · </Text>
-        {Math.round(stats.fat_g)}g fat
-      </Text>
-    </StickerFrame>
+      <View
+        style={{
+          position: 'absolute',
+          left: w * RAIL_LEFT,
+          right: w * RAIL_RIGHT,
+          bottom: h * BOTTOM,
+        }}
+      >
+        <Text style={[styles.caption, { fontSize: w * 0.044 }]}>{caption.headline}</Text>
+        <Text style={[styles.brand, { fontSize: w * 0.03, marginTop: w * 0.01 }]}>NUTRIAI</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  corners: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  corner: { flexShrink: 1 },
-  right: { alignItems: 'flex-end' },
-  figureRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  label: {
-    color: 'rgba(255,255,255,0.42)',
-    fontFamily: fonts.bold,
-    letterSpacing: 1.8,
-    marginTop: -1,
-  },
-  track: { width: '100%', backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' },
-  macros: { color: 'rgba(255,255,255,0.72)', fontFamily: fonts.semibold },
-  dot: { color: 'rgba(255,255,255,0.3)' },
+  eyebrow: { color: colors.accent, fontFamily: fonts.bold, letterSpacing: 2.6, ...overlayShadow },
+  date: { color: 'rgba(255,255,255,0.62)', fontFamily: fonts.semibold, letterSpacing: 0.6, ...overlayShadow },
+  caption: { color: colors.text, fontFamily: fonts.bold, ...overlayShadow },
+  brand: { color: 'rgba(255,255,255,0.55)', fontFamily: fonts.bold, letterSpacing: 2.4, ...overlayShadow },
 });

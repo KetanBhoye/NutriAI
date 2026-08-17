@@ -12,7 +12,7 @@ import { formatCardDate, pickCaption } from './shareCaption';
 import { shareSnapSticker, shareSnapToPreview } from '@modules/share-to-app';
 import { SNAP_CLIENT_ID } from '@/config';
 import { ShareCardBackground } from './ShareCardBackground';
-import { DayShareSticker } from './DayShareSticker';
+import { DayShareSticker, STICKER_ASPECT } from './DayShareSticker';
 import { ShareModeToggle, type ShareMode } from '../share/ShareModeToggle';
 
 interface ShareStoryModalProps {
@@ -51,7 +51,7 @@ const STORY_H = 1920;
  * The sticker is captured at its natural size, so these points become the
  * pixels Snapchat receives — see the matching note in ShareWeekModal.
  */
-const STICKER_W = Math.min(WIN_W - 56, 330);
+const STICKER_W = CARD_W;
 
 /**
  * How wide Snapchat draws it, in dp, before the user drags or pinches it.
@@ -197,7 +197,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
               // Wide and short now that the layout runs to the corners; the
               // old near-square ratio would have Snapchat reserve a block of
               // empty space under it.
-              heightDp: Math.round(STICKER_DP * 0.62),
+              heightDp: Math.round(STICKER_DP * STICKER_ASPECT),
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
 

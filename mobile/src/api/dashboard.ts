@@ -21,6 +21,15 @@ export interface ShareStats {
   carbs_g: number;
   fat_g: number;
   steps: number | null;
+  /**
+   * Targets for the three metrics that used to arrive without one.
+   *
+   * Optional because an older backend does not send them, and the share card
+   * treats "no goal" as "draw no bar" rather than "a bar at zero".
+   */
+  carbs_goal_g?: number | null;
+  fat_goal_g?: number | null;
+  steps_goal?: number | null;
   streak: number;
   weight_kg: number | null;
   /** Change since the start of the plan; negative means weight lost. */

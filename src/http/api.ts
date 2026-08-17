@@ -2171,10 +2171,18 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
 
       const prefs = await env.DB
         .prepare(
-          `SELECT daily_calorie_goal, daily_protein_goal_g FROM user_tracking_preferences WHERE user_id = ?`
+          `SELECT daily_calorie_goal, daily_protein_goal_g, daily_carbs_goal_g,
+                  daily_fat_goal_g, daily_step_goal
+             FROM user_tracking_preferences WHERE user_id = ?`
         )
         .bind(userId)
-        .first<{ daily_calorie_goal: number | null; daily_protein_goal_g: number | null }>();
+        .first<{
+          daily_calorie_goal: number | null;
+          daily_protein_goal_g: number | null;
+          daily_carbs_goal_g: number | null;
+          daily_fat_goal_g: number | null;
+          daily_step_goal: number | null;
+        }>();
 
       // Steps for the day, else the most recent day with steps.
       const stepRow = await env.DB
@@ -2232,6 +2240,20 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         carbs_g: Math.round(totals?.carb ?? 0),
         fat_g: Math.round(totals?.fat ?? 0),
         steps: stepRow?.steps ?? null,
+        /**
+         * The remaining goals, added rather than folded into the existing
+         * shapes so an older app keeps working unchanged.
+         *
+         * The share card can draw a progress bar for anything with a target,
+         * and until now it had targets for calories and protein only — so
+         * steps, carbs and fat could be printed as bare numbers and nothing
+         * else. All three already exist in the plan; they were simply never
+         * sent here. Null stays meaningful: no goal set means no bar, not a
+         * bar at zero.
+         */
+        carbs_goal_g: prefs?.daily_carbs_goal_g ?? null,
+        fat_goal_g: prefs?.daily_fat_goal_g ?? null,
+        steps_goal: prefs?.daily_step_goal ?? null,
         streak,
         weight_kg: latestWeight,
         weight_change_kg: weightChange,
