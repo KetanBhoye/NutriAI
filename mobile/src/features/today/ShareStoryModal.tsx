@@ -53,13 +53,6 @@ const STORY_H = 1920;
  */
 const STICKER_W = CARD_W;
 
-/**
- * How wide Snapchat draws it, in dp, before the user drags or pinches it.
- *
- * Wide and short by design: the sticker is a strip across the photo rather than
- * a block in the middle of it, and the middle is usually the food.
- */
-const STICKER_DP = 300;
 
 /**
  * Shareable story card. The web app draws an equivalent on a <canvas>; here
@@ -199,10 +192,18 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
       const snapped =
         mode === 'sticker'
           ? await shareSnapSticker(snapUri, SNAP_CLIENT_ID, 'NutriAI', {
-              // Full-frame: the overlay is a 9:16 layer over the photo, so it
-              // should arrive the size of the photo.
-              widthDp: STICKER_DP,
-              heightDp: Math.round(STICKER_DP * STICKER_ASPECT),
+              /**
+               * The size to draw it at, in points — the screen, not the bitmap.
+               *
+               * This is a full-frame overlay, so it should arrive the size of
+               * the photo. Passing a fixed 300 made it a floating panel again;
+               * passing nothing let iOS size it from the PNG's pixel
+               * dimensions, which put a 1080-point-wide sticker on a 393-point
+               * screen and showed a fragment of one corner.
+               */
+              widthDp: WIN_W,
+              heightDp: Math.round(WIN_W * STICKER_ASPECT),
+              posY: 0.5,
             })
           : await shareSnapToPreview(snapUri, SNAP_CLIENT_ID, 'NutriAI');
 

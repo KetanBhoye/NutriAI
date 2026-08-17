@@ -196,10 +196,12 @@ public class ShareToAppModule: Module {
      than the preview. The sticker is the payload, and the background is
      whatever they shoot or pick.
 
-     `widthDp`/`heightDp`/`posY` are accepted and mostly ignored here, unlike
-     Android where they are the sticker JSON. iOS sizes the sticker from the
-     image itself and lets the user drag it, so the arguments exist to keep one
-     signature across both platforms rather than making every caller branch.
+     `width` and `height` are in *points* and must be set explicitly. Left
+     unset, Creative Kit sizes the sticker from the UIImage, which is in
+     *pixels* — a 1080×1920 export became a 1080×1920-point sticker on a
+     393-point-wide screen, so only a fragment of it was visible and the rest
+     ran off every edge. The caller knows the frame it wants to fill, so the
+     size comes from there rather than from the bitmap.
      */
     AsyncFunction("shareSnapSticker") { (
       uri: String,
@@ -229,6 +231,9 @@ public class ShareToAppModule: Module {
       DispatchQueue.main.async {
         let content = SCSDKNoSnapContent()
         let sticker = SCSDKSnapSticker(stickerImage: image)
+        sticker.width = CGFloat(widthDp)
+        sticker.height = CGFloat(heightDp)
+        sticker.posX = 0.5
         sticker.posY = CGFloat(posY)
         content.sticker = sticker
         content.attachmentUrl = "https://nutriai-app.up.railway.app/download"
