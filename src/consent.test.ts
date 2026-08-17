@@ -25,6 +25,12 @@ let running: Awaited<ReturnType<typeof createApp>>;
 const signUp = (body: Record<string, unknown>) =>
   request(running.app).post('/api/auth/signup').send(body);
 
+/** set-cookie is string | string[] depending on count; normalise once. */
+const cookieOf = (res: request.Response): string => {
+  const raw = res.headers['set-cookie'];
+  return (Array.isArray(raw) ? raw : [raw ?? '']).map((c) => c.split(';')[0]).join('; ');
+};
+
 const base = () => ({
   name: 'Consent',
   email: `c${randomUUID()}@example.test`,
@@ -111,5 +117,57 @@ describe('the documents themselves', () => {
     const res = await request(running.app).get('/privacy');
     const flat = res.text.replace(/\s+/g, ' ');
     expect(flat).toMatch(/never contains your identity/i);
+  });
+});
+
+describe('existing accounts', () => {
+  it('reports consent as not current for an account that never agreed', async () => {
+    // Accounts created before the checkbox existed. The flag is what the app
+    // uses to decide whether to prompt, so it has to be false rather than
+    // absent.
+    const res = await signUp(base());
+    const cookie = cookieOf(res);
+
+    const me = await request(running.app).get('/api/me').set('Cookie', cookie);
+    expect(me.body.consent_current).toBe(false);
+  });
+
+  it('records agreement and flips the flag', async () => {
+    const res = await signUp(base());
+    const cookie = cookieOf(res);
+
+    const accepted = await request(running.app)
+      .post('/api/consent')
+      .set('Cookie', cookie)
+      .send({ accepted_terms: true });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.consent_version).toBe(CONSENT_VERSION);
+
+    const me = await request(running.app).get('/api/me').set('Cookie', cookie);
+    expect(me.body.consent_current).toBe(true);
+  });
+
+  it('reports consent as current straight away when the box was ticked at signup', async () => {
+    const res = await signUp({ ...base(), accepted_terms: true });
+    const cookie = cookieOf(res);
+
+    const me = await request(running.app).get('/api/me').set('Cookie', cookie);
+    expect(me.body.consent_current).toBe(true);
+  });
+
+  it('refuses to record a false agreement', async () => {
+    const res = await signUp(base());
+    const cookie = cookieOf(res);
+
+    const bad = await request(running.app)
+      .post('/api/consent')
+      .set('Cookie', cookie)
+      .send({ accepted_terms: false });
+    expect(bad.status).toBe(400);
+  });
+
+  it('requires a session', async () => {
+    const res = await request(running.app).post('/api/consent').send({ accepted_terms: true });
+    expect(res.status).toBe(401);
   });
 });

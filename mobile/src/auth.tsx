@@ -10,6 +10,14 @@ export interface User {
   email: string;
   role?: string;
   onboarded?: boolean;
+  /**
+   * Whether this account has agreed to the *current* Terms and Privacy Policy.
+   *
+   * Optional on purpose: an older server, or a response from before this
+   * existed, leaves it undefined — and the consent gate only prompts on an
+   * explicit `false`, so deploy skew cannot lock people out of the app.
+   */
+  consent_current?: boolean;
   goals?: {
     calories: number | null;
     protein_g: number | null;

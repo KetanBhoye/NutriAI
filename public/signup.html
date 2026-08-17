@@ -28,6 +28,9 @@
         padding: 24px;
       }
       form { display: grid; gap: 12px; }
+      .consent { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; opacity: 0.85; }
+      .consent input { width: auto; margin-top: 3px; }
+      .consent a { color: #4ade80; }
       input {
         border: 1px solid #554f73;
         border-radius: 10px;
@@ -56,6 +59,21 @@
         <input name="name" type="text" placeholder="Full name" required />
         <input name="email" type="email" placeholder="Email" required />
         <input name="password" type="password" placeholder="Password (min 8 chars)" minlength="8" required />
+
+        <!--
+          `required` so the browser blocks submission, and unchecked by default:
+          a pre-ticked box is not consent under GDPR, and this app processes
+          health data. The server re-checks it regardless.
+        -->
+        <label class="consent">
+          <input name="accepted_terms" type="checkbox" required />
+          <span>
+            I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>
+            and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>,
+            including how my health data is used.
+          </span>
+        </label>
+
         <button type="submit">Create Account</button>
       </form>
       <div class="error" id="error"></div>
@@ -71,10 +89,20 @@
         errorEl.textContent = '';
 
         const formData = new FormData(form);
+        // Only sent when actually ticked. The server records the policy
+        // version against the account, so a field that is always present would
+        // make "did they agree?" unanswerable.
+        const accepted = formData.get('accepted_terms') === 'on';
+        if (!accepted) {
+          errorEl.textContent = 'Please accept the Terms and Privacy Policy to continue.';
+          return;
+        }
+
         const payload = {
           name: formData.get('name'),
           email: formData.get('email'),
           password: formData.get('password'),
+          accepted_terms: true,
         };
 
         const response = await fetch('/api/auth/signup', {

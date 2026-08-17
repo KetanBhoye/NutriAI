@@ -16,6 +16,7 @@ import {
 import { AuthProvider, useAuth } from '@/auth';
 import { applyDefaultFont } from '@/components/applyDefaultFont';
 import { NutriLoader } from '@/components/ui/NutriLoader';
+import { ConsentGate } from '@/features/consent/ConsentGate';
 import { colors } from '@/theme';
 
 applyDefaultFont();
@@ -104,6 +105,20 @@ function AuthGate() {
   );
 }
 
+/**
+ * Renders inside the auth provider so it can read the signed-in user, and
+ * beside the navigator rather than inside it — an overlay that has to block
+ * every screen should not be one of the screens.
+ */
+function Gates() {
+  return (
+    <>
+      <AuthGate />
+      <ConsentGate />
+    </>
+  );
+}
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -140,7 +155,7 @@ export default function RootLayout() {
         <View style={{ flex: 1, backgroundColor: colors.bg }}>
           <AuthProvider>
             <StatusBar style="light" />
-            <AuthGate />
+            <Gates />
           </AuthProvider>
         </View>
       </ThemeProvider>

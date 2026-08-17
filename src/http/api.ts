@@ -132,6 +132,10 @@ const adminSettingsSchema = z.object({
 
 const adminPlanSchema = z.object({ plan: z.enum(['free', 'pro']) });
 
+// literal(true) for the same reason as at signup: a client sending false is a
+// bug or a tampered request, and must not be stored as agreement.
+const consentSchema = z.object({ accepted_terms: z.literal(true) });
+
 const coachChatSchema = z.object({
   message: z.string().min(1).max(2000),
   history: z
@@ -560,6 +564,12 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     // Goals live in user_tracking_preferences and are editable through the MCP
     // connector, so the app must read them rather than hardcode a copy that
     // silently drifts out of date.
+    const consent = await env.DB
+      .prepare('SELECT consent_version FROM users WHERE id = ?')
+      .bind(user.userId)
+      .first<{ consent_version: string | null }>()
+      .catch(() => null);
+
     const prefs = await env.DB
       .prepare(
         `SELECT daily_calorie_goal, daily_protein_goal_g, daily_carbs_goal_g, daily_fat_goal_g
@@ -581,6 +591,14 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       // A user is "onboarded" once they've set a calorie target. New signups
       // have no preferences row, so this is false and the app shows onboarding.
       onboarded: prefs?.daily_calorie_goal != null,
+      /**
+       * True when this account has agreed to the *current* documents.
+       *
+       * Compared by version rather than by presence, so bumping
+       * CONSENT_VERSION after a material change re-asks everyone whose stored
+       * agreement is to the older text — and nobody else.
+       */
+      consent_current: consent?.consent_version === CONSENT_VERSION,
       goals: {
         calories: prefs?.daily_calorie_goal ?? null,
         protein_g: prefs?.daily_protein_goal_g ?? null,
@@ -588,6 +606,36 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         fat_g: prefs?.daily_fat_goal_g ?? null,
       },
     });
+  });
+
+  /**
+   * Records agreement from an account that predates the signup checkbox, or
+   * whose agreement is to a superseded version of the documents.
+   *
+   * Separate from signup because the account already exists; the app shows a
+   * blocking prompt on launch when `consent_current` is false. Only ever
+   * *sets* consent — there is no path here to clear someone's record.
+   */
+  app.post('/api/consent', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = consentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: humanValidationError(parsed.error) });
+        return;
+      }
+
+      await env.DB
+        .prepare(
+          'UPDATE users SET consent_version = ?, consented_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        )
+        .bind(CONSENT_VERSION, sqlTimestampNow(), req.sessionUser!.userId)
+        .run();
+
+      res.json({ ok: true, consent_version: CONSENT_VERSION });
+    } catch (error) {
+      console.error('Consent error:', error);
+      res.status(500).json({ error: 'Failed to record consent' });
+    }
   });
 
   app.get('/api/entries', requireSession, async (req: AuthenticatedRequest, res) => {
