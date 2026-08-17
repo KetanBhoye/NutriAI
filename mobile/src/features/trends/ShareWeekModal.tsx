@@ -8,6 +8,7 @@ import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
 import { DOWNLOAD_URL } from '@/config';
 import type { Consistency } from '@/api/dashboard';
+import { SNAPCHAT, shareImageTo } from '@modules/share-to-app';
 import { WeekShareCard } from './WeekShareCard';
 import { weekShareCaption } from './weekShareCopy';
 
@@ -89,24 +90,31 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
   };
 
   /**
-   * There is no Snapchat button, and that is deliberate.
+   * Snapchat, straight into its send screen.
    *
-   * A direct hand-off needs ACTION_SEND carrying the image in EXTRA_STREAM,
-   * which must be a Parcelable Uri. expo-intent-launcher can only put
-   * primitives in `extra`, so the Uri arrives as a String and the intent fails
-   * — verified on a device: it threw and fell straight through to the sheet
-   * below, meaning the "direct" button was only ever pretending. Sending the
-   * image as `data` does open Snapchat, but with an empty composer, which is
-   * worse than a tap.
+   * Goes through the local `share-to-app` native module rather than
+   * expo-intent-launcher, which cannot put a Parcelable Uri in EXTRA_STREAM —
+   * with it, the intent failed every time and fell silently through to the
+   * system chooser, so the button was only ever pretending to be direct.
    *
-   * A real one-tap Snapchat needs Snap's Creative Kit SDK and a registered
-   * Client ID, or a small native module to build the intent by hand.
-   *
-   * Meanwhile the sheet is not a bad answer: Android learns the target from an
-   * image/png intent and puts "Share with Snapchat" at the top with a one-tap
-   * "Just once" — confirmed on device. Two buttons that did the same thing was
-   * worse than one that says what it does.
+   * Falls back to the share sheet when the module says no: on iOS, where it
+   * does not exist, and on Android when Snapchat is not installed. Snapchat
+   * appears in that sheet anyway, so the worst case is one extra tap.
    */
+  const shareToSnapchat = async () => {
+    setSharing(true);
+    setError(null);
+    try {
+      const uri = await capture();
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      const opened = await shareImageTo(contentUri, SNAPCHAT);
+      if (!opened) await share();
+    } catch {
+      await share().catch(() => setError("Couldn't share that card."));
+    } finally {
+      setSharing(false);
+    }
+  };
 
   /**
    * Straight into the Instagram story composer, skipping the share sheet.
@@ -154,8 +162,15 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
           />
         ) : null}
         <Button
-          title={sharing ? 'Preparing…' : 'Share…'}
+          title="Snapchat"
           variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+          onPress={shareToSnapchat}
+          disabled={sharing}
+          style={styles.action}
+        />
+        <Button
+          title={sharing ? 'Preparing…' : 'More…'}
+          variant="ghost"
           onPress={share}
           disabled={sharing}
           style={styles.action}
