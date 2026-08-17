@@ -141,39 +141,24 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
   };
 
   /**
-   * Snapchat.
+   * There is no Snapchat button, and that is deliberate.
    *
-   * Android gets a targeted ACTION_SEND straight into Snapchat's send screen.
-   * iOS cannot hand an image to a *named* app without Snap's Creative Kit SDK
-   * and a registered Client ID, so it falls through to the share sheet, where
-   * Snapchat appears anyway — one extra tap, not a dead end.
+   * A direct hand-off needs ACTION_SEND carrying the image in EXTRA_STREAM,
+   * which must be a Parcelable Uri. expo-intent-launcher can only put
+   * primitives in `extra`, so the Uri arrives as a String and the intent fails
+   * — verified on a device: it threw and fell straight through to the sheet
+   * below, meaning the "direct" button was only ever pretending. Sending the
+   * image as `data` does open Snapchat, but with an empty composer, which is
+   * worse than a tap.
    *
-   * Identical to the weekly card's implementation on purpose: two share flows
-   * that behave differently is a bug report waiting to happen.
+   * A real one-tap Snapchat needs Snap's Creative Kit SDK and a registered
+   * Client ID, or a small native module to build the intent by hand.
+   *
+   * Meanwhile the sheet is not a bad answer: Android learns the target from an
+   * image/png intent and puts "Share with Snapchat" at the top with a one-tap
+   * "Just once" — confirmed on device. Two buttons that did the same thing was
+   * worse than one that says what it does.
    */
-  const shareToSnapchat = async () => {
-    if (Platform.OS !== 'android') {
-      await share();
-      return;
-    }
-    setSharing(true);
-    setError(null);
-    try {
-      const uri = await capture();
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
-        type: 'image/png',
-        packageName: 'com.snapchat.android',
-        // FLAG_GRANT_READ_URI_PERMISSION, or Snapchat gets a URI it cannot read.
-        flags: 1,
-        extra: { 'android.intent.extra.STREAM': contentUri },
-      });
-    } catch {
-      await share().catch(() => setError("Couldn't share that card."));
-    } finally {
-      setSharing(false);
-    }
-  };
 
   const caption = stats ? pickCaption(stats) : null;
   const pct = stats?.calories.goal
@@ -249,16 +234,9 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
             />
           ) : null}
 
-          <Button
-            title="Snapchat"
-            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
-            onPress={shareToSnapchat}
-            disabled={sharing}
-            style={styles.shareBtn}
-          />
 
           <Button
-            title={sharing ? 'Preparing…' : Platform.OS === 'android' ? 'More…' : 'Share'}
+            title={sharing ? 'Preparing…' : 'Share…'}
             onPress={share}
             disabled={sharing}
             variant={Platform.OS === 'android' ? 'ghost' : 'primary'}

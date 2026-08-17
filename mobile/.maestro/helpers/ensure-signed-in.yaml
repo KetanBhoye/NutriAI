@@ -16,6 +16,19 @@ appId: app.nutriai.mobile
       - tapOn: 'Password'
       - inputText: ${PASSWORD}
       - tapOn: 'Sign in'
+
+      # Google Password Manager offers to save the credentials right after a
+      # successful sign-in, and its sheet covers the whole screen — so the
+      # assertion below fails on a device where the app signed in perfectly.
+      # It only appears once the device has an active Google account, which is
+      # why the suite passed for months and then started failing without any
+      # app change.
+      - runFlow:
+          when:
+            visible: 'Save password.*'
+          commands:
+            - tapOn: 'Not now'
+
       - extendedWaitUntil:
           visible: 'Quick log .*'
           timeout: 20000
