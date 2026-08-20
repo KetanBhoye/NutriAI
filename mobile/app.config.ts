@@ -65,7 +65,7 @@ const HEALTH_CONNECT_PERMISSIONS = [
 const config: ExpoConfig = {
   name: 'NutriAI',
   slug: 'nutriai-mobile',
-  version: '1.0.23',
+  version: '1.0.24',
   orientation: 'portrait',
   scheme: 'nutriai',
   userInterfaceStyle: 'dark',
@@ -96,7 +96,7 @@ const config: ExpoConfig = {
      * from another, and some installers refuse to update at all. `npm run
      * release` bumps both this and `version` for you.
      */
-    versionCode: 24,
+    versionCode: 25,
     permissions: [
       ...HEALTH_CONNECT_PERMISSIONS,
       /**
