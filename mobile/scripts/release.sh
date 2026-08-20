@@ -138,7 +138,12 @@ echo "==> Verifying the microphone permission survived the manifest merge"
 #
 # Checked against the APK for the same reason as the version above: a plugin
 # ordering question is settled inside the binary, not in app.config.ts.
-if ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.RECORD_AUDIO'; then
+# Captured first, then matched — never piped into `grep -q`. It exits at the
+# first match, aapt2 dies of SIGPIPE, and `set -o pipefail` reports the whole
+# pipeline as failed: this check's first version rejected a perfectly good APK
+# and blamed the permission. Same trap as the badging dump above.
+PERMISSIONS=$("$AAPT" dump permissions "$APK")
+if ! grep -q 'android.permission.RECORD_AUDIO' <<<"$PERMISSIONS"; then
   echo "error: the APK does not declare RECORD_AUDIO." >&2
   echo "Voice input in the Coach would be dead on arrival: Android refuses a" >&2
   echo "permission the manifest never asked for, and the OS shows no toggle." >&2
