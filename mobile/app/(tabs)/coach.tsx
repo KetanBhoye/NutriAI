@@ -28,6 +28,7 @@ import { LoggedCard } from '@/features/coach/LoggedCard';
 import { MessageMenu, type MessageAction } from '@/features/coach/MessageMenu';
 import { MicButton } from '@/features/coach/MicButton';
 import { diffEntries, type LogDiff } from '@/features/coach/loggedItems';
+import { joinDraft } from '@/features/coach/transcript';
 import { loadHandsFree, saveHandsFree } from '@/features/coach/prefs';
 import { isSpeechAvailable, speak, stopSpeaking } from '@/features/coach/speech';
 import { useDictation } from '@/features/coach/useDictation';
@@ -238,8 +239,13 @@ export default function Coach() {
       (finalText: string) => {
         const asked = sendOnFinal.current;
         sendOnFinal.current = false;
-        if (handsFree || asked) void send(finalText);
-        else setInput((prev) => (prev.trim() ? `${prev.trim()} ${finalText}` : finalText));
+        // `send` refuses while a turn is in flight, which would swallow the
+        // sentence silently — park it in the composer instead of losing it.
+        if ((handsFree || asked) && !sending) {
+          void send(finalText);
+          return;
+        }
+        setInput((prev) => joinDraft(prev, finalText));
       },
       // The state `send` reads, rather than `send` itself (it's redefined every
       // render). The hook keeps this callback in a ref, so a change here
@@ -326,9 +332,9 @@ export default function Coach() {
     return actions;
   };
 
-  const composerValue = dictation.listening
-    ? [input.trim(), dictation.transcript].filter(Boolean).join(' ')
-    : input;
+  // The same join the finished transcript goes through, so what you watch
+  // being typed is exactly what lands in the field.
+  const composerValue = dictation.listening ? joinDraft(input, dictation.transcript) : input;
   const canSend = Boolean(composerValue.trim()) && !sending;
 
   return (
