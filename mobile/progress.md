@@ -787,6 +787,25 @@ looked dead while `stop()` was in fact running every time. Shipped in v1.0.22
 and v1.0.23. `attachListeners` takes the module as an argument purely so a test
 can assert what the subscription was made on.
 
+**Never enable `volumeChangeEventOptions`.** It is what a mic ring wants — the
+real input level — and it corrupts the transcript. On iOS the library attaches
+a second mixer node *downstream of the very node whose tap feeds the
+recogniser* (`volumeMixerNode` in `ExpoSpeechRecognizer.swift`), which adds a
+render path through it; the tap then fires repeatedly for the same audio and
+those buffers are appended to the request again and again. Measured on a
+device: two spoken "hello"s came back as **ten**, growing by one per result
+while the room was silent, and the composer filled with copies of a sentence
+said once. The ring now pulses on each recognised result instead — a weaker
+signal, and one that can't put words in the user's diary they never said.
+
+That bug is also a lesson about where to look. Two fixes were shipped for it on
+reasoning alone — first the transcript merging, then the session reducer — and
+both were wrong, because the repetition was already present in the events iOS
+sent. Ten minutes of `console.warn` on a device build (a debug build takes its
+JS from Metro, so its logs come back to the machine) settled in one session
+what source-reading had failed to settle twice. Instrument the boundary before
+theorising past it.
+
 Anything driven entirely by a native event needs a way out when the event
 doesn't come. `useDictation`'s stop has a 4-second timer that ends the session
 itself and keeps whatever was heard — without it, a missing `end` strands the
@@ -828,6 +847,15 @@ nobody designed.
   `run:ios`/`run:android`, or a release). The app degrades honestly — the mic
   and "Read aloud" simply don't appear — which also means "voice is missing" on
   a phone is a stale-binary symptom, not a bug to chase in JS.
+- **`continuous: true` is not continuous on iOS.** The library resets the task
+  on a true final result regardless of the flag
+  (`ExpoSpeechRecognizer.swift`: `receivedError || (receivedFinalLikeResult &&
+  !continuous …) || receivedFinalResult`), so the session ends at the user's
+  first real pause — while the composer still says "tap ■ when you're done".
+  Anything said after that pause is lost, and a user who doesn't realise will
+  simply repeat themselves. Confirmed on a device; not yet addressed. The fix
+  is to restart recognition on `end` until the user actually stops, which needs
+  care not to reopen the mic after a deliberate stop.
 - **iOS speech recognition sends audio to Apple unless the phone can do it
   on-device.** `requiresOnDeviceRecognition` is left off, because forcing it
   fails outright on a device whose locale model isn't installed. If NutriAI ever

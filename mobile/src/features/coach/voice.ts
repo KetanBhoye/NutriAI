@@ -108,7 +108,21 @@ export function startDictation(): boolean {
       continuous: true,
       addsPunctuation: true,
       contextualStrings: FOOD_HINTS,
-      volumeChangeEventOptions: { enabled: true, intervalMillis: 150 },
+      /**
+       * Volume events are deliberately OFF, though the mic ring would look
+       * better with them.
+       *
+       * Enabling them makes the iOS side attach a second mixer node
+       * *downstream of the very node whose tap feeds the recogniser*
+       * (`ExpoSpeechRecognizer.swift`, `volumeMixerNode`), adding a render
+       * path through it. The tap then fires more than once for the same
+       * audio, and the request is appended the same buffers repeatedly: on a
+       * device, two spoken "hello"s came back as ten, growing one per result
+       * while the room was silent.
+       *
+       * A meter is decoration. A transcript that invents words the user did
+       * not say is a wrong meal in their diary.
+       */
     });
     return true;
   } catch (error) {

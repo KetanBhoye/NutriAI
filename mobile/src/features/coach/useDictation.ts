@@ -67,6 +67,15 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
    * field disabled — which takes typing away too, and can only be cleared by
    * killing the app. It gets a timeout rather than trust.
    */
+  /**
+   * The mic ring's pulse, driven by recognised words rather than input level.
+   *
+   * The OS can report the real level, but asking for it corrupts the audio fed
+   * to the recogniser (see `voice.ts`). Pulsing on each result is a weaker
+   * signal and an honest one: it moves when words are actually being heard,
+   * which is the question the user is asking of it.
+   */
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearStopTimer = useCallback(() => {
     if (stopTimer.current) {
@@ -93,21 +102,24 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
   useEffect(() => {
     if (!available) return;
     return listenToDictation({
-      onResult: (event) =>
+      onResult: (event) => {
+        setLevel(0.9);
+        if (pulseTimer.current) clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setLevel(0.2), 260);
         dispatch({
           type: 'result',
           text: event.results?.[0]?.transcript ?? '',
           isFinal: event.isFinal,
-        }),
+        });
+      },
       onError: (event) => {
         const message = dictationErrorMessage(event.error);
         if (message) setError(message);
         dispatch({ type: 'error' });
       },
       onEnd: () => dispatch({ type: 'end' }),
-      // -2…10 from the OS, where anything under 0 is silence. Squashed to 0–1
-      // so a quiet room doesn't leave the meter twitching.
-      onVolume: (value) => setLevel(Math.max(0, Math.min(1, value / 8))),
+      // Never subscribed to in practice — volume events stay off, see voice.ts.
+      onVolume: () => {},
     });
   }, [available, dispatch]);
 
@@ -115,6 +127,7 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
   useEffect(
     () => () => {
       clearStopTimer();
+      if (pulseTimer.current) clearTimeout(pulseTimer.current);
       abortDictation();
     },
     [clearStopTimer]
