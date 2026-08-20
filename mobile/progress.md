@@ -35,7 +35,7 @@ both apps talk to; nothing server-side changed as part of this pass.
 |---|---|---|---|---|
 | Today | `app/(tabs)/index.tsx` | yes | — (portion stepper, barcode, photo and share all ship) | `NewFoodSheet` external lookup (`GET /api/foods/lookup`) |
 | Trends | `app/(tabs)/dashboard.tsx` | yes | — (14-day bar chart is plain `View`s, same as the web app's own CSS bars — not a stand-in) | — |
-| Coach | `app/(tabs)/coach.tsx` | yes | text-only composer | Voice dictation (Web Speech API has no RN equivalent without a new dependency) |
+| Coach | `app/(tabs)/coach.tsx` | yes | — (voice dictation, read-aloud, message actions and the itemised "what was logged" card all ship) | — |
 | Plan | `app/(tabs)/goals.tsx` | yes | — | — |
 | You | `app/(tabs)/profile.tsx` | yes | — | — |
 | Onboarding | `app/onboarding.tsx` | yes | near-1:1 port of the 4-step wizard | — |
@@ -47,7 +47,6 @@ both apps talk to; nothing server-side changed as part of this pass.
 |---|---|---|---|
 | Weekly share card | Trends "Share this week" | — | the daily card ships; the weekly variant was not ported |
 | Offline durable **write** queue | app-wide | — | **done** — `src/api/queue.ts`; oldest-first, stops at the first failure, drops 4xx |
-| Coach voice input | Coach composer mic button | new native STT module | |
 | Bottom-sheet gesture polish | all modals | maybe `@gorhom/bottom-sheet` | `Sheet.tsx` is a plain `Modal` for now |
 
 ## Out of scope (not tracked as planned — revisit only if requirements change)
@@ -732,6 +731,71 @@ Two things made it expensive, both since fixed:
   that's what made the Trends chart render blank. Compute pixel heights in JS
   (see `dashboard.tsx` `buildBars`).
 
+## Voice chat, and showing what the Coach logged
+
+Three things landed together in the Coach because they are one complaint: the
+conversation was a black box. You typed, you waited a minute, and you got a
+sentence claiming something had happened somewhere else.
+
+**Dictation** (`src/features/coach/voice.ts`, `useDictation.ts`) uses
+`expo-speech-recognition` — the OS recogniser, on-device where the phone offers
+it. No audio is recorded or uploaded; only the transcript is sent, exactly as
+if it had been typed. Interim results fill the composer as you speak, and the
+mic's halo is driven by the recogniser's own volume events rather than a timer:
+the usual failure of phone dictation is a mic that isn't hearing you, and a ring
+that pulses regardless says everything is fine right up until nothing is
+transcribed.
+
+Dictation **fills the composer rather than sending**, unless the user tapped ↑
+mid-sentence or turned on hands-free mode. Recognisers mishear food names
+constantly ("dal" → "doll", "paneer" → "pioneer"), and a wrong meal in the diary
+costs more to undo than a re-read costs to avoid. `contextualStrings` in
+`voice.ts` biases the recogniser towards this app's vocabulary — the words a
+food log is made of are the ones a general language model ranks lowest.
+
+**Hands-free mode** (the speaker toggle in the header, persisted by `prefs.ts`)
+is the opposite trade, for someone cooking: dictation auto-sends, and replies
+are read aloud. Off by default — a phone that starts talking unprompted is worse
+than one that never does.
+
+**What was logged** (`loggedItems.ts` + `LoggedCard.tsx`). The server reports
+only *which* tools ran (`actions: ['add_entry', …]`), never what they wrote, so
+"✓ updated your log" was the most the chat could honestly say. Rather than widen
+the API, the app re-reads the day either side of the turn and diffs by entry id.
+That has a property the server response wouldn't: it reflects what is *stored*,
+so a partially-applied turn (three items asked for, two written) shows two — the
+card cannot disagree with the Today tab. The "before" read is fired in parallel
+with the chat request, never awaited before it, and the whole thing is
+best-effort: no snapshot degrades to the old one-line confirmation.
+
+**Both native modules are required lazily**, behind try/catch (`voice.ts`,
+`speech.ts`). `expo-speech` and `expo-speech-recognition` both resolve their
+native module at *import* time and throw when it isn't linked — which is the
+state of every dev client and every user APK built before this shipped. A static
+import would have turned "no microphone" into "the Coach tab is a white screen".
+`isDictationAvailable()` / `isSpeechAvailable()` are what the UI asks before
+drawing the mic or offering "Read aloud".
+
+**Message actions** are a bottom sheet on long-press (`MessageMenu.tsx`), not an
+`Alert`: Android caps `Alert` at three buttons and neither platform's shows
+icons. Bubbles are `selectable` as well — the menu covers "copy all of it",
+selection covers "copy just this number".
+
+## Cross-tab changes: `goalsBus` and `entriesBus`
+
+The tab navigator keeps every tab mounted, which is what makes switching tabs
+instant and is also the source of a recurring class of bug: a screen fetches
+once and then shows that forever. `goalsBus` fixed it for the plan and the macro
+targets; `entriesBus` (same shape, deliberately) fixes it for the day's food log
+— the Coach writes entries from another tab, and Today would otherwise keep
+showing the day as it was before the conversation, with a pull-to-refresh the
+only cure. The date travels with the event, so a coach turn aimed at Monday
+doesn't reload Tuesday.
+
+Before adding a third bus, check whether one of these two already means what you
+need. Two patterns for "something changed under you" is one; three is a store
+nobody designed.
+
 ## Open risks / decisions needing a human step
 
 - **Release-keystore SHA-1 for Android.** The Android OAuth client is registered
@@ -741,4 +805,15 @@ Two things made it expensive, both since fixed:
   second Android client must be registered with that key's SHA-1 (`eas
   credentials` if using EAS) or Google sign-in will fail in production.
 - **CocoaPods modular headers.** `@react-native-google-signin/google-signin` pulls in `AppCheckCore`, which needs `use_modular_headers!` in the Podfile to build as a static library — added via `plugins/withModularHeaders.js` (runs on every `expo prebuild`, so it survives regeneration). If a future native dependency conflicts with global modular headers, scope this down to per-pod `:modular_headers => true` instead.
+- **A native rebuild is required for voice.** `expo-speech` and
+  `expo-speech-recognition` were added in this pass, so any existing dev client
+  or installed APK lacks them until it is rebuilt (`npx expo prebuild` →
+  `run:ios`/`run:android`, or a release). The app degrades honestly — the mic
+  and "Read aloud" simply don't appear — which also means "voice is missing" on
+  a phone is a stale-binary symptom, not a bug to chase in JS.
+- **iOS speech recognition sends audio to Apple unless the phone can do it
+  on-device.** `requiresOnDeviceRecognition` is left off, because forcing it
+  fails outright on a device whose locale model isn't installed. If NutriAI ever
+  makes a privacy claim about voice, that flag (plus `getSupportedLocales()` to
+  check first) is where it has to be honoured.
 - **Coach tab-mount assumption.** Chat state lives in plain `useState` in `coach.tsx`, relying on expo-router's tab navigator keeping inactive screens mounted (so switching tabs doesn't clear history) rather than porting the web app's module-level `coach-state.ts` store. Empirically verify this holds before relying on it further.

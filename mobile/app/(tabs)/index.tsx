@@ -18,6 +18,7 @@ import {
 } from '@/api/queue';
 import type { EntriesResponse } from '@/api/entries';
 import { cached, readCache } from '@/cache';
+import { subscribeEntriesChanged } from '@/entriesBus';
 import { subscribeGoalsChanged } from '@/goalsBus';
 import { addDays, parseISODate, todayISO } from '@/dates';
 import { capitalize } from '@/format';
@@ -214,6 +215,24 @@ export default function Today() {
     void loadGoals();
     return subscribeGoalsChanged(() => void loadGoals());
   }, [loadGoals]);
+
+  /**
+   * Food logged somewhere other than this screen — today that means the Coach,
+   * which writes entries server-side from a different tab.
+   *
+   * This tab stays mounted, so without this it kept showing the day as it was
+   * before the conversation: the entries were on the server and in the cache,
+   * and the only ways to see them were a pull-to-refresh or a trip through
+   * another day and back. Scoped to the day on screen so a coach turn aimed at
+   * Monday doesn't reload Tuesday.
+   */
+  useEffect(
+    () =>
+      subscribeEntriesChanged((date) => {
+        if (date === viewDate) void load(viewDate);
+      }),
+    [viewDate, load]
+  );
 
   /**
    * Drains the queue and, if anything actually synced, re-reads the day so the

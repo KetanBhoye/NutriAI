@@ -158,6 +158,25 @@ const config: ExpoConfig = {
       },
     ],
     [
+      /**
+       * Voice chat with the Coach (see src/features/coach/voice.ts).
+       *
+       * The plugin adds RECORD_AUDIO on Android plus the `<queries>` entry for
+       * the Google recognition service — Android 11+ hides installed packages,
+       * and without it the recogniser simply reports "unavailable" on a phone
+       * that has one. On iOS it writes both usage strings; speech recognition
+       * needs its own, separate from the microphone's, and App Review rejects
+       * the generic default.
+       */
+      'expo-speech-recognition',
+      {
+        microphonePermission:
+          'NutriAI uses your microphone so you can tell your coach what you ate instead of typing it.',
+        speechRecognitionPermission:
+          'NutriAI transcribes what you say to your coach, so a spoken meal can be logged.',
+      },
+    ],
+    [
       // Health Connect's connect-client requires Android 8.0+ (API 26); the Expo
       // default minSdk is 24, which fails the manifest merge. Raise it here.
       'expo-build-properties',

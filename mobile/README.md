@@ -7,7 +7,8 @@ web app.
 It talks to the same backend as the Vue PWA (`calorie-tracker-codex-refactored`, `src/http/api.ts`)
 and shares its session cookie, its nutrition maths and its domain language. Where the web app
 can't go, this app does: HealthKit and Health Connect, the camera for meal photos and barcodes,
-meal reminders, shareable story cards, in-app updates, and an offline write queue.
+the microphone for talking to the Coach, meal reminders, shareable story cards, in-app updates,
+and an offline write queue.
 
 ---
 
@@ -31,7 +32,9 @@ npm test                 # unit tests (vitest), ~250ms, no device needed
 ```
 
 To run the app you need a **development build** — several native modules (health, camera,
-Google Sign-In) mean Expo Go will not work.
+speech, Google Sign-In) mean Expo Go will not work. A dev client built before a native
+dependency was added won't have it: the Coach's mic and read-aloud detect that and hide
+themselves rather than crashing, so if voice is missing, rebuild.
 
 ```bash
 # iOS, on a connected iPhone
@@ -78,7 +81,7 @@ app/
   (tabs)/_layout.tsx       5 tabs; also schedules reminders and refreshes /api/me
   (tabs)/index.tsx         Today — the food log
   (tabs)/dashboard.tsx     Trends — 14-day chart, weekly AI report
-  (tabs)/coach.tsx         Coach — chat, can log food server-side
+  (tabs)/coach.tsx         Coach — chat (voice or typed), can log food server-side
   (tabs)/goals.tsx         Plan — weight plan, progress, weigh-ins, exercise
   (tabs)/profile.tsx       You — account, reminders, health sync, API token
 ```
@@ -97,6 +100,8 @@ either through `AuthProvider` or through the small event buses described below.
 | `auth.tsx` | `AuthProvider` / `useAuth`, session bootstrap |
 | `session.ts` | when a session is genuinely over (401/403 only) and the remembered profile that lets an offline launch stay signed in |
 | `goalsBus.ts` | broadcasts "the targets changed" to every mounted tab |
+| `entriesBus.ts` | broadcasts "this day's food log changed" — how a Coach-logged meal reaches the Today tab |
+| `features/coach/` | the Coach's non-chat parts: dictation (`voice.ts`, `useDictation.ts`), text-to-speech (`speech.ts`), the "what was logged" diff + card (`loggedItems.ts`, `LoggedCard.tsx`) |
 | `nutrition.ts` | BMR/TDEE/macros — a port of the web app's copy, matching the backend's formulas |
 | `portion.ts` | everything is grams; unit conversion and weight estimation |
 | `exercise.ts` | MET table; gross vs **net** energy for logged sessions |
@@ -118,6 +123,12 @@ either through `AuthProvider` or through the small event buses described below.
 paints the last good payload from AsyncStorage immediately, refreshes behind it, and reports
 `stale: true` when the network failed — screens then render `<StaleNotice />` rather than passing
 old numbers off as current.
+
+**Cross-tab changes** travel on the two event buses. The tab navigator keeps every tab mounted,
+so a screen that fetched once keeps showing what it fetched: editing the plan on one tab left the
+others on yesterday's targets (`goalsBus`), and logging a meal by talking to the Coach left Today
+showing the day as it was before the conversation (`entriesBus`). Emit after a write the current
+screen didn't make itself; subscribe and re-read.
 
 **Writes** that a user would hate to lose go through `src/api/queue.ts`: food entries, weigh-ins
 and plan saves. They are persisted, drained oldest-first, and stop at the first network failure so

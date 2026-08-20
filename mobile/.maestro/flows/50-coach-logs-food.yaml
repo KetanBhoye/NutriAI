@@ -28,13 +28,19 @@ appId: app.nutriai.mobile
 - tapOn:
     id: 'coach-send'
 
-# Wait for the badge the app only renders once entries were actually written,
+# Wait for the card the app only renders once entries were actually written,
 # not for the word "egg" — that matches the user's *own* message bubble the
 # instant it is sent, so the flow would race ahead of the agent's tool calls
 # and find an empty diary. (It did, in the suite, while passing when run alone:
 # the classic shape of a test that measures its own timing.)
+#
+# By id rather than by text: the reply carries an itemised card when the app
+# could read the day back either side of the turn, and the older one-line
+# "✓ updated your log" when it couldn't. Both wear this id, because which of
+# them appeared is not what this flow is about.
 - extendedWaitUntil:
-    visible: '.*updated your log.*'
+    visible:
+      id: 'coach-logged-card'
     timeout: 120000
 
 # The claim is only worth anything if the diary agrees.
