@@ -81,7 +81,18 @@ echo "==> Regenerating the native project so the bump reaches the build"
 # so the app reported 1.0.0, the server offered 1.0.1, Android accepted the
 # install as a same-versionCode reinstall, and the update was offered again on
 # the next launch. Forever. See mobile/progress.md.
-npx expo prebuild --platform android --no-install
+#
+# `--clean` for a second reason, learned the same way: prebuild is INCREMENTAL.
+# It edits the existing android/ rather than regenerating it, so a line a
+# previous config wrote stays there after the config stops asking for it. That
+# is how v1.0.23's first attempt failed the RECORD_AUDIO check *after* the fix
+# had landed — `tools:node="remove"` was still in the generated manifest,
+# written by the config from an hour earlier. A release must be a function of
+# the commit alone, and that requires throwing the generated dir away.
+#
+# It costs a full Gradle rebuild each release (android/ takes the caches with
+# it). That is the price of the guarantee.
+npx expo prebuild --platform android --clean --no-install
 
 echo "==> Building the release APK"
 (cd android && ./gradlew assembleRelease -q)
