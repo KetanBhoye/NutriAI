@@ -118,6 +118,24 @@ if [[ "$APK_NAME" != "$VERSION" || "$APK_CODE" != "$NEXT_CODE" ]]; then
 fi
 echo "    versionName $APK_NAME, versionCode $APK_CODE ✓"
 
+echo "==> Verifying the microphone permission survived the manifest merge"
+# v1.0.22 shipped the Coach's voice input with no RECORD_AUDIO at all:
+# expo-image-picker's `microphonePermission: false` adds tools:node="remove",
+# its mod runs after expo-speech-recognition's, and the deletion won. Nothing
+# failed — the build succeeded, the mic button drew, and the recogniser then
+# reported "not-allowed" for a permission Android could not offer to grant.
+#
+# Checked against the APK for the same reason as the version above: a plugin
+# ordering question is settled inside the binary, not in app.config.ts.
+if ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.RECORD_AUDIO'; then
+  echo "error: the APK does not declare RECORD_AUDIO." >&2
+  echo "Voice input in the Coach would be dead on arrival: Android refuses a" >&2
+  echo "permission the manifest never asked for, and the OS shows no toggle." >&2
+  echo "Check that no plugin sets microphonePermission: false in app.config.ts." >&2
+  exit 1
+fi
+echo "    RECORD_AUDIO declared ✓"
+
 echo "==> Verifying the signature"
 APKSIGNER=$(ls ~/Library/Android/sdk/build-tools/*/apksigner 2>/dev/null | tail -1)
 if [[ -z "$APKSIGNER" ]]; then

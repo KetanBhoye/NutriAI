@@ -148,13 +148,22 @@ const config: ExpoConfig = {
     [
       // Snap-a-meal photo logging. The library's default usage strings are
       // generic ("access your camera"), which reads poorly at the prompt and
-      // is weak for App Store review, so state the actual purpose. Microphone
-      // is disabled — we only ever take stills.
+      // is weak for App Store review, so state the actual purpose.
+      //
+      // `microphonePermission` was `false` here, and that is not a no-op: it
+      // makes this plugin *remove* the permission — `tools:node="remove"` on
+      // RECORD_AUDIO in the Android manifest, and no NSMicrophoneUsageDescription
+      // at all on iOS. Its mod runs after expo-speech-recognition's config
+      // pass, so the deletion won, and v1.0.22 shipped with a mic button the
+      // OS could never grant. It must stay a string for as long as anything in
+      // this app wants a microphone, even though the picker itself still only
+      // ever takes stills — the key is app-wide, not per-feature.
       'expo-image-picker',
       {
         photosPermission: 'NutriAI opens your photo library so you can log a meal from a picture of it.',
         cameraPermission: 'NutriAI uses your camera so you can snap a meal and have it logged automatically.',
-        microphonePermission: false,
+        microphonePermission:
+          'NutriAI uses your microphone so you can tell your coach what you ate instead of typing it.',
       },
     ],
     [
