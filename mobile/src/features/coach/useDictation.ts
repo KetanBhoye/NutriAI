@@ -37,6 +37,8 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
   const [available] = useState(() => isDictationAvailable());
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
+  /** Read by the stop watchdog, which runs outside the render that set it. */
+  const transcriptRef = useRef('');
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,21 +48,40 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
   const onFinalRef = useRef(onFinal);
   onFinalRef.current = onFinal;
 
+  /**
+   * Fallback for a `stop()` the recogniser never answers.
+   *
+   * Everything here hangs off the native `end` event, so a session that stops
+   * without emitting one leaves the composer stuck on "Listening…" — with the
+   * text field disabled, which takes typing away too. That is unrecoverable
+   * without killing the app, so it gets a timeout rather than trust.
+   */
+  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearStopTimer = () => {
+    if (stopTimer.current) {
+      clearTimeout(stopTimer.current);
+      stopTimer.current = null;
+    }
+  };
+
   useEffect(() => {
     if (!available) return;
     return listenToDictation({
       onResult: (event) => {
         const text = event.results?.[0]?.transcript ?? '';
+        transcriptRef.current = text;
         setTranscript(text);
         if (event.isFinal) finalText.current = text;
       },
       onError: (event) => {
+        clearStopTimer();
         const message = dictationErrorMessage(event.error);
         if (message) setError(message);
         setListening(false);
         setLevel(0);
       },
       onEnd: () => {
+        clearStopTimer();
         setListening(false);
         setLevel(0);
         const text = finalText.current.trim();
@@ -74,7 +95,13 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
   }, [available]);
 
   // Never leave the mic hot behind a screen the user has left.
-  useEffect(() => () => abortDictation(), []);
+  useEffect(
+    () => () => {
+      clearStopTimer();
+      abortDictation();
+    },
+    []
+  );
 
   const start = useCallback(async () => {
     if (!available || listening) return;
@@ -85,22 +112,43 @@ export function useDictation(onFinal?: (text: string) => void): Dictation {
       return;
     }
     finalText.current = '';
+    transcriptRef.current = '';
     setTranscript('');
+    // Only claim to be listening once the native call has actually accepted:
+    // a throw here used to leave the UI in a session that didn't exist.
+    if (!startDictation()) {
+      setError("The microphone couldn't start. Try again, or type it.");
+      return;
+    }
     setListening(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    startDictation();
   }, [available, listening]);
 
   const stop = useCallback(() => {
     if (!listening) return;
     void Haptics.selectionAsync();
-    // The `end` event does the state clean-up — stopping here as well would
+    // The `end` event does the state clean-up — clearing it here as well would
     // hide the last interim words while the final result is still coming.
     stopDictation();
+
+    // …but only if it arrives. Four seconds is well past a normal finalisation
+    // and still short enough that a user who tapped stop doesn't conclude the
+    // app is broken. Whatever was heard by then is kept, not thrown away.
+    clearStopTimer();
+    stopTimer.current = setTimeout(() => {
+      stopTimer.current = null;
+      setListening(false);
+      setLevel(0);
+      const text = finalText.current.trim() || transcriptRef.current.trim();
+      finalText.current = '';
+      if (text) onFinalRef.current?.(text);
+    }, 4000);
   }, [listening]);
 
   const cancel = useCallback(() => {
+    clearStopTimer();
     finalText.current = '';
+    transcriptRef.current = '';
     setTranscript('');
     setListening(false);
     setLevel(0);

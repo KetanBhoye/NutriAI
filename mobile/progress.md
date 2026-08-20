@@ -776,6 +776,23 @@ import would have turned "no microphone" into "the Coach tab is a white screen".
 `isDictationAvailable()` / `isSpeechAvailable()` are what the UI asks before
 drawing the mic or offering "Read aloud".
 
+**Subscribe through `ExpoSpeechRecognitionModule.addListener`, never the
+package's `addSpeechRecognitionListener`.** The latter is exported as a bare
+reference to the former (`export const addSpeechRecognitionListener =
+ExpoSpeechRecognitionModule.addListener`), so calling it off the exports object
+gives it the module *namespace* as `this` and the subscription attaches to
+nothing. It fails silently and totally: no transcript, no volume, and no `end`
+event — which is the one that ends the session in the UI, so the stop button
+looked dead while `stop()` was in fact running every time. Shipped in v1.0.22
+and v1.0.23. `attachListeners` takes the module as an argument purely so a test
+can assert what the subscription was made on.
+
+Anything driven entirely by a native event needs a way out when the event
+doesn't come. `useDictation`'s stop has a 4-second timer that ends the session
+itself and keeps whatever was heard — without it, a missing `end` strands the
+composer on "Listening…" with the text field disabled, which takes typing away
+too and can only be cleared by killing the app.
+
 **Message actions** are a bottom sheet on long-press (`MessageMenu.tsx`), not an
 `Alert`: Android caps `Alert` at three buttons and neither platform's shows
 icons. Bubbles are `selectable` as well — the menu covers "copy all of it",

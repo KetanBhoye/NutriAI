@@ -93,31 +93,46 @@ const FOOD_HINTS = [
   'snack',
 ];
 
-export function startDictation(): void {
+/** False when the native call failed, so the caller doesn't sit in a fake listening state. */
+export function startDictation(): boolean {
   const mod = speechModule();
-  if (!mod) return;
-  mod.ExpoSpeechRecognitionModule.start({
-    lang: 'en-IN',
-    // The composer fills in as you speak; without interim results the field
-    // stays empty for the whole sentence and the mic looks broken.
-    interimResults: true,
-    // Long enough to describe a full meal without the recogniser calling time
-    // mid-sentence. On Android 12 and below this is ignored by the OS.
-    continuous: true,
-    addsPunctuation: true,
-    contextualStrings: FOOD_HINTS,
-    volumeChangeEventOptions: { enabled: true, intervalMillis: 150 },
-  });
+  if (!mod) return false;
+  try {
+    mod.ExpoSpeechRecognitionModule.start({
+      lang: 'en-IN',
+      // The composer fills in as you speak; without interim results the field
+      // stays empty for the whole sentence and the mic looks broken.
+      interimResults: true,
+      // Long enough to describe a full meal without the recogniser calling time
+      // mid-sentence. On Android 12 and below this is ignored by the OS.
+      continuous: true,
+      addsPunctuation: true,
+      contextualStrings: FOOD_HINTS,
+      volumeChangeEventOptions: { enabled: true, intervalMillis: 150 },
+    });
+    return true;
+  } catch (error) {
+    console.warn('[coach] could not start dictation:', error);
+    return false;
+  }
 }
 
 /** Asks for a final transcript. Use for "I'm done talking". */
 export function stopDictation(): void {
-  speechModule()?.ExpoSpeechRecognitionModule.stop();
+  try {
+    speechModule()?.ExpoSpeechRecognitionModule.stop();
+  } catch (error) {
+    console.warn('[coach] could not stop dictation:', error);
+  }
 }
 
 /** Throws the turn away. Use when the user cancels or leaves the screen. */
 export function abortDictation(): void {
-  speechModule()?.ExpoSpeechRecognitionModule.abort();
+  try {
+    speechModule()?.ExpoSpeechRecognitionModule.abort();
+  } catch (error) {
+    console.warn('[coach] could not abort dictation:', error);
+  }
 }
 
 export type DictationHandlers = {
@@ -127,20 +142,47 @@ export type DictationHandlers = {
   onVolume: (level: number) => void;
 };
 
-/** Subscribes to a dictation session; returns an unsubscribe for all of them. */
-export function listenToDictation(handlers: DictationHandlers): () => void {
-  const mod = speechModule();
-  if (!mod) return () => {};
-
+/**
+ * Subscribes to a dictation session; returns an unsubscribe for all of them.
+ *
+ * Takes the module as an argument rather than reaching for it, so the wiring
+ * below can be tested without a device — see voice.test.ts, which exists
+ * because of the bug in the next paragraph.
+ *
+ * **Always through `ExpoSpeechRecognitionModule.addListener`.** The package
+ * also exports `addSpeechRecognitionListener`, which is a bare reference to
+ * that same method:
+ *
+ *     export const addSpeechRecognitionListener = ExpoSpeechRecognitionModule.addListener;
+ *
+ * Called off the exports object, `this` is the module namespace instead of the
+ * native module, and the subscription silently attaches to nothing. Every
+ * event then goes missing at once — no transcript, no volume, and no `end`,
+ * which is the one that ends the session in the UI. The mic appeared to work
+ * and the stop button appeared dead.
+ */
+export function attachListeners(mod: SpeechModule, handlers: DictationHandlers): () => void {
+  const emitter = mod.ExpoSpeechRecognitionModule;
   const subs = [
-    mod.addSpeechRecognitionListener('result', handlers.onResult),
-    mod.addSpeechRecognitionListener('error', handlers.onError),
-    mod.addSpeechRecognitionListener('end', handlers.onEnd),
-    mod.addSpeechRecognitionListener('volumechange', (e) => handlers.onVolume(e.value)),
+    emitter.addListener('result', handlers.onResult),
+    emitter.addListener('error', handlers.onError),
+    emitter.addListener('end', handlers.onEnd),
+    emitter.addListener('volumechange', (e) => handlers.onVolume(e.value)),
   ];
   return () => {
     for (const sub of subs) sub.remove();
   };
+}
+
+export function listenToDictation(handlers: DictationHandlers): () => void {
+  const mod = speechModule();
+  if (!mod) return () => {};
+  try {
+    return attachListeners(mod, handlers);
+  } catch (error) {
+    console.warn('[coach] could not subscribe to dictation events:', error);
+    return () => {};
+  }
 }
 
 /**
