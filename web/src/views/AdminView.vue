@@ -40,10 +40,43 @@ interface AiStats {
   settings: Array<{ key: string; value: string; updated_at: string; updated_by: string | null }>;
 }
 
+interface AiRates {
+  model: string;
+  inputPerM: number;
+  outputPerM: number;
+  groundedPerQuery: number;
+  groundedFreePerDay: number;
+  source: string;
+  updatedAt: string | null;
+}
+
+interface UserLimits {
+  limits: { daily_usd: number | null; monthly_usd: number | null };
+  spent: { day_usd: number; month_usd: number; month_calls: number };
+}
+
 const data = ref<Overview | null>(null);
 const ai = ref<AiStats | null>(null);
 const savingSetting = ref(false);
 const settingError = ref<string | null>(null);
+
+const rates = ref<AiRates | null>(null);
+const rateDraft = ref<Partial<AiRates>>({});
+const rateBusy = ref(false);
+const rateNote = ref<string | null>(null);
+/** SKU descriptions from a failed automatic match, so a human can pick. */
+const rateCandidates = ref<string[]>([]);
+
+/** The user whose spend cap is being edited, and what we know about them. */
+const capUser = ref<TopUser | null>(null);
+const capData = ref<UserLimits | null>(null);
+const capDraft = ref<{ daily_usd: string; monthly_usd: string; note: string }>({
+  daily_usd: '',
+  monthly_usd: '',
+  note: '',
+});
+const capBusy = ref(false);
+const capError = ref<string | null>(null);
 
 /** Live values of the two operator knobs, read back from app_settings. */
 const aiEnabled = computed(() => ai.value?.settings.find((s) => s.key === 'ai_enabled')?.value !== 'off');
@@ -58,6 +91,7 @@ async function loadAi(): Promise<void> {
   try {
     const res = await fetch('/api/admin/ai', { credentials: 'same-origin', cache: 'no-store' });
     if (res.ok) ai.value = (await res.json()) as AiStats;
+    await loadRates();
   } catch {
     // The AI panel is additive; its absence must not break the page.
   }
@@ -79,6 +113,113 @@ async function saveSettings(patch: Record<string, unknown>): Promise<void> {
     settingError.value = e instanceof Error ? e.message : 'Could not save that.';
   } finally {
     savingSetting.value = false;
+  }
+}
+
+async function loadRates(): Promise<void> {
+  try {
+    const res = await fetch('/api/admin/ai/rates', { credentials: 'same-origin', cache: 'no-store' });
+    if (res.ok) rates.value = (await res.json()).rates as AiRates;
+  } catch {
+    // Additive panel; its absence must not break the page.
+  }
+}
+
+/**
+ * Ask Google what the model costs today. Deliberately a two-step: the catalog
+ * is matched on SKU wording that changes, so the answer is shown for approval
+ * rather than written straight to the rates every cost figure depends on.
+ */
+async function refreshRates(): Promise<void> {
+  rateBusy.value = true;
+  rateNote.value = null;
+  rateCandidates.value = [];
+  try {
+    const res = await fetch('/api/admin/ai/rates/refresh', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    const body = await res.json();
+    rateNote.value = body.proposal?.message ?? 'No answer from the price catalog.';
+    rateCandidates.value = body.proposal?.candidates ?? [];
+    if (body.proposal?.ok && body.proposal.rates) {
+      rateDraft.value = { ...rateDraft.value, ...body.proposal.rates };
+    }
+  } catch (e) {
+    rateNote.value = e instanceof Error ? e.message : 'Could not reach the price catalog.';
+  } finally {
+    rateBusy.value = false;
+  }
+}
+
+async function saveRates(): Promise<void> {
+  rateBusy.value = true;
+  try {
+    const res = await fetch('/api/admin/ai/rates', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input_per_m: rateDraft.value.inputPerM,
+        output_per_m: rateDraft.value.outputPerM,
+        grounded_per_query: rateDraft.value.groundedPerQuery,
+        grounded_free_per_day: rateDraft.value.groundedFreePerDay,
+        model: rateDraft.value.model,
+        source: rateNote.value?.includes('price catalog') ? 'google-billing-catalog' : 'manual',
+      }),
+    });
+    if (res.ok) {
+      rates.value = (await res.json()).rates as AiRates;
+      rateNote.value = 'Saved. New calls are priced at these rates.';
+      rateDraft.value = {};
+    }
+  } finally {
+    rateBusy.value = false;
+  }
+}
+
+async function openCaps(user: TopUser): Promise<void> {
+  capUser.value = user;
+  capData.value = null;
+  capError.value = null;
+  const res = await fetch(`/api/admin/users/${user.user_id}/ai-limits`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
+  if (res.ok) {
+    capData.value = (await res.json()) as UserLimits;
+    capDraft.value = {
+      daily_usd: capData.value.limits.daily_usd?.toString() ?? '',
+      monthly_usd: capData.value.limits.monthly_usd?.toString() ?? '',
+      note: '',
+    };
+  }
+}
+
+async function saveCaps(): Promise<void> {
+  if (!capUser.value) return;
+  capBusy.value = true;
+  capError.value = null;
+  try {
+    // An empty field clears the cap rather than setting it to zero — "no
+    // limit" and "no AI at all" must not be the same gesture.
+    const num = (v: string) => (v.trim() === '' ? null : Number(v));
+    const res = await fetch(`/api/admin/users/${capUser.value.user_id}/ai-limits`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        daily_usd: num(capDraft.value.daily_usd),
+        monthly_usd: num(capDraft.value.monthly_usd),
+        note: capDraft.value.note || null,
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'failed');
+    capUser.value = null;
+  } catch (e) {
+    capError.value = e instanceof Error ? e.message : 'Could not save that.';
+  } finally {
+    capBusy.value = false;
   }
 }
 
@@ -253,6 +394,55 @@ onMounted(load);
         <p v-if="settingError" class="err">{{ settingError }}</p>
       </section>
 
+      <!-- Rates. Every cost figure on this page and every spend cap below is
+           computed from these, so a stale number here is not a cosmetic
+           problem: it silently misprices the caps that gate real users. -->
+      <section v-if="rates" class="card controls">
+        <h2>Model rates <span class="muted small">· {{ rates.model }}</span></h2>
+        <p class="muted small">
+          Source: <strong>{{ rates.source }}</strong>
+          <template v-if="rates.updatedAt"> · set {{ new Date(rates.updatedAt).toLocaleDateString() }}</template>
+          <template v-else> · built-in defaults, never verified against Google's price list</template>
+        </p>
+
+        <div class="rategrid">
+          <label>
+            <span class="muted small">Input $/1M tokens</span>
+            <input type="number" step="0.01" min="0"
+              :value="rateDraft.inputPerM ?? rates.inputPerM"
+              @input="rateDraft.inputPerM = Number(($event.target as HTMLInputElement).value)" />
+          </label>
+          <label>
+            <span class="muted small">Output $/1M tokens</span>
+            <input type="number" step="0.01" min="0"
+              :value="rateDraft.outputPerM ?? rates.outputPerM"
+              @input="rateDraft.outputPerM = Number(($event.target as HTMLInputElement).value)" />
+          </label>
+          <label>
+            <span class="muted small">Grounded $/query</span>
+            <input type="number" step="0.001" min="0"
+              :value="rateDraft.groundedPerQuery ?? rates.groundedPerQuery"
+              @input="rateDraft.groundedPerQuery = Number(($event.target as HTMLInputElement).value)" />
+          </label>
+          <label>
+            <span class="muted small">Grounded free/day</span>
+            <input type="number" step="100" min="0"
+              :value="rateDraft.groundedFreePerDay ?? rates.groundedFreePerDay"
+              @input="rateDraft.groundedFreePerDay = Number(($event.target as HTMLInputElement).value)" />
+          </label>
+        </div>
+
+        <div class="ratebtns">
+          <button :disabled="rateBusy" @click="refreshRates()">Check Google's prices</button>
+          <button class="primary" :disabled="rateBusy" @click="saveRates()">Save rates</button>
+        </div>
+        <p v-if="rateNote" class="muted small">{{ rateNote }}</p>
+        <details v-if="rateCandidates.length" class="muted small">
+          <summary>{{ rateCandidates.length }} matching SKUs</summary>
+          <ul><li v-for="c in rateCandidates" :key="c">{{ c }}</li></ul>
+        </details>
+      </section>
+
       <!-- Where the money goes, and whether the shared repo is earning its keep -->
       <div class="grid" v-if="ai">
         <div class="card">
@@ -283,10 +473,41 @@ onMounted(load);
 
       <!-- Who is spending it, with the plan toggle next to the number that
            justifies changing it. -->
+      <!-- Editing one user's cap. Money, not calls: a plan limits how many
+           times a feature runs, which is a poor proxy when one costs 17x
+           another. -->
+      <section v-if="capUser" class="card controls">
+        <h2>AI budget · {{ capUser.email ?? capUser.name ?? capUser.user_id }}</h2>
+        <p v-if="capData" class="muted small">
+          Spent ${{ capData.spent.day_usd.toFixed(3) }} today ·
+          ${{ capData.spent.month_usd.toFixed(2) }} over 30 days
+          ({{ capData.spent.month_calls }} calls)
+        </p>
+        <div class="rategrid">
+          <label>
+            <span class="muted small">Daily cap $ (blank = none)</span>
+            <input type="number" step="0.05" min="0" v-model="capDraft.daily_usd" />
+          </label>
+          <label>
+            <span class="muted small">Monthly cap $ (blank = none)</span>
+            <input type="number" step="0.5" min="0" v-model="capDraft.monthly_usd" />
+          </label>
+          <label class="wide">
+            <span class="muted small">Why (for whoever reads this later)</span>
+            <input type="text" maxlength="200" v-model="capDraft.note" />
+          </label>
+        </div>
+        <div class="ratebtns">
+          <button :disabled="capBusy" @click="capUser = null">Cancel</button>
+          <button class="primary" :disabled="capBusy" @click="saveCaps()">Save budget</button>
+        </div>
+        <p v-if="capError" class="err">{{ capError }}</p>
+      </section>
+
       <section v-if="ai && ai.top_users.length" class="card">
         <h2>Top AI users <span class="muted small">· {{ ai.days }} days</span></h2>
         <table class="tbl">
-          <thead><tr><th>User</th><th>Calls</th><th>Cost</th><th>Plan</th></tr></thead>
+          <thead><tr><th>User</th><th>Calls</th><th>Cost</th><th>Plan</th><th>Budget</th></tr></thead>
           <tbody>
             <tr v-for="u in ai.top_users" :key="u.user_id">
               <td>{{ u.name || u.email || u.user_id.slice(0, 8) }}</td>
@@ -297,6 +518,7 @@ onMounted(load);
                   {{ u.plan }}
                 </button>
               </td>
+              <td><button class="plan" @click="openCaps(u)">set</button></td>
             </tr>
           </tbody>
         </table>
@@ -549,4 +771,19 @@ tbody tr:last-child { border-bottom: none; }
 
 .foot { margin-top: 14px; }
 .link { color: var(--accent); text-decoration: none; }
+
+.rategrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 12px 0; }
+.rategrid label { display: flex; flex-direction: column; gap: 4px; }
+.rategrid label.wide { grid-column: 1 / -1; }
+.rategrid input {
+  background: #0f1115; color: #e8eaed; border: 1px solid #272c37;
+  border-radius: 8px; padding: 8px 10px; font: inherit;
+}
+.ratebtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.ratebtns button {
+  background: #171a21; color: #e8eaed; border: 1px solid #272c37;
+  border-radius: 8px; padding: 8px 14px; cursor: pointer;
+}
+.ratebtns button.primary { background: #4ade80; color: #06210f; border-color: #4ade80; font-weight: 600; }
+.ratebtns button:disabled { opacity: 0.5; cursor: default; }
 </style>

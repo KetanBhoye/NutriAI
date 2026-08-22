@@ -18,7 +18,7 @@ import {
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { lookupMacrosGrounded } from './grounded-macros.js';
 import type { D1DatabaseCompat } from '../../db/types.js';
-import { recordAiUsage } from '../ai/metering.js';
+import { recordAiUsage, tokensFromVertex } from '../ai/metering.js';
 import { checkQuota, planFor } from '../ai/quota.js';
 import { findGlobalFood, saveVerifiedFood } from '../food/global-repo.js';
 import { CONSERVATIVE_ESTIMATION_RULES } from './macro-sanity.js';
@@ -411,6 +411,8 @@ async function callVertex(config: {
   model: string;
   systemPrompt: string;
   contents: GeminiContent[];
+  /** Called with the token counts Vertex reports, so the turn can be priced. */
+  onUsage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
 }): Promise<GeminiContent> {
   const url = vertexUrl(config.project, config.location, config.model);
 
@@ -423,6 +425,9 @@ async function callVertex(config: {
     throw new Error(`Vertex chat failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
   const data = (await res.json()) as { candidates?: Array<{ content?: GeminiContent }> };
+  // Reported before the content check: a step that produced no usable content
+  // still consumed tokens, and an unmetered call is money spent invisibly.
+  config.onUsage?.(tokensFromVertex(data));
   const content = data.candidates?.[0]?.content;
   if (!content) throw new Error('Vertex returned no content');
   return { role: 'model', parts: content.parts ?? [] };
@@ -471,6 +476,9 @@ export async function runCoachTurn(opts: {
     profile: toolText(profileRes),
     preferences: toolText(prefsRes),
   });
+  // The same handle the tools use, for metering each step of the loop below.
+  const db = (opts.env as { DB?: D1DatabaseCompat })?.DB;
+
   console.log('[coach] minting token…');
   const token = await getGoogleAccessToken(opts.credentialJson);
   console.log('[coach] token ok, starting loop');
@@ -490,6 +498,19 @@ export async function runCoachTurn(opts: {
       model: opts.model,
       systemPrompt,
       contents,
+      // Every step of the agent loop is a billed call, and a logging turn runs
+      // several. Metering per step rather than per turn is what makes the cost
+      // figures — and the spend caps built on them — describe the real bill.
+      onUsage: (tokens) => {
+        if (!db) return;
+        void recordAiUsage(db, {
+          userId: opts.userId,
+          feature: 'coach',
+          model: opts.model,
+          inputTokens: tokens.inputTokens,
+          outputTokens: tokens.outputTokens,
+        });
+      },
     });
     contents.push(modelTurn);
 

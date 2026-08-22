@@ -12,23 +12,56 @@ function fakeDb(opts: {
   dayCalls?: number;
   monthCalls?: number;
   plan?: string | null;
+  /** Admin-set spend caps for this user, if any. */
+  capDailyUsd?: number | null;
+  capMonthlyUsd?: number | null;
+  /** What the user has spent across all features, for the cap checks. */
+  spentDayUsd?: number;
+  spentMonthUsd?: number;
 }) {
-  let call = 0;
   return {
     prepare(sql: string) {
       const isProject = sql.includes('FROM ai_usage WHERE created_at');
       const isPlan = sql.includes('SELECT plan FROM users');
+      const isCaps = sql.includes('FROM user_ai_limits');
+      // The spend-cap windows ask across every feature; the plan windows name
+      // one. That is the only difference in the SQL, and it is what tells the
+      // two apart here.
+      const isPerFeature = sql.includes('AND feature = ?');
+      let bound: unknown[] = [];
       return {
-        bind() {
+        bind(...args: unknown[]) {
+          bound = args;
           return this;
         },
         async first() {
           if (isPlan) return { plan: opts.plan ?? 'free' };
+          if (isCaps) {
+            return {
+              daily_usd: opts.capDailyUsd ?? null,
+              monthly_usd: opts.capMonthlyUsd ?? null,
+            };
+          }
           if (isProject) return { calls: 0, cost: opts.projectCost ?? 0, grounded: 0 };
-          // First per-user query is the day window, second is the month.
-          call += 1;
-          const calls = call === 1 ? (opts.dayCalls ?? 0) : (opts.monthCalls ?? 0);
-          return { calls, cost: 0, grounded: 0 };
+
+          // Day and month windows run the same SQL and differ only in the
+          // timestamp they bind, so that is what tells them apart — counting
+          // calls instead made the answers depend on which checks ran first.
+          const since = String(bound[1] ?? '');
+          const isMonthWindow = Date.now() - Date.parse(`${since.replace(' ', 'T')}Z`) > 36 * 3600_000;
+
+          if (!isPerFeature) {
+            return {
+              calls: 0,
+              cost: isMonthWindow ? (opts.spentMonthUsd ?? 0) : (opts.spentDayUsd ?? 0),
+              grounded: 0,
+            };
+          }
+          return {
+            calls: isMonthWindow ? (opts.monthCalls ?? 0) : (opts.dayCalls ?? 0),
+            cost: 0,
+            grounded: 0,
+          };
         },
         async all() {
           return { results: [] };
@@ -202,5 +235,69 @@ describe('pricing', () => {
     expect(costOf({ inputTokens: 0, outputTokens: 0, groundedQueries: 1 })).toBe(
       GROUNDED_PER_QUERY
     );
+  });
+});
+
+describe('per-user spend caps', () => {
+  it('lets a user through while they are under their cap', async () => {
+    const d = await checkQuota(
+      fakeDb({ capMonthlyUsd: 2, spentMonthUsd: 1.2 }),
+      'u',
+      'pro',
+      'coach'
+    );
+
+    expect(d.allowed).toBe(true);
+  });
+
+  it('refuses once the monthly spend cap is reached', async () => {
+    const d = await checkQuota(
+      fakeDb({ capMonthlyUsd: 2, spentMonthUsd: 2 }),
+      'u',
+      'pro',
+      'coach'
+    );
+
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe('user_budget');
+  });
+
+  it('refuses on the daily cap even when the month is fine', async () => {
+    const d = await checkQuota(
+      fakeDb({ capDailyUsd: 0.5, spentDayUsd: 0.6, capMonthlyUsd: 100, spentMonthUsd: 1 }),
+      'u',
+      'pro',
+      'coach'
+    );
+
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe('user_budget');
+  });
+
+  it('caps spending however it is spent, not per feature', async () => {
+    // The point of a money cap: a user who has spent their allowance on
+    // grounded lookups cannot carry on through the photo parser.
+    const d = await checkQuota(
+      fakeDb({ capMonthlyUsd: 1, spentMonthUsd: 1 }),
+      'u',
+      'pro',
+      'photo'
+    );
+
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe('user_budget');
+  });
+
+  it('applies no cap when an admin has not set one', async () => {
+    const d = await checkQuota(fakeDb({ spentMonthUsd: 999 }), 'u', 'pro', 'coach');
+
+    expect(d.allowed).toBe(true);
+  });
+
+  it('tells the user plainly, without blaming them', async () => {
+    const d = await checkQuota(fakeDb({ capMonthlyUsd: 1, spentMonthUsd: 1 }), 'u', 'pro', 'coach');
+
+    expect(d.message).toMatch(/allowance/i);
+    expect(d.message).not.toMatch(/error|denied|forbidden/i);
   });
 });

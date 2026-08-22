@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { D1DatabaseCompat } from '../../db/types.js';
 import { sqlTimestampNow } from '../../db/time.js';
 import { costOf } from './pricing.js';
+import { costAt, currentRates } from './rates.js';
 
 /**
  * Records what every model call cost, per user.
@@ -41,6 +42,22 @@ export async function recordAiUsage(
   const outputTokens = usage.outputTokens ?? 0;
   const groundedQueries = usage.groundedQueries ?? 0;
 
+  /**
+   * Priced at the rates in force now, not the ones compiled in.
+   *
+   * The row stores a number, so the price has to be resolved at write time —
+   * and it must be the live rate, or every figure built on this table (the
+   * dashboard, the per-user caps, the daily brake) drifts from the real bill
+   * the day Google changes a price. Falls back to the constants if the
+   * settings read fails, which is the old behaviour.
+   */
+  let costUsd: number;
+  try {
+    costUsd = costAt(await currentRates(db), { inputTokens, outputTokens, groundedQueries });
+  } catch {
+    costUsd = costOf({ inputTokens, outputTokens, groundedQueries });
+  }
+
   try {
     await db
       .prepare(
@@ -56,7 +73,7 @@ export async function recordAiUsage(
         inputTokens,
         outputTokens,
         groundedQueries,
-        costOf({ inputTokens, outputTokens, groundedQueries }),
+        costUsd,
         sqlTimestampNow()
       )
       .run();

@@ -1,6 +1,7 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 import { describeBand, mealCalorieBand, pickSuggestions, type MealType } from './meal-budget.js';
+import { tokensFromVertex } from '../ai/metering.js';
 
 /**
  * Suggests what to eat next: a few SIMPLE Indian home-style meals/snacks that
@@ -68,6 +69,11 @@ const ANGLES = [
 const CANDIDATES = 6;
 
 export async function generateMealSuggestions(opts: {
+  /**
+   * Token counts from Vertex, for metering. Optional so the service stays
+   * usable (and testable) without a database; the endpoint passes a recorder.
+   */
+  onUsage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
   remainingCalories: number | null;
   remainingProtein: number | null;
   mealType: string;
@@ -129,7 +135,11 @@ ${opts.dietNotes ? opts.dietNotes : '(none)'}
   if (!res.ok) {
     throw new Error(`Vertex suggest failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
-  const data = (await res.json()) as {
+  const rawResponse = (await res.json()) as unknown;
+  // Metered before anything is parsed out of it: a malformed response still
+  // cost tokens, and the caps are only as honest as the metering under them.
+  opts.onUsage?.(tokensFromVertex(rawResponse));
+  const data = rawResponse as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;

@@ -23,6 +23,12 @@ export const SETTINGS = {
   AI_ENABLED: 'ai_enabled',
   /** Project-wide rolling-24h ceiling in USD. */
   AI_DAILY_BUDGET_USD: 'ai_daily_budget_usd',
+  /**
+   * Model rates as JSON (see services/ai/rates.ts). Stored rather than compiled
+   * in so a price change — or a model change — does not need a deploy to make
+   * every cost figure and spend cap correct again.
+   */
+  AI_RATES: 'ai_rates',
 } as const;
 
 /** Invalidate after a write, so the admin sees their own change immediately. */

@@ -3,7 +3,9 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import z from 'zod';
 import { daysAgo, sqlTimestampNow } from '../db/time.js';
 import { CONSENT_VERSION } from '../services/consent.js';
-import { DEFAULT_PLAN } from '../services/ai/quota.js';
+import { DEFAULT_PLAN, checkQuota, planFor, spendCapsFor } from '../services/ai/quota.js';
+import { recordAiUsage, usageSince, type AiFeature } from '../services/ai/metering.js';
+import { currentRates, refreshRatesFromGoogle, saveRates } from '../services/ai/rates.js';
 import { getAiAdminStats } from '../services/admin/ai-stats.js';
 import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
 import { headlineFor } from '../services/consistency.js';
@@ -134,6 +136,30 @@ const adminSettingsSchema = z.object({
 });
 
 const adminPlanSchema = z.object({ plan: z.enum(['free', 'pro']) });
+
+/**
+ * Model rates. Every field optional so an admin can correct one number without
+ * restating the rest, and bounded so a slipped decimal point cannot set a rate
+ * that refuses every user's next call through the spend caps.
+ */
+const adminRatesSchema = z.object({
+  model: z.string().min(1).max(80).optional(),
+  input_per_m: z.number().min(0).max(1000).optional(),
+  output_per_m: z.number().min(0).max(1000).optional(),
+  grounded_per_query: z.number().min(0).max(10).optional(),
+  grounded_free_per_day: z.number().int().min(0).max(1_000_000).optional(),
+  source: z.string().min(1).max(60).optional(),
+});
+
+/**
+ * A per-user spend cap. `null` clears a cap; omitting the field leaves it
+ * alone. Zero is allowed and means exactly what it says — no AI for this user.
+ */
+const adminUserLimitsSchema = z.object({
+  daily_usd: z.number().min(0).max(10_000).nullable().optional(),
+  monthly_usd: z.number().min(0).max(100_000).nullable().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
 
 // literal(true) for the same reason as at signup: a client sending false is a
 // bug or a tampered request, and must not be stored as agreement.
@@ -1322,6 +1348,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
+      if (!(await allowAi(req, res, 'coach'))) return;
+
       const userId = req.sessionUser!.userId;
       const known = await env.DB
         .prepare(
@@ -1340,7 +1368,16 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         )
         .join('\n');
 
+      if (!(await allowAi(req, res, 'photo'))) return;
+
       const result = await parseMealPhoto({
+        onUsage: (tokens) =>
+          void recordAiUsage(env.DB, {
+            userId: req.sessionUser!.userId,
+            feature: 'photo',
+            model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+            ...tokens,
+          }),
         imageBase64,
         mimeType,
         knownFoods,
@@ -1356,6 +1393,28 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       res.status(502).json({ error: 'Could not read the photo. Try again or add the food manually.' });
     }
   });
+
+
+  /**
+   * Gate an AI request on the caller's quota and spend cap.
+   *
+   * Returns true when the caller may proceed; otherwise it has already
+   * answered 429 with a sentence safe to show the user. Every AI endpoint goes
+   * through this — before, only the grounded lookup inside the coach did, so
+   * the plan limits and the daily budget applied to one feature out of seven.
+   */
+  const allowAi = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    feature: AiFeature
+  ): Promise<boolean> => {
+    const userId = req.sessionUser!.userId;
+    const decision = await checkQuota(env.DB, userId, await planFor(env.DB, userId), feature);
+    if (decision.allowed) return true;
+
+    res.status(429).json({ error: decision.message, reason: decision.reason });
+    return false;
+  };
 
   app.post('/api/coach/chat', requireSession, async (req: AuthenticatedRequest, res) => {
     try {
@@ -1479,6 +1538,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         res.status(503).json({ error: 'Meal suggestions need Vertex AI configured on the server.' });
         return;
       }
+      if (!(await allowAi(req, res, 'suggest'))) return;
+
       const userId = req.sessionUser!.userId;
       const mealType = ['breakfast', 'lunch', 'dinner', 'snack'].includes(req.body?.meal_type)
         ? (req.body.meal_type as string)
@@ -1533,6 +1594,13 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
           : null;
 
       const suggestions = await generateMealSuggestions({
+        onUsage: (tokens) =>
+          void recordAiUsage(env.DB, {
+            userId,
+            feature: 'suggest',
+            model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+            ...tokens,
+          }),
         remainingCalories,
         remainingProtein,
         mealType,
@@ -1997,9 +2065,30 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         return;
       }
 
+      /**
+       * Over quota falls back to the rule-based report rather than 429ing.
+       * The weekly report is something the app shows on arrival, not something
+       * the user asked for by tapping — an error where a summary should be
+       * would read as a broken screen.
+       */
+      const weeklyAllowed = (
+        await checkQuota(env.DB, userId, await planFor(env.DB, userId), 'weekly')
+      ).allowed;
+      if (!weeklyAllowed) {
+        res.json(fallback());
+        return;
+      }
+
       let payload: unknown;
       try {
         const report = await generateWeeklyInsights({
+          onUsage: (tokens) =>
+            void recordAiUsage(env.DB, {
+              userId,
+              feature: 'weekly',
+              model: process.env.LLM_MODEL || 'gemini-2.5-flash',
+              ...tokens,
+            }),
           displayName: req.sessionUser!.name,
           stats,
           credentialJson,
@@ -2123,6 +2212,129 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       console.error('Admin plan error:', error);
       res.status(500).json({ error: 'Failed to change plan' });
     }
+  });
+
+  /**
+   * The model's rates, and a way to refresh them from Google's price list.
+   *
+   * Rates drive every cost figure and every spend cap, so a stale number here
+   * quietly corrupts all of them. GET reports what is in force and where it
+   * came from; POST /refresh proposes current values from the Cloud Billing
+   * catalog without applying them; PUT sets them.
+   */
+  app.get('/api/admin/ai/rates', requireSession, async (req: AuthenticatedRequest, res) => {
+    if (!req.sessionUser!.isAdmin) {
+      res.status(403).json({ error: 'Admins only.' });
+      return;
+    }
+    res.json({ rates: await currentRates(env.DB) });
+  });
+
+  app.post('/api/admin/ai/rates/refresh', requireSession, async (req: AuthenticatedRequest, res) => {
+    if (!req.sessionUser!.isAdmin) {
+      res.status(403).json({ error: 'Admins only.' });
+      return;
+    }
+    const current = await currentRates(env.DB);
+    // A proposal, never an automatic write: the catalog's SKU wording and
+    // units change, and a confident wrong number would refuse every user's
+    // next call through the spend caps. The admin confirms it.
+    res.json({ current, proposal: await refreshRatesFromGoogle(current.model) });
+  });
+
+  app.put('/api/admin/ai/rates', requireSession, async (req: AuthenticatedRequest, res) => {
+    if (!req.sessionUser!.isAdmin) {
+      res.status(403).json({ error: 'Admins only.' });
+      return;
+    }
+    const parsed = adminRatesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: humanValidationError(parsed.error) });
+      return;
+    }
+    const current = await currentRates(env.DB);
+    const saved = await saveRates(
+      env.DB,
+      {
+        model: parsed.data.model ?? current.model,
+        inputPerM: parsed.data.input_per_m ?? current.inputPerM,
+        outputPerM: parsed.data.output_per_m ?? current.outputPerM,
+        groundedPerQuery: parsed.data.grounded_per_query ?? current.groundedPerQuery,
+        groundedFreePerDay: parsed.data.grounded_free_per_day ?? current.groundedFreePerDay,
+        source: parsed.data.source ?? 'manual',
+      },
+      req.sessionUser!.userId
+    );
+    res.json({ ok: true, rates: saved });
+  });
+
+  /**
+   * Per-user spend caps.
+   *
+   * The plan caps calls per feature; this caps money, which is what actually
+   * matters when one feature costs seventeen times another. Null clears a cap
+   * rather than setting it to zero — the difference between "no limit" and
+   * "no AI at all".
+   */
+  app.get('/api/admin/users/:userId/ai-limits', requireSession, async (req: AuthenticatedRequest, res) => {
+    if (!req.sessionUser!.isAdmin) {
+      res.status(403).json({ error: 'Admins only.' });
+      return;
+    }
+    const userId = req.params.userId;
+    const [caps, day, month] = await Promise.all([
+      spendCapsFor(env.DB, userId),
+      usageSince(env.DB, userId, sqlTimestampNow(new Date(Date.now() - 24 * 3600_000))),
+      usageSince(env.DB, userId, sqlTimestampNow(new Date(Date.now() - 30 * 24 * 3600_000))),
+    ]);
+    res.json({
+      limits: { daily_usd: caps.dailyUsd, monthly_usd: caps.monthlyUsd },
+      spent: { day_usd: day.costUsd, month_usd: month.costUsd, month_calls: month.calls },
+    });
+  });
+
+  app.put('/api/admin/users/:userId/ai-limits', requireSession, async (req: AuthenticatedRequest, res) => {
+    if (!req.sessionUser!.isAdmin) {
+      res.status(403).json({ error: 'Admins only.' });
+      return;
+    }
+    const parsed = adminUserLimitsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: humanValidationError(parsed.error) });
+      return;
+    }
+
+    const exists = await env.DB
+      .prepare('SELECT id FROM users WHERE id = ?')
+      .bind(req.params.userId)
+      .first<{ id: string }>();
+    if (!exists) {
+      res.status(404).json({ error: 'No such user.' });
+      return;
+    }
+
+    await env.DB
+      .prepare(
+        `INSERT INTO user_ai_limits (user_id, daily_usd, monthly_usd, note, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (user_id) DO UPDATE SET
+           daily_usd = excluded.daily_usd,
+           monthly_usd = excluded.monthly_usd,
+           note = excluded.note,
+           updated_at = excluded.updated_at,
+           updated_by = excluded.updated_by`
+      )
+      .bind(
+        req.params.userId,
+        parsed.data.daily_usd ?? null,
+        parsed.data.monthly_usd ?? null,
+        parsed.data.note ?? null,
+        sqlTimestampNow(),
+        req.sessionUser!.userId
+      )
+      .run();
+
+    res.json({ ok: true, limits: await spendCapsFor(env.DB, req.params.userId) });
   });
 
   app.get('/api/admin/overview', requireSession, async (req: AuthenticatedRequest, res) => {

@@ -88,10 +88,43 @@ function hoursAgo(hours: number, now = new Date()): string {
   return sqlTimestampNow(new Date(now.getTime() - hours * 3600_000));
 }
 
+export interface UserSpendCaps {
+  dailyUsd: number | null;
+  monthlyUsd: number | null;
+}
+
+/**
+ * The admin-set spend caps for one user, or nulls when they have none.
+ *
+ * Separate from the plan on purpose: a plan caps *calls per feature*, which is
+ * a poor proxy for money — a grounded lookup costs seventeen coach turns — and
+ * these cap the money directly. A user can have both; whichever bites first
+ * wins.
+ */
+export async function spendCapsFor(
+  db: D1DatabaseCompat,
+  userId: string
+): Promise<UserSpendCaps> {
+  try {
+    const row = await db
+      .prepare('SELECT daily_usd, monthly_usd FROM user_ai_limits WHERE user_id = ?')
+      .bind(userId)
+      .first<{ daily_usd: number | null; monthly_usd: number | null }>();
+    return {
+      dailyUsd: row?.daily_usd ?? null,
+      monthlyUsd: row?.monthly_usd ?? null,
+    };
+  } catch {
+    // No table yet (a database that has not run 0015) means no caps, which is
+    // the behaviour that existed before them.
+    return { dailyUsd: null, monthlyUsd: null };
+  }
+}
+
 export interface QuotaDecision {
   allowed: boolean;
   /** Present when refused; safe to show a user. */
-  reason?: 'daily' | 'monthly' | 'plan' | 'project_budget' | 'disabled';
+  reason?: 'daily' | 'monthly' | 'plan' | 'project_budget' | 'disabled' | 'user_budget';
   /** A sentence the client can display verbatim. */
   message?: string;
 }
@@ -131,6 +164,40 @@ export async function checkQuota(
       reason: 'project_budget',
       message: 'AI features are briefly unavailable. Your logging still works normally.',
     };
+  }
+
+  /**
+   * The user's own spend cap, when an admin has set one.
+   *
+   * Checked before the per-feature counts because it is the stronger statement:
+   * "this person may spend $2 a month" should hold however they spend it, and
+   * a cap that only applied to some features would be trivially routed around
+   * by using a different one.
+   *
+   * Costs come from `ai_usage`, summed across every feature.
+   */
+  const caps = await spendCapsFor(db, userId);
+  if (caps.dailyUsd !== null || caps.monthlyUsd !== null) {
+    if (caps.dailyUsd !== null) {
+      const spentToday = await usageSince(db, userId, hoursAgo(24, now));
+      if (spentToday.costUsd >= caps.dailyUsd) {
+        return {
+          allowed: false,
+          reason: 'user_budget',
+          message: "You've reached your daily AI allowance. It resets in a few hours.",
+        };
+      }
+    }
+    if (caps.monthlyUsd !== null) {
+      const spentMonth = await usageSince(db, userId, hoursAgo(24 * 30, now));
+      if (spentMonth.costUsd >= caps.monthlyUsd) {
+        return {
+          allowed: false,
+          reason: 'user_budget',
+          message: "You've reached your monthly AI allowance.",
+        };
+      }
+    }
   }
 
   const limits = LIMITS[plan][feature];

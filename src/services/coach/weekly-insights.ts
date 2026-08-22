@@ -1,5 +1,6 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { tokensFromVertex } from '../ai/metering.js';
 
 /**
  * Generates a weekly insight report from the user's computed stats via Vertex
@@ -41,6 +42,11 @@ const RESPONSE_SCHEMA = {
 } as const;
 
 export async function generateWeeklyInsights(input: {
+  /**
+   * Token counts from Vertex, for metering. Optional so the service stays
+   * usable (and testable) without a database; the endpoint passes a recorder.
+   */
+  onUsage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
   displayName: string | null;
   stats: WeeklyStats;
   credentialJson: string;
@@ -77,7 +83,11 @@ Rules:
   if (!res.ok) {
     throw new Error(`Vertex insights failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
-  const data = (await res.json()) as {
+  const rawResponse = (await res.json()) as unknown;
+  // Metered before anything is parsed out of it: a malformed response still
+  // cost tokens, and the caps are only as honest as the metering under them.
+  input.onUsage?.(tokensFromVertex(rawResponse));
+  const data = rawResponse as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;

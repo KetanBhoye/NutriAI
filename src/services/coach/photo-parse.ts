@@ -1,6 +1,7 @@
 import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
 import { CONSERVATIVE_ESTIMATION_RULES, reconcileMacros } from './macro-sanity.js';
+import { tokensFromVertex } from '../ai/metering.js';
 
 /**
  * Identifies the foods in a meal photo and estimates their portions and macros
@@ -55,6 +56,11 @@ const clampNum = (n: unknown, lo: number, hi: number) => {
 };
 
 export async function parseMealPhoto(opts: {
+  /**
+   * Token counts from Vertex, for metering. Optional so the service stays
+   * usable (and testable) without a database; the endpoint passes a recorder.
+   */
+  onUsage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
   imageBase64: string;
   mimeType: string;
   knownFoods: string;
@@ -107,7 +113,11 @@ ${CONSERVATIVE_ESTIMATION_RULES}
   if (!res.ok) {
     throw new Error(`Vertex photo request failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
-  const data = (await res.json()) as {
+  const rawResponse = (await res.json()) as unknown;
+  // Metered before anything is parsed out of it: a malformed response still
+  // cost tokens, and the caps are only as honest as the metering under them.
+  opts.onUsage?.(tokensFromVertex(rawResponse));
+  const data = rawResponse as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
