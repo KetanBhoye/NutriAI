@@ -94,15 +94,40 @@ describe('suggestForMeal', () => {
     });
   });
 
-  it('only returns foods from the requested meal slot', () => {
+  it('offers every food the user has logged, whatever meal it was at', () => {
+    // This used to filter by meal, which hid food: someone whose lunch was
+    // once poha saw an empty lunch sheet. Everything is offered now.
     const breakfastFood = addFood('Muesli');
     const dinnerFood = addFood('Rice');
     addEntry(breakfastFood, 'breakfast', daysAgo(1));
     addEntry(dinnerFood, 'dinner', daysAgo(1));
 
     return repo.suggestForMeal('admin', 'dinner').then((results) => {
-      expect(results).toHaveLength(1);
-      expect(results[0]!.canonical_name).toBe('Rice');
+      expect(results.map((r) => r.canonical_name).sort()).toEqual(['Muesli', 'Rice']);
+    });
+  });
+
+  it('still leads with the food usually eaten at that meal', () => {
+    const breakfastFood = addFood('Muesli');
+    const dinnerFood = addFood('Rice');
+    addEntry(breakfastFood, 'breakfast', daysAgo(1));
+    addEntry(dinnerFood, 'dinner', daysAgo(1));
+
+    return repo.suggestForMeal('admin', 'breakfast').then((results) => {
+      expect(results[0]!.canonical_name).toBe('Muesli');
+    });
+  });
+
+  it('lets a real habit outrank the meal preference', () => {
+    // A staple eaten every night belongs above a one-off breakfast item, even
+    // in the breakfast list — the meal tilts the order, it does not decide it.
+    const oneOff = addFood('Cornflakes');
+    const staple = addFood('Dal');
+    addEntry(oneOff, 'breakfast', daysAgo(2));
+    for (let i = 1; i <= 10; i += 1) addEntry(staple, 'dinner', daysAgo(i));
+
+    return repo.suggestForMeal('admin', 'breakfast').then((results) => {
+      expect(results[0]!.canonical_name).toBe('Dal');
     });
   });
 

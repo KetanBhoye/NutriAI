@@ -33,6 +33,7 @@ import { ProfileTrackingRepository } from '../repositories/profile-tracking.repo
 import { updateProfile, getProfileHistory } from '../tools/index.js';
 import { lookupFood, lookupBarcode } from '../services/food-lookup.js';
 import { linkEntryToFood } from '../services/entry-linking.js';
+import { searchGlobalFoods } from '../services/food/global-repo.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
@@ -1592,7 +1593,45 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const repository = new FoodLibraryRepository(env.DB);
       const foods = await repository.search(req.sessionUser!.userId, query);
 
-      res.json({ query, foods });
+      /**
+       * Then everything else the platform knows about, so a search covers the
+       * whole database rather than only what this user has logged before.
+       *
+       * The user's own foods come first and are never displaced: they carry
+       * that person's portions and history, and a shared row for the same food
+       * is strictly less informative. Shared rows are dropped when the user
+       * already has that food.
+       *
+       * `id` is deliberately not a foods-table id — there is no row to point
+       * at. `origin: 'shared'` tells the client to log by name instead, which
+       * routes through linkEntryToFood and creates the personal food properly
+       * on first use. Sending a synthetic id as `food_id` would fail the uuid
+       * check on POST /api/entries and the write would be dropped.
+       */
+      const mine = new Set(foods.map((f) => f.normalized_key));
+      const shared = (await searchGlobalFoods(env.DB, query))
+        .filter((row) => !mine.has(row.normalized_key))
+        .map((row) => ({
+          id: `shared:${row.normalized_key}`,
+          canonical_name: row.canonical_name,
+          normalized_key: row.normalized_key,
+          reference_unit: row.reference_unit,
+          calories_per_unit: row.calories_per_unit,
+          protein_g_per_unit: row.protein_g_per_unit,
+          carbs_g_per_unit: row.carbs_g_per_unit,
+          fat_g_per_unit: row.fat_g_per_unit,
+          default_quantity: row.default_quantity ?? 1,
+          source: row.source,
+          times_logged: 0,
+          last_logged: null,
+          score: 0,
+          origin: 'shared' as const,
+        }));
+
+      res.json({
+        query,
+        foods: [...foods.map((f) => ({ ...f, origin: 'library' as const })), ...shared],
+      });
     } catch (error) {
       console.error('Food search error:', error);
       res.status(500).json({ error: 'Failed to search foods' });

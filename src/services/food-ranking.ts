@@ -26,12 +26,30 @@ export const RECENCY_HALF_LIFE_DAYS = 21;
  */
 export const FREQUENCY_PRIOR = 1;
 
+/**
+ * How much a logging counts for extra when it was at the meal being suggested
+ * for.
+ *
+ * Suggestions used to be *filtered* by meal, which hid food: someone who eats
+ * poha at breakfast and once at lunch saw nothing at lunch. Now every food the
+ * user has ever logged is offered, and the meal only tilts the order — a
+ * breakfast list still leads with breakfast food, but nothing is missing from
+ * it.
+ *
+ * 2 rather than something larger because the tilt should lose to a real habit:
+ * a staple eaten daily at dinner belongs above a one-off breakfast item even in
+ * the breakfast list.
+ */
+export const MEAL_AFFINITY = 2;
+
 /** ln(2), the decay constant that turns a half-life into an exponent. */
 const LN2 = 0.693147;
 
 /** One row per logged entry, joined to the food it refers to. */
 export interface LoggedFoodRow extends FoodRow {
   entry_date: string;
+  /** The meal it was logged at, when it was recorded. */
+  meal_type?: string | null;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -51,37 +69,40 @@ export function daysBetween(from: string, to: string): number {
 export function rankSuggestions(
   rows: LoggedFoodRow[],
   today: string,
-  limit = 8
+  limit = 8,
+  /** The meal being suggested for; its foods are favoured, not filtered to. */
+  preferredMeal?: string | null
 ): SuggestedFood[] {
-  const byFood = new Map<string, { food: LoggedFoodRow; dates: string[] }>();
+  const byFood = new Map<string, { food: LoggedFoodRow; loggings: LoggedFoodRow[] }>();
 
   for (const row of rows) {
     const existing = byFood.get(row.id);
-    if (existing) existing.dates.push(row.entry_date);
-    else byFood.set(row.id, { food: row, dates: [row.entry_date] });
+    if (existing) existing.loggings.push(row);
+    else byFood.set(row.id, { food: row, loggings: [row] });
   }
 
   const scored: SuggestedFood[] = [];
-  for (const { food, dates } of byFood.values()) {
-    const timesLogged = dates.length;
+  for (const { food, loggings } of byFood.values()) {
+    const timesLogged = loggings.length;
 
     // Sum of exp(-ln2 * age / halfLife): every logging contributes, weighted
-    // by how long ago it was.
+    // by how long ago it was, and by whether it was at this meal.
     let weighted = 0;
-    for (const date of dates) {
+    for (const logging of loggings) {
       // A future-dated entry (timezone edge, or a user logging ahead) would
       // otherwise score above 1.0 and outrank everything.
-      const age = Math.max(0, daysBetween(date, today));
-      weighted += Math.exp((-LN2 * age) / RECENCY_HALF_LIFE_DAYS);
+      const age = Math.max(0, daysBetween(logging.entry_date, today));
+      const affinity = preferredMeal && logging.meal_type === preferredMeal ? MEAL_AFFINITY : 1;
+      weighted += affinity * Math.exp((-LN2 * age) / RECENCY_HALF_LIFE_DAYS);
     }
 
     const confidence = timesLogged / (timesLogged + FREQUENCY_PRIOR);
 
-    const { entry_date: _ignored, ...foodFields } = food;
+    const { entry_date: _ignored, meal_type: _alsoIgnored, ...foodFields } = food;
     scored.push({
       ...foodFields,
       times_logged: timesLogged,
-      last_logged: dates.reduce((a, b) => (a > b ? a : b)),
+      last_logged: loggings.reduce((a, b) => (a.entry_date > b.entry_date ? a : b)).entry_date,
       score: weighted * confidence,
     });
   }

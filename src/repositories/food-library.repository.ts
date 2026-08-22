@@ -47,6 +47,12 @@ export class FoodLibraryRepository {
     // exist in Postgres — it was the only query in the codebase doing date
     // arithmetic in SQL, and the only endpoint that 500'd on Postgres.
     // See services/food-ranking.ts.
+    //
+    // Deliberately NOT filtered by meal. It was, and that hid food: anything
+    // eaten at a different time of day was simply absent from the list, so a
+    // user who has poha at breakfast saw an empty lunch sheet. The meal is
+    // passed to the ranker instead, where it favours the right foods without
+    // removing the rest.
     const result = await this.db
       .prepare(
         `
@@ -54,16 +60,16 @@ export class FoodLibraryRepository {
           f.id, f.canonical_name, f.normalized_key, f.reference_unit,
           f.calories_per_unit, f.protein_g_per_unit, f.carbs_g_per_unit,
           f.fat_g_per_unit, f.default_quantity, f.source,
-          e.entry_date
+          e.entry_date, e.meal_type
         FROM food_entries e
         JOIN foods f ON f.id = e.food_id
-        WHERE e.user_id = ? AND e.meal_type = ?
+        WHERE e.user_id = ?
         `
       )
-      .bind(userId, mealType)
+      .bind(userId)
       .all();
 
-    return rankSuggestions(result.results as LoggedFoodRow[], utcDate(), limit);
+    return rankSuggestions(result.results as LoggedFoodRow[], utcDate(), limit, mealType);
   }
 
   /**

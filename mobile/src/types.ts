@@ -38,6 +38,16 @@ export interface Suggestion {
   times_logged: number;
   last_logged: string | null;
   score: number;
+  /**
+   * Where the row came from.
+   *
+   * `library` is this user's own food, with a real `id` to log against.
+   * `shared` is the platform-wide table (the curated Indian library, or a food
+   * enough people have logged) — its `id` is a placeholder, so it must be
+   * logged by *name* and let the server link or create the personal food. See
+   * GET /api/foods/search.
+   */
+  origin?: 'library' | 'shared';
 }
 
 export interface Goals {

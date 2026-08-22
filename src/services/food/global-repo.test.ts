@@ -9,6 +9,7 @@ import {
   findGlobalFood,
   PROMOTION_THRESHOLD,
   saveVerifiedFood,
+  searchGlobalFoods,
 } from './global-repo.js';
 
 /**
@@ -48,6 +49,8 @@ beforeEach(() => {
       carbs_g_per_unit REAL,
       fat_g_per_unit REAL,
       source TEXT NOT NULL,
+      default_quantity REAL NOT NULL DEFAULT 1,
+      source_ref TEXT,
       contributor_count INTEGER NOT NULL DEFAULT 1,
       hit_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT,
@@ -176,5 +179,30 @@ describe('hit counting', () => {
     };
     // Each hit is one grounded search not performed.
     expect(row.hit_count).toBe(2);
+  });
+});
+
+describe('searchGlobalFoods', () => {
+  it('finds a food by part of its name', async () => {
+    await saveVerifiedFood(db, facts('Poha'), 'curated');
+
+    const results = await searchGlobalFoods(db, 'poh');
+
+    expect(results.map((r) => r.canonical_name)).toContain('Poha');
+  });
+
+  it('puts a curated row above a community one', async () => {
+    for (const user of ['u1', 'u2', 'u3']) await contributeFood(db, user, facts('Dal fry'));
+    await saveVerifiedFood(db, facts('Dal makhani'), 'curated');
+
+    const results = await searchGlobalFoods(db, 'dal');
+
+    expect(results[0]?.canonical_name).toBe('Dal makhani');
+  });
+
+  it('ignores a query too short to mean anything', async () => {
+    await saveVerifiedFood(db, facts('Poha'), 'curated');
+
+    expect(await searchGlobalFoods(db, 'p')).toEqual([]);
   });
 });

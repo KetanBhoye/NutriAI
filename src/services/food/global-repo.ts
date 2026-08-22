@@ -55,6 +55,10 @@ export interface GlobalFood {
   source: GlobalFoodSource;
   contributor_count: number;
   hit_count: number;
+  /** A typical portion, in reference units. Added with the curated library. */
+  default_quantity?: number;
+  /** Which dataset row this came from, e.g. "INDB:ASC096". */
+  source_ref?: string | null;
 }
 
 /**
@@ -265,5 +269,57 @@ export async function contributeFood(
       '[food] failed to contribute food:',
       error instanceof Error ? error.message : String(error)
     );
+  }
+}
+
+/**
+ * Free-text search across the shared table.
+ *
+ * The Add sheet used to search only the user's own library, which meant a new
+ * account searched an empty table and a seeded library of 800 Indian dishes
+ * was invisible to everyone. This is what makes it reachable.
+ *
+ * Ordered by trust and then by use: a curated row (ICMR-NIN-derived) outranks a
+ * community one for the same query, and a food many people have hit outranks
+ * one nobody has. Rows the user already has in their own library are filtered
+ * out by the caller, not here — this table does not know whose library it is
+ * answering for.
+ */
+export async function searchGlobalFoods(
+  db: D1DatabaseCompat,
+  query: string,
+  limit = 12
+): Promise<GlobalFood[]> {
+  const term = query.trim();
+  if (term.length < 2) return [];
+
+  try {
+    const result = await db
+      .prepare(
+        `SELECT normalized_key, canonical_name, reference_unit, reference_quantity,
+                calories_per_unit, protein_g_per_unit, carbs_g_per_unit, fat_g_per_unit,
+                default_quantity, source, source_ref, contributor_count, hit_count
+         FROM global_foods
+         WHERE LOWER(canonical_name) LIKE LOWER(?)
+         ORDER BY
+           CASE source
+             WHEN 'curated' THEN 0
+             WHEN 'usda' THEN 1
+             WHEN 'openfoodfacts' THEN 1
+             WHEN 'grounded' THEN 2
+             ELSE 3
+           END,
+           hit_count DESC,
+           canonical_name ASC
+         LIMIT ?`
+      )
+      .bind(`%${term}%`, limit)
+      .all();
+
+    return (result.results ?? []) as unknown as GlobalFood[];
+  } catch (error) {
+    // A shared-table failure must not take the user's own search down with it.
+    console.error('[food] shared search failed:', error instanceof Error ? error.message : error);
+    return [];
   }
 }

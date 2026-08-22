@@ -297,7 +297,13 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
                   <Text style={styles.itemName}>{displayName(food)}</Text>
                   <Text style={styles.itemSub}>
                     {macroLine(food)}
-                    {!searching2Plus ? ` · ${food.times_logged}× · ${relativeDay(food.last_logged)}` : ''}
+                    {/* Your own foods carry your history; a shared row says so
+                        instead, rather than showing "0× · " and looking broken. */}
+                    {food.origin === 'shared'
+                      ? ' · food library'
+                      : !searching2Plus
+                        ? ` · ${food.times_logged}× · ${relativeDay(food.last_logged)}`
+                        : ''}
                   </Text>
                 </Pressable>
                 {/* A separate target, so logging the usual amount stays one tap

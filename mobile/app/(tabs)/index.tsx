@@ -377,6 +377,14 @@ export default function Today() {
     // Every entry records a gram weight, so it can be re-portioned later even
     // when the library quotes the food in bowls or pieces.
     const chosen = portion ?? defaultPortion(suggestion);
+    /**
+     * A shared row (the curated library, or a food enough people log) has no
+     * row in *this* user's library, so there is no id to point at — sending
+     * its placeholder as `food_id` would fail the uuid check on the server and
+     * the write would be dropped silently. Logging it by name instead lets
+     * `linkEntryToFood` create the personal food properly on first use.
+     */
+    const foodId = suggestion.origin === 'shared' ? null : suggestion.id;
     const optimistic: FoodEntry = {
       id: newPendingId(),
       user_id: '',
@@ -387,7 +395,7 @@ export default function Today() {
       fat_g: chosen.fat_g,
       meal_type: meal,
       entry_date: viewDate,
-      food_id: suggestion.id,
+      food_id: foodId,
       quantity: chosen.grams,
       unit: 'g',
       created_at: '',
@@ -406,7 +414,7 @@ export default function Today() {
       fat_g: optimistic.fat_g ?? undefined,
       meal_type: meal,
       entry_date: viewDate,
-      food_id: suggestion.id,
+      food_id: foodId ?? undefined,
       quantity: chosen.grams,
       unit: 'g',
     }).then(() => reconcile());
