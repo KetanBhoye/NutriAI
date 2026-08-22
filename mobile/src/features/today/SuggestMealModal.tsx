@@ -5,6 +5,7 @@ import { MealSuggestion } from '@/api/ai';
 import { Button, Sheet } from '@/components/ui';
 import { colors, fonts, radius, type } from '@/theme';
 import { MealType } from '@/types';
+import { addDays, parseISODate, todayISO } from '@/dates';
 import { estimateGrams } from '@/portion';
 import { NutriLoader } from '@/components/ui/NutriLoader';
 
@@ -37,7 +38,7 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
     setLogged(new Set());
     const exclude = reroll ? [...seen, ...suggestions.map((s) => s.name)] : [];
     aiApi
-      .suggestMeal(meal, exclude)
+      .suggestMeal(meal, exclude, date)
       .then((res) => {
         setSuggestions(res.suggestions);
         setSeen(exclude);
@@ -54,7 +55,7 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
       setSeen([]);
       load();
     }
-  }, [visible, meal]);
+  }, [visible, meal, date]);
 
   const logIt = async (s: MealSuggestion, i: number) => {
     setBusyIdx(i);
@@ -78,17 +79,30 @@ export function SuggestMealModal({ visible, meal, date, onClose, onLogged }: Sug
     }
   };
 
+  // The sheet can be opened while browsing an earlier day, and the figures it
+  // quotes are that day's — so the copy has to name it rather than say "today".
+  const today = todayISO();
+  const dayName =
+    date === today
+      ? 'today'
+      : date === addDays(today, -1)
+        ? 'yesterday'
+        : parseISODate(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  // "left today" and "left on 21 Aug" — a bare date needs the preposition that
+  // "today" and "yesterday" don't.
+  const dayPhrase = dayName === 'today' || dayName === 'yesterday' ? dayName : `on ${dayName}`;
+
   return (
     <Sheet visible={visible} onClose={onClose} title="🍽️ What should I eat?">
       {overBudget ? (
         <Text style={styles.sub}>
-          You've already hit today's calories, so these are{' '}
+          You've already hit the calories for {dayName}, so these are{' '}
           <Text style={styles.bold}>light top-ups</Text> rather than a meal.
           {remaining.pro !== null && remaining.pro > 0 ? ` Still ${remaining.pro}g protein to go.` : ''}
         </Text>
       ) : remaining.cal !== null ? (
         <Text style={styles.sub}>
-          For {meal} · <Text style={styles.bold}>{remaining.cal} kcal</Text> left today
+          For {meal} · <Text style={styles.bold}>{remaining.cal} kcal</Text> left {dayPhrase}
           {remaining.pro !== null && remaining.pro > 0 ? ` · ${remaining.pro}g protein to go` : ''}
           {band ? (
             <Text style={styles.sub}>

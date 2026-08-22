@@ -63,6 +63,37 @@ export interface BarcodeProduct {
   } | null;
 }
 
+/**
+ * A food from the public databases (Open Food Facts, then USDA), for when the
+ * user's own library has nothing — which is every search on day one.
+ *
+ * Macros are per gram, matching the library's units, so `defaultPortion()`
+ * reads these rows without conversion.
+ */
+export interface FoodLookupResult {
+  name: string;
+  brand: string | null;
+  /**
+   * The entry's own numbers don't add up. Open Food Facts is crowd-sourced and
+   * contains real errors — the UI must warn rather than let a bad value into
+   * someone's diary unremarked.
+   */
+  suspect: boolean;
+  calories_per_unit: number;
+  protein_g_per_unit: number | null;
+  carbs_g_per_unit: number | null;
+  fat_g_per_unit: number | null;
+  reference_unit: 'g';
+  default_quantity: number;
+  source: 'openfoodfacts' | 'usda';
+  source_ref: string | null;
+}
+
+/** Never throws for "nothing found" — the server answers with an empty list. */
+export function lookupFoods(query: string): Promise<{ query: string; results: FoodLookupResult[] }> {
+  return api(`/api/foods/lookup?q=${encodeURIComponent(query)}`, { timeoutMs: 15_000 });
+}
+
 export function lookupBarcode(code: string): Promise<BarcodeProduct> {
   return api(`/api/foods/barcode?code=${encodeURIComponent(code)}`);
 }

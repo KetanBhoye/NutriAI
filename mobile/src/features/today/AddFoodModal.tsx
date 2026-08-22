@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { entriesApi } from '@/api';
+import type { FoodLookupResult } from '@/api/entries';
 import { Button, NutriLoader, Sheet, TextField } from '@/components/ui';
 import { colors, radius } from '@/theme';
 import { parseISODate } from '@/dates';
@@ -63,9 +64,22 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Suggestion[]>([]);
   const [searching, setSearching] = useState(false);
+  /**
+   * Matches from the public food databases, fetched only when the user's own
+   * library has nothing for the query.
+   *
+   * Without this the sheet is a dead end on day one: suggestions come from
+   * what you have already logged, and the search box searched the same empty
+   * library, so a new user could only log food by typing its calories from
+   * memory.
+   */
+  const [external, setExternal] = useState<FoodLookupResult[]>([]);
+  const [externalLoading, setExternalLoading] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manual, setManual] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', grams: '' });
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  /** Guards against a slow response for an older query landing last. */
+  const latestQuery = useRef('');
 
   useEffect(() => {
     if (!visible) return;
@@ -83,24 +97,70 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
 
   useEffect(() => {
     clearTimeout(searchTimer.current);
-    if (query.trim().length < 2) {
+    const term = query.trim();
+    latestQuery.current = term;
+    if (term.length < 2) {
       setResults([]);
+      setExternal([]);
       setSearching(false);
+      setExternalLoading(false);
       return;
     }
     setSearching(true);
-    searchTimer.current = setTimeout(() => {
-      entriesApi
-        .searchFoods(query.trim())
-        .then((d) => setResults(d.foods))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
+    searchTimer.current = setTimeout(async () => {
+      let library: Suggestion[] = [];
+      try {
+        library = (await entriesApi.searchFoods(term)).foods;
+      } catch {
+        library = [];
+      }
+      if (latestQuery.current !== term) return;
+      setResults(library);
+      setSearching(false);
+
+      // Only when the library came up empty. An established user typing a food
+      // they log every week should not wait on a network call to a food
+      // database to be told what they already have.
+      if (library.length > 0) {
+        setExternal([]);
+        return;
+      }
+      setExternalLoading(true);
+      try {
+        const found = await entriesApi.lookupFoods(term);
+        if (latestQuery.current === term) setExternal(found.results);
+      } catch {
+        if (latestQuery.current === term) setExternal([]);
+      } finally {
+        if (latestQuery.current === term) setExternalLoading(false);
+      }
     }, 250);
     return () => clearTimeout(searchTimer.current);
   }, [query]);
 
   const openManual = () => {
     setManual((m) => ({ ...m, name: query.trim() }));
+    setManualMode(true);
+  };
+
+  /**
+   * A database match opens the manual form rather than logging straight away.
+   *
+   * Two reasons: these numbers are per 100 g of a product the user may be
+   * eating a different amount of, and Open Food Facts is crowd-sourced, so the
+   * values deserve a look before they become a diary entry. Everything is
+   * filled in, so confirming is one tap.
+   */
+  const prefillFrom = (food: FoodLookupResult) => {
+    const portion = defaultPortion(food);
+    setManual({
+      name: food.brand ? `${food.name} (${food.brand})` : food.name,
+      calories: String(portion.calories),
+      protein: portion.protein_g != null ? String(portion.protein_g) : '',
+      carbs: portion.carbs_g != null ? String(portion.carbs_g) : '',
+      fat: portion.fat_g != null ? String(portion.fat_g) : '',
+      grams: String(Math.round(portion.grams)),
+    });
     setManualMode(true);
   };
 
@@ -183,7 +243,7 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
         <View>
           <TextField
             testID="food-search"
-            placeholder="Search your foods…"
+            placeholder="Search foods…"
             autoCapitalize="none"
             value={query}
             onChangeText={setQuery}
@@ -192,11 +252,44 @@ export function AddFoodModal({ visible, meal, onClose, onSelect, onAdjust, onMan
             <NutriLoader size={40} />
           ) : searching2Plus && list.length === 0 ? (
             <View>
-              <Text style={styles.hint}>"{query.trim()}" isn't in your library yet.</Text>
+              {externalLoading ? (
+                <NutriLoader size={40} />
+              ) : external.length > 0 ? (
+                <View>
+                  <Text style={styles.sectionLabel}>From the food database</Text>
+                  {external.map((food, i) => {
+                    const portion = defaultPortion(food);
+                    return (
+                      <Pressable
+                        key={`${food.source}-${food.source_ref ?? i}`}
+                        style={styles.item}
+                        onPress={() => prefillFrom(food)}
+                      >
+                        <Text style={styles.itemName}>{food.name}</Text>
+                        <Text style={styles.itemSub}>
+                          {[food.brand, `${formatGrams(portion.grams)} · ${portion.calories} kcal`]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </Text>
+                        {/* Shown, not hidden: the alternative is letting a
+                            physically impossible figure into the diary. */}
+                        {food.suspect ? (
+                          <Text style={styles.suspect}>⚠ These numbers look off — check before logging.</Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                  <Text style={styles.hint}>Not it? Add it yourself:</Text>
+                </View>
+              ) : (
+                <Text style={styles.hint}>"{query.trim()}" isn't in your library or the food database.</Text>
+              )}
               <Button title={`Add "${query.trim()}"`} onPress={openManual} />
             </View>
           ) : !searching2Plus && list.length === 0 ? (
-            <Text style={styles.hint}>Nothing logged for {meal} yet — search above, or add a new food.</Text>
+            <Text style={styles.hint}>
+              Nothing logged for {meal} yet — search above for any food, or add your own.
+            </Text>
           ) : (
             list.map((food) => (
               <View key={food.id} style={styles.itemRow}>
@@ -255,6 +348,15 @@ const styles = StyleSheet.create({
   portionQty: { color: colors.text, fontSize: 13 },
   portionEdit: { color: colors.textDim, fontSize: 9, letterSpacing: 0.6 },
   itemSub: { color: colors.textDim, fontSize: 12.5, marginTop: 2 },
+  sectionLabel: {
+    color: colors.textDim,
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  suspect: { color: colors.warn, fontSize: 11.5, marginTop: 3 },
   grid2: { flexDirection: 'row', gap: 12 },
   half: { flex: 1 },
   row: { flexDirection: 'row', gap: 10, marginTop: 8 },

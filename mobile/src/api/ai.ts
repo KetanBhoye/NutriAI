@@ -84,10 +84,20 @@ export interface SuggestMealResponse {
  * different question rather than the same one asked twice. Without it the
  * server sees an identical request and the model returns an identical list.
  */
-export function suggestMeal(meal_type: MealType, exclude: string[] = []): Promise<SuggestMealResponse> {
+export function suggestMeal(
+  meal_type: MealType,
+  exclude: string[] = [],
+  /**
+   * The day being logged to. Without it the server answered for *its* idea of
+   * today — UTC — so the "remaining calories" quoted in the sheet came from
+   * the wrong day's entries for anyone east of UTC, and from today's when the
+   * user was browsing an earlier date.
+   */
+  date?: string
+): Promise<SuggestMealResponse> {
   return api('/api/ai/suggest-meal', {
     method: 'POST',
-    body: { meal_type, exclude },
+    body: { meal_type, exclude, ...(date ? { date } : {}) },
     timeoutMs: 45_000,
   });
 }

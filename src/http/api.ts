@@ -55,6 +55,7 @@ import { DailyActivityRepository as ActivityRepo } from '../repositories/daily-a
 import { buildDeficitSeries, buildGlidePath, planProgress, weeklyDeficit } from '../services/goal-progress.js';
 import { DailyActivityRepository } from '../repositories/daily-activity.repository.js';
 import { extractBearerToken, verifyBearerToken } from '../auth/token-auth.js';
+import { clientDate } from '../services/client-date.js';
 
 interface ApiOptions {
   env: AppEnv;
@@ -1481,7 +1482,11 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const mealType = ['breakfast', 'lunch', 'dinner', 'snack'].includes(req.body?.meal_type)
         ? (req.body.meal_type as string)
         : 'meal';
-      const date = new Date().toISOString().slice(0, 10);
+      // The client's day, not UTC's — see services/client-date.ts. This used
+      // `toISOString()`, so for anyone east of UTC the "remaining calories"
+      // below were computed from the previous day's entries for the first
+      // hours of every day, and the sheet disagreed with the Today screen.
+      const date = clientDate(req.body?.date);
 
       const consumed = await env.DB
         .prepare(
