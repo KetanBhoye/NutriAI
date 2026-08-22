@@ -101,6 +101,33 @@ pnpm dev
 
 Server starts at `http://localhost:8787` by default.
 
+## Food data and attribution
+
+NutriAI's nutrition figures come from third-party datasets, credited in
+[ATTRIBUTIONS.md](./ATTRIBUTIONS.md) and shown to users at `/attributions`
+(linked from the app's You tab). Two of those sources require attribution as a
+condition of use, so that page is an obligation, not a courtesy.
+
+The shared library of Indian dishes is built from the Indian Nutrient Databank:
+
+```bash
+pip install openpyxl
+python3 scripts/indb-extract.py Anuvaad_INDB_2024.11.xlsx data/indb-raw.json
+npx tsx scripts/indb-curate.ts data/indb-raw.json data/indb-curated.json
+```
+
+The server loads `data/indb-curated.json` into `global_foods` at boot, once per
+dataset version (`CURATED_FOODS_PATH` overrides the location). Neither the
+source workbook nor the generated file is committed — they carry their own
+licence, and INDB's terms for redistribution inside an app are **not yet
+confirmed**. Read ATTRIBUTIONS.md before shipping a build that includes them.
+
+Curation is not a formality: of 1,014 rows, ~199 are rejected by
+`src/services/food/indb.ts` — mostly deep-fried dishes whose recipes count all
+the frying oil into the dish (poori at 95% of energy from fat) and soups whose
+stated energy contradicts their stated macros. The rules are under test, and
+the importer prints every rejection with the numbers that caused it.
+
 ## Environment Variables
 
 | Variable | Default | Description |

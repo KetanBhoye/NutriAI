@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data Sources · NutriAI</title>
+    <meta
+      name="description"
+      content="Where NutriAI's nutrition figures come from, and the licences they are used under."
+    />
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 40px 20px 80px;
+        background: #0f1115; color: #e8eaed;
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      main { max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 32px; margin: 0 0 6px; letter-spacing: -0.5px; }
+      h2 { font-size: 19px; margin: 38px 0 10px; color: #4ade80; }
+      p, li { color: #c7ccd6; }
+      a { color: #5ad1ff; }
+      .updated { color: #9aa2b1; font-size: 14px; margin-bottom: 28px; }
+      .lead { font-size: 17px; color: #e8eaed; }
+      .cite {
+        border-left: 2px solid #272c37; padding: 2px 0 2px 14px; margin: 12px 0;
+        color: #c7ccd6; font-size: 15px;
+      }
+      .box { border: 1px solid #272c37; background: #171a21; border-radius: 12px; padding: 16px 18px; margin: 20px 0; }
+      .licence { color: #9aa2b1; font-size: 14px; }
+      footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid #272c37; color: #9aa2b1; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Data sources</h1>
+      <p class="updated">NutriAI · Last updated 23 August 2026</p>
+
+      <p class="lead">
+        NutriAI's nutrition figures come from other people's work. This page
+        credits it, states the licence each source is used under, and says what
+        we changed. Every food in the app records which source row it came from,
+        so any number can be traced back.
+      </p>
+
+      <h2>Indian dishes — Indian Nutrient Databank</h2>
+      <p>
+        The Indian dishes in NutriAI's shared library come from the Indian
+        Nutrient Databank, which computes nutrient values for recipes commonly
+        eaten in India using India's own food composition tables.
+      </p>
+      <p class="cite">
+        Anuvaad / Jaacks Lab. <em>Indian Nutrient Databank (INDB), version
+        2024.11.</em>
+        <a href="https://www.anuvaad.org.in/indb/">anuvaad.org.in/indb</a>
+      </p>
+      <p>INDB is built on:</p>
+      <p class="cite">
+        Longvah, T., Ananthan, R., Bhaskarachary, K., &amp; Venkaiah, K. (2017).
+        <em>Indian Food Composition Tables 2017.</em> National Institute of
+        Nutrition, Indian Council of Medical Research, Hyderabad, India.
+      </p>
+      <p class="cite">
+        Gopalan, C., Rama Sastri, B. V., &amp; Balasubramanian, S. C. (2004).
+        <em>Nutritive Value of Indian Foods.</em> National Institute of
+        Nutrition, Indian Council of Medical Research, Hyderabad, India.
+      </p>
+      <p class="cite">
+        Public Health England (2021). <em>McCance and Widdowson's The
+        Composition of Foods Integrated Dataset.</em> Open Government Licence
+        v3.0. · U.S. Department of Agriculture, <em>FoodData Central</em>
+        (public domain), for ingredients absent from the Indian tables.
+      </p>
+      <div class="box">
+        <strong>What we changed.</strong> Values are stored per gram rather than
+        per 100&nbsp;g, and portion weights are derived from the published
+        per-serving figures. We exclude some rows — mainly deep-fried dishes
+        whose recipes count all of the frying oil into the dish, and soups whose
+        stated energy does not match their stated macros. Those exclusions are
+        ours, not the databank's.
+      </div>
+
+      <h2>Packaged products — Open Food Facts</h2>
+      <p>
+        Barcode scanning and product search use Open Food Facts, a
+        crowd-sourced database of packaged foods.
+      </p>
+      <p class="cite">
+        Open Food Facts contributors. <em>Open Food Facts.</em>
+        <a href="https://world.openfoodfacts.org">world.openfoodfacts.org</a>
+      </p>
+      <p class="licence">
+        Product data is used under the
+        <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database
+        Licence (ODbL) v1.0</a>. Because it is crowd-sourced it contains real
+        errors, so NutriAI warns you when a product's own numbers do not add up.
+      </p>
+
+      <h2>Generic foods — USDA FoodData Central</h2>
+      <p class="cite">
+        U.S. Department of Agriculture, Agricultural Research Service.
+        <em>FoodData Central.</em>
+        <a href="https://fdc.nal.usda.gov">fdc.nal.usda.gov</a> · Public domain
+        (CC0 1.0).
+      </p>
+
+      <h2>Anything you add yourself</h2>
+      <p>
+        Foods you log by hand, by photo or by talking to the coach are yours.
+        They stay in your own library unless several unrelated people log the
+        same everyday food, which is the only way an entry becomes shared — see
+        the <a href="/privacy">Privacy Policy</a>.
+      </p>
+
+      <footer>
+        Something credited wrongly, or a source that would like different
+        wording? Write to
+        <a href="mailto:hello@nutriai.app">hello@nutriai.app</a> and it will be
+        corrected.
+      </footer>
+    </main>
+  </body>
+</html>

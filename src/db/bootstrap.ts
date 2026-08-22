@@ -3,12 +3,21 @@ import { join } from 'node:path';
 import type { D1DatabaseCompat } from './types.js';
 import { createPasswordHash, hashSha256 } from '../auth/security.js';
 import { isoNow } from './time.js';
+import { seedGlobalFoods } from './seed-global-foods.js';
 
 interface BootstrapOptions {
   migrationsDir: string;
   adminApiKey: string;
   adminEmail?: string;
   adminPassword?: string;
+  /**
+   * The curated food library to load into `global_foods`, if it is there.
+   *
+   * Optional on purpose: the file is generated from a dataset with its own
+   * licence and is not committed, so a checkout without it must still boot —
+   * it simply has no seeded library. See ATTRIBUTIONS.md.
+   */
+  curatedFoodsPath?: string;
 }
 
 export async function bootstrapDatabase(
@@ -18,6 +27,7 @@ export async function bootstrapDatabase(
   await runMigrations(db, options.migrationsDir);
   await ensureDefaultAdmin(db, options);
   await ensureDefaultTrackingPreferences(db, options.migrationsDir);
+  if (options.curatedFoodsPath) await seedGlobalFoods(db, options.curatedFoodsPath);
   await cleanupExpiredAuthData(db);
 }
 

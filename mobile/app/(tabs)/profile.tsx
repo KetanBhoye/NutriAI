@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { accountApi } from '@/api';
 import { useAuth } from '@/auth';
 import { Button, Card, Screen } from '@/components/ui';
+import { API_URL } from '@/config';
 import { colors, fonts, radius, type } from '@/theme';
 import { HealthSyncSection } from '@/features/health/HealthSyncSection';
 import { TokenCard } from '@/components/TokenCard';
@@ -76,6 +77,19 @@ export default function Profile() {
       <Card>
         <UpdateSection />
       </Card>
+
+      {/* Attribution for the nutrition data, in the one place a user might
+          look for it. Open Food Facts is ODbL and the Indian dish data derives
+          from ICMR-NIN's tables — both require credit, and a line in a repo
+          nobody opens is not credit. See ATTRIBUTIONS.md. */}
+      <Text style={styles.h2}>About</Text>
+      <Pressable style={styles.linkCard} onPress={() => Linking.openURL(`${API_URL}/attributions`)}>
+        <View style={styles.linkTextWrap}>
+          <Text style={styles.settingTitle}>Data sources</Text>
+          <Text style={styles.settingSub}>Where the nutrition figures come from</Text>
+        </View>
+        <Text style={styles.chev}>›</Text>
+      </Pressable>
 
       <Text style={styles.h2}>Account</Text>
       <Button title={signingOut ? 'Signing out…' : 'Sign out'} variant="ghost" onPress={onSignOut} disabled={signingOut} />

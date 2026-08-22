@@ -83,3 +83,11 @@ claude_desktop_config.json
 
 # PWA build output (built in Docker / by pnpm web:build)
 public/app/
+
+# Nutrition datasets built from third-party sources. The code that generates
+# these is committed; the data is not — it carries its own licence, and one of
+# them (INDB) has terms still to be confirmed. See ATTRIBUTIONS.md.
+data/indb-raw.json
+data/indb-curated.json
+*.INDB.xlsx
+Anuvaad_INDB_*.xlsx

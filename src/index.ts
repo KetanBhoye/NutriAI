@@ -31,6 +31,10 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
     adminApiKey: config.adminApiKey,
     adminEmail: process.env.ADMIN_EMAIL,
     adminPassword: process.env.ADMIN_PASSWORD,
+    // The curated Indian food library, when the deployment carries it. Absent
+    // by default: the file is built from a licensed dataset and is not in the
+    // repository. See ATTRIBUTIONS.md and scripts/indb-curate.ts.
+    curatedFoodsPath: process.env.CURATED_FOODS_PATH || resolve('data/indb-curated.json'),
   });
 
   const env: AppEnv = {
@@ -250,6 +254,21 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   app.get('/terms', (_req, res) => {
     res.sendFile(resolve(publicDir, 'terms.html'));
   });
+
+  /**
+   * Credit for the nutrition data, at a public URL.
+   *
+   * Not optional courtesy: Open Food Facts is ODbL, which requires attribution
+   * as a condition of use, and the Indian dish data is derived from ICMR-NIN's
+   * tables. The app links here from You → Data sources, so the credit sits
+   * where a user can find it rather than in a repository they will never open.
+   * See ATTRIBUTIONS.md for the full record, including terms still to confirm.
+   */
+  const attributionsPage = (_req: express.Request, res: express.Response) => {
+    res.sendFile(resolve(publicDir, 'attributions.html'));
+  };
+  app.get('/attributions', attributionsPage);
+  app.get('/credits', attributionsPage);
 
   // The PWA is a client-routed SPA: every /app/* path that isn't a built asset
   // must return index.html so a deep link or a home-screen launch into
