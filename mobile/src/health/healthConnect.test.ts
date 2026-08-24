@@ -101,4 +101,43 @@ describe('hasPermissions', () => {
     hc.getGrantedPermissions.mockRejectedValue(new Error('not initialised'));
     expect(await provider.hasPermissions!()).toBe(false);
   });
+
+  it('is true once Steps is granted', async () => {
+    hc.getGrantedPermissions.mockResolvedValue([{ accessType: 'read', recordType: 'Steps' }]);
+
+    expect(await provider.hasPermissions!()).toBe(true);
+  });
+
+  it('is false when everything BUT Steps was granted', async () => {
+    // The bug behind "my steps aren't syncing": Health Connect grants each
+    // record type separately, and this used to return true for any grant at
+    // all — so a weight-only permission read as connected while every sync
+    // came back empty, with nothing anywhere saying why.
+    hc.getGrantedPermissions.mockResolvedValue([
+      { accessType: 'read', recordType: 'Weight' },
+      { accessType: 'read', recordType: 'Distance' },
+    ]);
+
+    expect(await provider.hasPermissions!()).toBe(false);
+  });
+});
+
+describe('missingPermissions', () => {
+  it('names what was not granted, so the card can say which one', async () => {
+    hc.getGrantedPermissions.mockResolvedValue([
+      { accessType: 'read', recordType: 'Steps' },
+      { accessType: 'read', recordType: 'Weight' },
+    ]);
+
+    const missing = await provider.missingPermissions!();
+
+    expect(missing).not.toContain('Steps');
+    expect(missing).toContain('ActiveCaloriesBurned');
+  });
+
+  it('reports everything missing when the store cannot be read', async () => {
+    hc.getGrantedPermissions.mockRejectedValue(new Error('not initialised'));
+
+    expect(await provider.missingPermissions!()).toContain('Steps');
+  });
 });
