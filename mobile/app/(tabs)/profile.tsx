@@ -8,6 +8,7 @@ import { API_URL } from '@/config';
 import { colors, fonts, radius, type } from '@/theme';
 import { HealthSyncSection } from '@/features/health/HealthSyncSection';
 import { TokenCard } from '@/components/TokenCard';
+import { ProfileCard } from '@/features/profile/ProfileCard';
 import { RemindersCard } from '@/features/profile/RemindersCard';
 import { UpdateSection } from '@/features/updates/UpdateSection';
 
@@ -50,6 +51,11 @@ export default function Profile() {
           <Text style={styles.email}>{user?.email ?? ''}</Text>
         </View>
       </Card>
+
+      {/* Height, age, sex, activity level — the inputs behind every calorie
+          figure in the app, and until now settable only at onboarding. */}
+      <Text style={styles.h2}>Profile</Text>
+      <ProfileCard />
 
       <Text style={styles.h2}>Goals</Text>
       <Pressable style={styles.linkCard} onPress={() => router.push('/(tabs)/goals')}>

@@ -38,6 +38,7 @@ import { linkEntryToFood } from '../services/entry-linking.js';
 import { searchGlobalFoods } from '../services/food/global-repo.js';
 import { createProviderFromEnv, parseFoodLog } from '../services/llm/index.js';
 import { runCoachTurn } from '../services/coach/agent.js';
+import { runOnce } from '../services/coach/turn-cache.js';
 import { generateOnboardingPlan } from '../services/coach/onboarding-plan.js';
 import { generateWeeklyInsights, type WeeklyStats } from '../services/coach/weekly-insights.js';
 import { parseMealPhoto } from '../services/coach/photo-parse.js';
@@ -171,6 +172,13 @@ const coachChatSchema = z.object({
     .array(z.object({ role: z.enum(['user', 'model']), parts: z.array(z.any()) }))
     .max(30)
     .optional(),
+  /**
+   * A client-generated id for this user message, making the turn safe to
+   * retry. The streaming client re-sends the same message with the same id
+   * when its connection dies mid-turn — backgrounding the app does exactly
+   * that — and without this the agent runs again and logs the meal twice.
+   */
+  turn_id: z.string().min(8).max(64).optional(),
   // The date the user is viewing in the app; the agent defaults dated actions
   // (logging food, weigh-ins, "what did I eat") to it unless told otherwise.
   active_date: z
@@ -1477,7 +1485,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         res.flushHeaders();
       }
 
-      const result = await runCoachTurn({
+      const result = await runOnce(userId, parsed.data.turn_id, () =>
+        runCoachTurn({
         message: parsed.data.message,
         history: (parsed.data.history ?? []) as never,
         userId,
@@ -1500,7 +1509,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
               }
             }
           : undefined,
-      });
+        })
+      );
 
       if (streaming) {
         res.write(`${JSON.stringify({ type: 'done', ...result })}\n`);

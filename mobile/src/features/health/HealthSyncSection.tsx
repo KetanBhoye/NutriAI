@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { health, DailyHealth } from '@/health';
 import { syncToday } from '@/health/sync';
 import { clearHealthConnected, markHealthConnected, wasHealthConnected } from '@/health/permission';
@@ -43,6 +43,9 @@ export function HealthSyncSection() {
   /** Offer the settings shortcut only once a request has actually been refused. */
   const [denied, setDenied] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  /** Record types Health Connect has not granted, when it can tell us. */
+  const [missing, setMissing] = useState<string[]>([]);
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -56,6 +59,10 @@ export function HealthSyncSection() {
       // Granted outside the app — in Health Connect's own settings, which is
       // where the button below sends people. Without this the card would still
       // demand a connection the user had already made.
+      if (health.missingPermissions) {
+        setMissing(await health.missingPermissions().catch(() => []));
+      }
+
       if (health.hasPermissions && (await health.hasPermissions())) {
         try {
           const r = await health.getDailyHealth(new Date());
@@ -124,6 +131,19 @@ export function HealthSyncSection() {
       setLastSync(new Date().toLocaleTimeString());
       if (!posted) {
         setMessage('No metrics available to sync yet.');
+        setShowHelp(true);
+        return;
+      }
+      /**
+       * A sync that read no steps used to say "Synced ✓" — technically true,
+       * and the single most confusing thing the card could say to someone
+       * whose steps are missing. It was indistinguishable from working.
+       */
+      if (r.steps == null || r.steps === 0) {
+        setMessage(
+          `Synced ✓, but ${health.name} had no steps for today. That usually means nothing is writing steps to it yet.`
+        );
+        setShowHelp(true);
         return;
       }
       // Say which readings were ignored rather than quietly dropping them —
@@ -200,6 +220,102 @@ export function HealthSyncSection() {
       )}
 
       {message ? <Text style={[styles.message, failed && styles.messageFailed]}>{message}</Text> : null}
+
+      {/* The troubleshooting guide. Mirrors "Reminders not arriving?" above it,
+          for the same reason: this is a chain of four things that each fail
+          silently, and the app is the only place that can say which one. */}
+      {status === 'ready' || status === 'needs-permission' ? (
+        <Pressable onPress={() => setShowHelp((v) => !v)} style={styles.helpToggle}>
+          <Text style={styles.helpToggleText}>
+            {showHelp ? 'Hide' : 'Steps not syncing?'}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {showHelp ? <StepsHelp providerName={health.name} missing={missing} /> : null}
+    </View>
+  );
+}
+
+/**
+ * Why steps go missing, in the order it actually happens.
+ *
+ * Written for Android, and for vivo/iQOO in particular, where the default
+ * setup produces an empty Health Connect and no error anywhere: the phone's
+ * own step counter does not write to Health Connect, so every layer above it
+ * is working perfectly on top of no data.
+ */
+function StepsHelp({ providerName, missing }: { providerName: string; missing: string[] }) {
+  const stepsMissing = missing.includes('Steps');
+
+  return (
+    <View style={styles.help}>
+      <Text style={styles.helpIntro}>
+        Steps travel phone → {providerName} → NutriAI. Each part of that chain can be working
+        perfectly on top of an empty one before it, so work down the list in order.
+      </Text>
+
+      {stepsMissing ? (
+        <View style={styles.helpAlert}>
+          <Text style={styles.helpAlertText}>
+            NutriAI does not have permission to read Steps. That alone explains it — step 2 below
+            fixes it.
+          </Text>
+        </View>
+      ) : null}
+
+      <HelpStep
+        n="1"
+        title="Is anything writing steps into Health Connect?"
+        body={
+          'The usual cause on vivo and iQOO phones. The built-in health app (Jovi / vivo Health) counts your steps but does not always share them with Health Connect, so Health Connect itself is empty — and every app reading from it, including this one, correctly reports nothing.\n\n' +
+          'Check: open Health Connect → Data and access → Activity → Steps → See all entries. If today is empty, nothing is writing steps.\n\n' +
+          'Fix: give it a source. In vivo Health look for Settings → Health Connect / data sharing and turn it on. If there is no such option, install Google Fit — it counts steps itself and writes them to Health Connect automatically.'
+        }
+      />
+      <HelpStep
+        n="2"
+        title="Is NutriAI allowed to read Steps?"
+        body={
+          'Health Connect grants each data type separately, so weight can be allowed while steps is not.\n\n' +
+          'Open Health Connect → App permissions → NutriAI and turn on Steps. The "Open ' +
+          providerName +
+          ' settings" button on this card goes straight there.'
+        }
+      />
+      <HelpStep
+        n="3"
+        title="Is Health Connect itself present and current?"
+        body={
+          'On Android 13 it is a separate Play Store app; on Android 14 and later it is built in, under Settings → Security & privacy → Health Connect. An out-of-date copy can accept permissions and still return nothing, so update it in the Play Store.'
+        }
+      />
+      <HelpStep
+        n="4"
+        title="Is the phone letting NutriAI run?"
+        body={
+          'Funtouch OS is aggressive with background apps. Settings → Battery → Background power consumption management → NutriAI → allow background running, and turn off "deep optimisation" or sleep for it.\n\n' +
+          'NutriAI syncs whenever you open it, so this mostly affects how fresh the numbers are before you look — not whether they arrive at all.'
+        }
+      />
+      <HelpStep
+        n="5"
+        title="Health Connect has the steps but NutriAI does not?"
+        body={
+          'Then it is our bug, not your phone. Tap "Sync now" with the step count visible in Health Connect, and tell us both numbers and the time — that is enough to find it.'
+        }
+      />
+    </View>
+  );
+}
+
+function HelpStep({ n, title, body }: { n: string; title: string; body: string }) {
+  return (
+    <View style={styles.helpStep}>
+      <Text style={styles.helpStepTitle}>
+        {n}. {title}
+      </Text>
+      <Text style={styles.helpStepBody}>{body}</Text>
     </View>
   );
 }
@@ -227,4 +343,19 @@ const styles = StyleSheet.create({
   lastSync: { ...type.figureSmall, fontSize: 12, color: colors.textDim, textAlign: 'center', marginTop: 10 },
   message: { color: colors.accent, fontSize: 13, textAlign: 'center', marginTop: 12, lineHeight: 18 },
   messageFailed: { color: colors.danger },
+  helpToggle: { marginTop: 14, alignSelf: 'flex-start' },
+  helpToggleText: { ...type.caption, fontFamily: fonts.semibold, color: colors.accent },
+  help: { marginTop: 10, gap: 14 },
+  helpIntro: { ...type.caption, color: colors.textDim, lineHeight: 19 },
+  helpAlert: {
+    borderWidth: 1,
+    borderColor: colors.warn,
+    backgroundColor: 'rgba(251,191,36,0.08)',
+    borderRadius: 10,
+    padding: 12,
+  },
+  helpAlertText: { ...type.caption, color: colors.text, lineHeight: 19 },
+  helpStep: { gap: 4 },
+  helpStepTitle: { ...type.caption, fontFamily: fonts.semibold, color: colors.text, fontSize: 13.5 },
+  helpStepBody: { ...type.caption, color: colors.textDim, lineHeight: 19 },
 });

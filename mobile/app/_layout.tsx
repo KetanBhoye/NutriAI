@@ -63,9 +63,15 @@ function AuthGate() {
 
     if (!user && (inApp || inOnboarding)) {
       router.replace('/login');
-    } else if (user && !user.onboarded && !inOnboarding) {
+    } else if (user && user.onboarded === false && !inOnboarding) {
+      // `=== false`, never falsy. On a cold start the remembered profile is
+      // shown before /api/me answers, and that profile can predate the flag or
+      // simply not carry it — which sent a fully set-up user to "What should I
+      // call you?" on every launch, and stranded them there when offline.
+      // Undefined means "not known yet", and the answer to that is to leave
+      // people where they are. Same rule as the consent gate.
       router.replace('/onboarding');
-    } else if (user && user.onboarded && !inApp) {
+    } else if (user && user.onboarded !== false && !inApp) {
       router.replace('/(tabs)');
     }
   }, [user, loading, segments]);

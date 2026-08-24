@@ -7,12 +7,32 @@ export function getAiStatus(): Promise<{ configured: boolean }> {
   return api<{ configured: boolean }>('/api/ai/status').catch(() => ({ configured: false }));
 }
 
-export function coachChat(input: {
+export interface CoachTurnInput {
   message: string;
   history: CoachHistoryTurn[];
   active_date?: string;
-}): Promise<CoachTurn> {
+  /**
+   * Identifies this user message, so sending it twice runs it once.
+   *
+   * The streaming path below retries on a broken connection, and a
+   * backgrounded app breaks the connection *after* the agent has already
+   * written entries — which logged meals twice. The retry carries the same id,
+   * and the server replays the original answer instead of running again.
+   */
+  turn_id?: string;
+}
+
+export function coachChat(input: CoachTurnInput): Promise<CoachTurn> {
   return api('/api/coach/chat', { method: 'POST', body: input, timeoutMs: 45_000 });
+}
+
+/**
+ * An id for one user message. Not a UUID: this only has to be unique among a
+ * single user's recent turns, and `crypto.randomUUID` is not on every RN
+ * runtime this app supports.
+ */
+export function newTurnId(): string {
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
@@ -24,20 +44,29 @@ export function coachChat(input: {
  * for the wording.
  *
  * Falls back to the plain request on any streaming failure, because progress
- * is a nicety and the answer is not. The fallback re-sends the message: the
- * stream only fails before a `done` line, so nothing was applied twice.
+ * is a nicety and the answer is not.
+ *
+ * The fallback re-sends the message, which used to assume a broken stream
+ * meant nothing had been applied. It does not: backgrounding the app kills the
+ * connection while the server keeps running the turn, so the retry logged
+ * every meal a second time. Both attempts now carry the same `turn_id`, and
+ * the server runs it once.
  */
 export async function coachChatStreaming(
-  input: { message: string; history: CoachHistoryTurn[]; active_date?: string },
+  input: CoachTurnInput,
   onStep: (tools: string[]) => void
 ): Promise<CoachTurn> {
+  // One id for both attempts. Generated here rather than by the caller so the
+  // fallback below cannot accidentally send a different one — which would make
+  // the retry a second turn again, and the duplicate entries would be back.
+  const turn: CoachTurnInput = { ...input, turn_id: input.turn_id ?? newTurnId() };
   try {
     let done: CoachTurn | null = null;
     let failure: string | null = null;
 
     await readNdjson<{ type: string; tools?: string[]; error?: string } & Partial<CoachTurn>>({
       url: `${API_URL}/api/coach/chat`,
-      body: { ...input, stream: true },
+      body: { ...turn, stream: true },
       cookie: await loadStoredCookie(),
       timeoutMs: 120_000,
       onLine: (line) => {
@@ -55,7 +84,7 @@ export async function coachChatStreaming(
     // A refused session or a busy model is a real answer — retrying without
     // the stream would only produce the same thing more slowly.
     if (e instanceof ApiError && (e.status === 401 || e.status === 403 || e.status === 429)) throw e;
-    return coachChat(input);
+    return coachChat(turn);
   }
 }
 

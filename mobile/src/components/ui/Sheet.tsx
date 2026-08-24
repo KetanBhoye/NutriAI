@@ -23,12 +23,21 @@ interface SheetProps {
 /**
  * How tall the keyboard currently is on Android, or 0 elsewhere.
  *
- * Android's `adjustResize` resizes the *activity's* window, not the separate
- * window a transparent `Modal` lives in, so `KeyboardAvoidingView` had nothing
- * to react to and its `height` behavior measured the full screen instead —
- * which is what made the sheet jump and the keyboard flicker open and shut
- * while typing in the food search. Measuring the keyboard directly and padding
- * the sheet by it is stable in a modal window.
+ * Android's `adjustResize` was understood to resize only the *activity's*
+ * window and not the separate window a transparent `Modal` lives in, so this
+ * measured the keyboard and padded the sheet by it.
+ *
+ * On current Android that is no longer true — the modal window is resized as
+ * well — and the two compensations stacked: the sheet rose by twice the
+ * keyboard height, leaving a gap the size of the keyboard between it and the
+ * keyboard, with the lower half of the form pushed off screen. It read as
+ * "the panel has a huge gap" on the photo sheet and as "the editor closes the
+ * moment I touch a macro field" on the entry editor, because the fields
+ * vanished upward and a tap in the gap landed on the backdrop.
+ *
+ * Rather than swap one assumption for another, `Sheet` now measures whether
+ * the window it is in has already been resized, and only lifts the sheet
+ * itself when it hasn't. See the comment on `alreadyResized`.
  */
 function useAndroidKeyboardHeight(): number {
   const [height, setHeight] = useState(0);
@@ -50,6 +59,24 @@ function useAndroidKeyboardHeight(): number {
 export function Sheet({ visible, onClose, title, children }: SheetProps) {
   const keyboard = useAndroidKeyboardHeight();
   const { height: screenHeight } = useWindowDimensions();
+  /** The height this sheet's container was actually given, from onLayout. */
+  const [wrapHeight, setWrapHeight] = useState(0);
+
+  /**
+   * Has the OS already made room for the keyboard?
+   *
+   * If the container we were laid out in is much shorter than the screen while
+   * a keyboard is up, the window was resized and the space is already gone —
+   * lifting the sheet again would double it. Half the keyboard height is the
+   * threshold because it only has to tell "resized" from "not resized", and a
+   * navigation bar or a rounded-display inset shaves a few pixels either way.
+   *
+   * Measured rather than assumed on purpose: this behaviour differs by Android
+   * version, and the previous version of this file was correct when it was
+   * written and wrong later.
+   */
+  const alreadyResized = keyboard > 0 && wrapHeight > 0 && wrapHeight < screenHeight - keyboard / 2;
+  const lift = alreadyResized ? 0 : keyboard;
 
   /**
    * Dismiss the keyboard before the modal goes away. Tearing down a focused
@@ -72,34 +99,50 @@ export function Sheet({ visible, onClose, title, children }: SheetProps) {
         style={styles.wrap}
         pointerEvents="box-none"
       >
+        {/* The measurement lives on a plain View, not on the
+            KeyboardAvoidingView: that component forwards its own layout event
+            after React has released it, so reading `nativeEvent` there throws
+            the event-pooling warning and yields nothing. */}
         <View
-          style={[
-            styles.sheet,
-            keyboard > 0 && { marginBottom: keyboard, maxHeight: screenHeight * 0.92 - keyboard },
-          ]}
+          style={styles.wrap}
+          pointerEvents="box-none"
+          onLayout={(e) => {
+            const measured = e.nativeEvent.layout.height;
+            // Only store a real change, or onLayout -> setState -> layout
+            // loops forever.
+            setWrapHeight((previous) => (Math.abs(previous - measured) > 1 ? measured : previous));
+          }}
         >
-          <View style={styles.grabber} />
-          {title ? (
-            <View style={styles.header}>
-              <Text style={styles.title}>{title}</Text>
-              <Pressable onPress={close} hitSlop={12}>
-                <Text style={styles.close}>Close</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          {/* Scrollable so the keyboard can shrink the sheet without clipping
-              the form. `handled` keeps a single tap working on buttons while
-              the keyboard is up, instead of the first tap only dismissing it. */}
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            // `interactive` is iOS-only; Android silently gets nothing, so give
-            // it the drag-to-dismiss it does support.
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.body}
+          <View
+            style={[
+              styles.sheet,
+              lift > 0 && { marginBottom: lift },
+              keyboard > 0 && { maxHeight: (alreadyResized ? wrapHeight : screenHeight) * 0.92 },
+            ]}
           >
-            {children}
-          </ScrollView>
+            <View style={styles.grabber} />
+            {title ? (
+              <View style={styles.header}>
+                <Text style={styles.title}>{title}</Text>
+                <Pressable onPress={close} hitSlop={12}>
+                  <Text style={styles.close}>Close</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {/* Scrollable so the keyboard can shrink the sheet without clipping
+                the form. `handled` keeps a single tap working on buttons while
+                the keyboard is up, instead of the first tap only dismissing it. */}
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              // `interactive` is iOS-only; Android silently gets nothing, so
+              // give it the drag-to-dismiss it does support.
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.body}
+            >
+              {children}
+            </ScrollView>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>

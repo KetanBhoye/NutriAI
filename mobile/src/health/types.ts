@@ -29,8 +29,16 @@ export interface HealthProvider {
   availability?(): Promise<HealthAvailability>;
   /** Prompt for read access. Resolves true once permission is granted. */
   requestPermissions(): Promise<boolean>;
-  /** Whether we already hold at least one read permission. */
+  /**
+   * Whether the permission that matters — steps — is granted.
+   *
+   * Named for "can we read anything useful", not "did the user tap allow
+   * once": Health Connect grants per record type, and treating a weight-only
+   * grant as connected made a silently empty sync look like a working one.
+   */
   hasPermissions?(): Promise<boolean>;
+  /** Record types we asked for but were not granted, for a specific message. */
+  missingPermissions?(): Promise<string[]>;
   /**
    * Opens the OS health-store settings for this app.
    *

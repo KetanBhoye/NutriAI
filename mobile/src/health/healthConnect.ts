@@ -24,6 +24,14 @@ const READ_PERMISSIONS = [
   { accessType: 'read', recordType: 'Weight' },
 ] as const;
 
+/** True when the Steps read permission is in the granted list. */
+function grantsSteps(granted: unknown): boolean {
+  return (
+    Array.isArray(granted) &&
+    granted.some((p: { recordType?: string }) => p?.recordType === 'Steps')
+  );
+}
+
 async function ensureInit(): Promise<void> {
   const ok = await initialize();
   if (!ok) throw new Error('Health Connect could not be initialised on this device.');
@@ -53,9 +61,30 @@ export const healthConnectProvider: HealthProvider = {
     try {
       await ensureInit();
       const granted = await getGrantedPermissions();
-      return Array.isArray(granted) && granted.length > 0;
+      // Steps specifically, not "any permission at all". Health Connect lets
+      // someone tick weight and leave steps unticked, and the old check called
+      // that connected — the card said everything was fine while every sync
+      // read nothing, which is exactly what "my steps aren't syncing" looks
+      // like from the outside.
+      return grantsSteps(granted);
     } catch {
       return false;
+    }
+  },
+
+  /** Which of the permissions we asked for are actually granted. */
+  async missingPermissions() {
+    try {
+      await ensureInit();
+      const granted = await getGrantedPermissions();
+      const have = new Set(
+        (Array.isArray(granted) ? granted : []).map(
+          (p: { recordType?: string }) => p?.recordType ?? ''
+        )
+      );
+      return READ_PERMISSIONS.map((p) => p.recordType).filter((type) => !have.has(type));
+    } catch {
+      return READ_PERMISSIONS.map((p) => p.recordType);
     }
   },
 
@@ -83,7 +112,7 @@ export const healthConnectProvider: HealthProvider = {
 
     try {
       const granted = await requestPermission(READ_PERMISSIONS as any);
-      if (Array.isArray(granted) && granted.length > 0) return true;
+      if (grantsSteps(granted)) return true;
     } catch {
       // Fall through: the re-check below is more reliable than this throw.
     }
