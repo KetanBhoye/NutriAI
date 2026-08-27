@@ -1026,7 +1026,15 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       // Every weigh-in inside the plan (or the recent past when there's no
       // plan), so the app can plot the day-to-day line against the baseline
       // rather than only the weekly markers the glide path exposes.
-      const today = new Date().toISOString().split('T')[0]!;
+      /**
+       * The client's day, not UTC's — see services/client-date.ts.
+       *
+       * `planProgress` filters weigh-ins to `recorded_date <= today` and dates
+       * the glide path from it, so a UTC day meant that for the first hours of
+       * every morning east of UTC the app dropped today's weigh-in and judged
+       * the plan against yesterday's line.
+       */
+      const today = clientDate(req.query.date);
       const windowStart =
         plan?.start_date ?? new Date(Date.now() - 90 * 86_400_000).toISOString().split('T')[0]!;
       const dailyWeights = weighIns

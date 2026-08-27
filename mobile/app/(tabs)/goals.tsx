@@ -6,6 +6,7 @@ import { enqueueActivity, enqueueGoals, flush as flushQueue, subscribeRejections
 import { cached, readCache } from '@/cache';
 import { emitGoalsChanged } from '@/goalsBus';
 import {
+  Accordion,
   Button,
   Card,
   EmptyState,
@@ -18,7 +19,7 @@ import {
   TextField,
 } from '@/components/ui';
 import { colors, fonts, statusColor, type } from '@/theme';
-import { addDays, todayISO } from '@/dates';
+import { addDays, parseISODate, todayISO } from '@/dates';
 import {
   ACTIVITY,
   ActivityLevel,
@@ -33,11 +34,17 @@ import {
 } from '@/nutrition';
 import { EXERCISE_KINDS, describeExercise, netExerciseKcal } from '@/exercise';
 import { treadmillSummary } from '@/treadmill';
+import {
+  paceForTargetDate,
+  paceWarning,
+  planStart,
+  targetDateForPace,
+} from '@/features/goals/planStart';
 import { CelebrationCard } from '@/features/celebrate/CelebrationCard';
 import { pickMoment, type Moment } from '@/features/celebrate/moments';
 import { rememberMoment, seenMoments } from '@/features/celebrate/seen';
 import { autoSyncHealth } from '@/health/autoSync';
-import { GoalsPayload, ProfileBasics } from '@/types';
+import { GoalsPayload, ProfileBasics, GoalPlan } from '@/types';
 import { editorTargets } from '@/features/goals/editorTargets';
 import { GlideChart } from '@/features/goals/GlideChart';
 import { WeightTrendChart } from '@/features/goals/WeightTrendChart';
@@ -45,6 +52,54 @@ import { ProgressFlag } from '@/features/goals/ProgressFlag';
 import { StepsChart } from '@/features/goals/StepsChart';
 
 const STATUS_LABEL = { ahead: 'AHEAD', on: 'ON PACE', watch: 'WATCH', behind: 'BEHIND', empty: '—' } as const;
+
+/**
+ * Common finish lines, as offsets from today.
+ *
+ * Offered because most people arrive with a rough horizon rather than a date —
+ * "a couple of months" — and typing 2026-11-05 to discover it implies 1.4 kg a
+ * week is a worse way to find that out than tapping "3 months" and reading the
+ * pace off.
+ */
+const DATE_PRESETS = [
+  { days: 28, label: '4 weeks' },
+  { days: 56, label: '8 weeks' },
+  { days: 84, label: '3 months' },
+  { days: 168, label: '6 months' },
+  { days: 273, label: '9 months' },
+  { days: 365, label: '1 year' },
+];
+
+/**
+ * The goal weight a save should use.
+ *
+ * The editor leaves "Goal weight" blank on purpose — its placeholder shows
+ * what the plan is currently aiming at, so filling the field in would be a
+ * choice the user did not make. But blank then fell back to *today's weight*,
+ * which quietly turned every edited plan into "maintain at current weight":
+ * pick a goal and a pace, leave the weight alone, save, and the target you had
+ * been working towards is gone, replaced by "NO TARGET".
+ *
+ * Blank now means "keep what the plan already aims at".
+ */
+function goalWeightFor(
+  goal: Goal | null,
+  typed: number | null,
+  currentWeight: number,
+  plan: GoalPlan | null | undefined
+): number {
+  if (goal === 'maintain') return currentWeight;
+  if (typed != null) return typed;
+  // A saved goal that is the same as its start weight is not a target at all,
+  // so there is nothing worth preserving.
+  if (plan && plan.goal_weight_kg !== plan.start_weight_kg) return plan.goal_weight_kg;
+  return currentWeight;
+}
+
+/** "2026-11-21" → "21 Nov". */
+function shortDate(iso: string): string {
+  return parseISODate(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
 
 interface PlanForm {
   start_weight_kg: number;
@@ -152,6 +207,33 @@ export default function Plan() {
     [editTdee, editWeight, editGoal, editRate]
   );
 
+  /**
+   * Whether the user is choosing a pace and reading off the date, or choosing
+   * the date and reading off the pace. The same plan either way — this only
+   * decides which end they hold.
+   */
+  const [editBy, setEditBy] = useState<'pace' | 'date'>('pace');
+  /** The finish line, when they are picking it directly. */
+  const [editTargetDate, setEditTargetDate] = useState<string | null>(null);
+
+  /** The pace a chosen target date implies — the mirror of picking a pace. */
+  const editDerivedPace = useMemo(() => {
+    if (editBy !== 'date' || !editTargetDate) return null;
+    const start = planStart(
+      editWeight,
+      data?.plan
+        ? { start_weight_kg: data.plan.start_weight_kg, start_date: data.plan.start_date }
+        : null
+    );
+    return paceForTargetDate(start, goalWeightFor(editGoal, editTargetWeight, editWeight, data?.plan), editTargetDate);
+  }, [editBy, editTargetDate, editWeight, editGoal, editTargetWeight, data?.plan]);
+
+  /** Said, not enforced: it is the user's body, but a crash pace should say so. */
+  const editPaceWarning = useMemo(
+    () => paceWarning(editDerivedPace, editWeight),
+    [editDerivedPace, editWeight]
+  );
+
   const editDelta = editGoal === 'maintain' || editRate === null ? 0 : dailyDelta(editRate);
   const editRateOptions = editGoal ? RATE_OPTIONS[editGoal] : [];
 
@@ -160,21 +242,38 @@ export default function Plan() {
   // fire off pre-selected values the way it used to.
   useEffect(() => {
     if (!canCompute || !editMacros || !editGoal) return;
-    const goalW = editGoal === 'maintain' ? editWeight : (editTargetWeight ?? editWeight);
-    let targetDate: string;
-    if (editGoal !== 'maintain' && editTargetWeight && editRate) {
-      const weeks = Math.max(1, Math.abs(editTargetWeight - editWeight) / editRate);
-      targetDate = addDays(todayISO(), Math.round(weeks * 7));
-    } else {
-      targetDate = addDays(todayISO(), 56);
-    }
+    const goalW = goalWeightFor(editGoal, editTargetWeight, editWeight, data?.plan);
+
+    /**
+     * The start is one fact — a weight on a date — and it moves as a pair.
+     *
+     * This used to bank today's weight as the start while leaving the start
+     * date at the original, so the glide path was redrawn demanding the whole
+     * remaining loss over a window that had mostly already elapsed. Saving the
+     * editor without changing anything moved a nearly-on-track plan to "1.1 kg
+     * behind plan", and it compounded on every further save. See
+     * features/goals/planStart.ts.
+     */
+    const start = planStart(
+      editWeight,
+      data?.plan
+        ? { start_weight_kg: data.plan.start_weight_kg, start_date: data.plan.start_date }
+        : null
+    );
+
+    // Dated from the plan's start, not from today — dating from today stretches
+    // an existing plan's finish line every time it is saved.
+    const targetDate =
+      editBy === 'date' && editTargetDate
+        ? editTargetDate
+        : editGoal !== 'maintain' && editTargetWeight && editRate
+          ? targetDateForPace(start, goalW, editRate)
+          : addDays(start.start_date, 56);
+
     setForm((f) => ({
       ...f,
-      start_weight_kg: editWeight,
-      // Re-baseline the start only for a brand-new plan. Moving an existing
-      // plan's start date to today would throw away the glide path you've been
-      // weighing in against.
-      start_date: data?.plan ? f.start_date : todayISO(),
+      start_weight_kg: start.start_weight_kg,
+      start_date: start.start_date,
       goal_weight_kg: goalW,
       target_date: targetDate,
       daily_calorie_goal: editMacros.calories,
@@ -182,7 +281,17 @@ export default function Plan() {
       daily_carbs_goal_g: editMacros.carbs_g,
       daily_fat_goal_g: editMacros.fat_g,
     }));
-  }, [canCompute, editGoal, editRate, editWeight, editTargetWeight, editMacros, data?.plan]);
+  }, [
+    canCompute,
+    editGoal,
+    editRate,
+    editWeight,
+    editTargetWeight,
+    editMacros,
+    data?.plan,
+    editBy,
+    editTargetDate,
+  ]);
 
   /**
    * Picking a goal clears the pace rather than defaulting it: the pace options
@@ -919,47 +1028,57 @@ export default function Plan() {
             ) : null}
           </Card>
 
-          {/* Daily weigh-ins against the plan line. Falls back to the weekly
-              glide path for payloads cached before the daily series existed. */}
-          <View style={styles.chartWrap} onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}>
-            {data.weigh_ins?.length ? (
-              <WeightTrendChart
-                plan={data.plan!}
-                weighIns={data.weigh_ins}
-                progress={data.progress}
-                width={chartWidth}
-              />
-            ) : data.glide_path.length ? (
-              <GlideChart weeks={data.glide_path} tolerance={data.plan!.tolerance_kg} width={chartWidth} />
-            ) : (
-              <EmptyState message="Log your weight for a few days and the trend against your plan appears here." />
-            )}
-          </View>
+          {/* The trend is the answer to "am I on track?", so it is the one
+              section that opens by itself. Everything below it is reference —
+              looked at weekly, not daily — and folds away. */}
+          <Accordion
+            title="Weight trend"
+            defaultOpen
+            summary={data.progress?.actual_kg ? `${data.progress.actual_kg.toFixed(1)} kg` : null}
+          >
+            <View style={styles.chartWrap} onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}>
+              {data.weigh_ins?.length ? (
+                <WeightTrendChart
+                  plan={data.plan!}
+                  weighIns={data.weigh_ins}
+                  progress={data.progress}
+                  width={chartWidth}
+                />
+              ) : data.glide_path.length ? (
+                <GlideChart weeks={data.glide_path} tolerance={data.plan!.tolerance_kg} width={chartWidth} />
+              ) : (
+                <EmptyState message="Log your weight for a few days and the trend against your plan appears here." />
+              )}
+            </View>
+          </Accordion>
 
-          <StepsChart activity={data.activity} goal={data.plan!.daily_step_goal} />
+          <Accordion
+            title="Daily targets"
+            summary={data.macros.calories ? `${data.macros.calories.toLocaleString()} kcal` : null}
+          >
+            <View style={styles.targets}>
+              <TargetCard label="Calories" value={data.macros.calories ?? '—'} stripe={colors.cyan} />
+              <TargetCard label="Protein" value={data.macros.protein_g ?? '—'} unit="g" stripe={colors.accent} />
+              <TargetCard label="Steps" value={data.plan!.daily_step_goal?.toLocaleString() ?? '—'} stripe={colors.warn} />
+              <TargetCard label="Training" value={data.plan!.weekly_training_days ?? '—'} unit="/wk" stripe={colors.purple} />
+            </View>
+          </Accordion>
+
+          <Accordion title="Steps">
+            <StepsChart activity={data.activity} goal={data.plan!.daily_step_goal} />
+          </Accordion>
 
           {recentExercise.length ? (
-            <>
-              <Text style={styles.h2}>Sessions logged</Text>
-              <Card>
-                {recentExercise.map((a) => (
-                  <View key={a.activity_date} style={styles.wrow}>
-                    <Text style={styles.wdate}>{a.activity_date}</Text>
-                    <Text style={styles.wval}>{describeExercise(a.exercise_type!, a.exercise_minutes!)}</Text>
-                    <Text style={styles.wproj}>+{(a.exercise_kcal ?? 0).toLocaleString()} kcal</Text>
-                  </View>
-                ))}
-              </Card>
-            </>
+            <Accordion title="Sessions logged" summary={`${recentExercise.length}`}>
+              {recentExercise.map((a) => (
+                <View key={a.activity_date} style={styles.wrow}>
+                  <Text style={styles.wdate}>{a.activity_date}</Text>
+                  <Text style={styles.wval}>{describeExercise(a.exercise_type!, a.exercise_minutes!)}</Text>
+                  <Text style={styles.wproj}>+{(a.exercise_kcal ?? 0).toLocaleString()} kcal</Text>
+                </View>
+              ))}
+            </Accordion>
           ) : null}
-
-          <Text style={styles.h2}>Daily targets</Text>
-          <View style={styles.targets}>
-            <TargetCard label="Calories" value={data.macros.calories ?? '—'} stripe={colors.cyan} />
-            <TargetCard label="Protein" value={data.macros.protein_g ?? '—'} unit="g" stripe={colors.accent} />
-            <TargetCard label="Steps" value={data.plan!.daily_step_goal?.toLocaleString() ?? '—'} stripe={colors.warn} />
-            <TargetCard label="Training" value={data.plan!.weekly_training_days ?? '—'} unit="/wk" stripe={colors.purple} />
-          </View>
 
           <Text style={styles.h2}>Weekly deficit</Text>
           {data.weekly_deficit.length === 0 ? (
@@ -1050,6 +1169,90 @@ export default function Plan() {
 
               {editRateOptions.length ? (
                 <>
+                  {/* Two ways to describe the same plan: pick the pace and read
+                      off the finish date, or pick the date and read off the
+                      pace. Neither is more correct — people arrive with one or
+                      the other already fixed ("half a kilo a week" / "before
+                      the wedding"). */}
+                  <Text style={styles.formH}>Plan by</Text>
+                  <PillGroup
+                    columns={2}
+                    options={[
+                      { value: 'pace', label: 'A pace' },
+                      { value: 'date', label: 'A target date' },
+                    ]}
+                    value={editBy}
+                    onChange={(v) => {
+                      const mode = v as 'pace' | 'date';
+                      setEditBy(mode);
+                      // Carry the current answer across, so switching views
+                      // shows the same plan from the other side instead of an
+                      // empty form.
+                      if (mode === 'date' && !editTargetDate) {
+                        setEditTargetDate(form.target_date);
+                      }
+                      if (mode === 'pace' && editTargetDate && editDerivedPace !== null) {
+                        setEditRate(Math.abs(editDerivedPace));
+                      }
+                    }}
+                  />
+                  <View style={styles.fieldGroupSpacer} />
+
+                  {editBy === 'date' ? (
+                    <>
+                      <Text style={styles.formH}>
+                        Reach it by{' '}
+                        {editDerivedPace !== null ? (
+                          <Text style={styles.deltaHint}>
+                            ≈ {Math.abs(editDerivedPace).toFixed(2)} kg/week
+                          </Text>
+                        ) : null}
+                      </Text>
+                      <PillGroup
+                        columns={3}
+                        options={DATE_PRESETS.map((preset) => ({
+                          value: String(preset.days),
+                          label: preset.label,
+                          tag: shortDate(addDays(todayISO(), preset.days)),
+                        }))}
+                        value={
+                          editTargetDate
+                            ? String(
+                                DATE_PRESETS.find(
+                                  (preset) =>
+                                    addDays(todayISO(), preset.days) === editTargetDate
+                                )?.days ?? ''
+                              )
+                            : null
+                        }
+                        onChange={(v) => setEditTargetDate(addDays(todayISO(), Number(v)))}
+                      />
+                      <View style={styles.fieldGroupSpacer} />
+                      <TextField
+                        label="…or an exact date (YYYY-MM-DD)"
+                        placeholder="2026-12-31"
+                        autoCapitalize="none"
+                        value={editTargetDate ?? ''}
+                        onChangeText={(v) => setEditTargetDate(v.trim() || null)}
+                      />
+                      {editTargetDate && editDerivedPace === null ? (
+                        <Text style={styles.dateError}>
+                          That date is on or before the plan's start, so there's no time to reach
+                          the goal in.
+                        </Text>
+                      ) : null}
+                      {editPaceWarning ? (
+                        <Text style={styles.dateWarn}>{editPaceWarning}</Text>
+                      ) : null}
+                      {editDerivedPace !== null && editDerivedPace !== 0 ? (
+                        <Text style={styles.deltaHint}>
+                          ≈ {dailyDelta(Math.abs(editDerivedPace))} kcal/day{' '}
+                          {editDerivedPace < 0 ? 'deficit' : 'surplus'}
+                        </Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
                   <Text style={styles.formH}>
                     How fast?{' '}
                     {editRate !== null ? (
@@ -1075,6 +1278,8 @@ export default function Plan() {
                     value={editRate !== null ? String(editRate) : null}
                     onChange={(v) => setEditRate(Number(v))}
                   />
+                    </>
+                  )}
                   <View style={styles.fieldGroupSpacer} />
                   <TextField
                     label="Goal weight (kg) — optional"
@@ -1371,6 +1576,8 @@ const styles = StyleSheet.create({
   optionList: { gap: 8 },
   targetsNote: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: -2, marginBottom: 10 },
   /** Gap between a PillGroup and a following labelled field. */
+  dateError: { ...type.caption, color: colors.danger, marginTop: 8 },
+  dateWarn: { ...type.caption, color: colors.warn, marginTop: 8, lineHeight: 18 },
   fieldGroupSpacer: { height: 14 },
   maintLine: { color: colors.accent, fontSize: 13, marginTop: 8 },
   deltaHint: { color: colors.accent, fontSize: 11, fontFamily: fonts.regular },

@@ -1,8 +1,16 @@
 import { api } from './client';
+import { todayISO } from '../dates';
 import { GoalPlan, GoalsPayload } from '../types';
 
+/**
+ * Sends the phone's calendar day, because the server cannot know it.
+ *
+ * Plan progress filters weigh-ins to "on or before today" and dates the glide
+ * path from it, so a UTC day dropped this morning's weigh-in and judged the
+ * plan against yesterday's line for anyone east of UTC.
+ */
 export function getGoals(): Promise<GoalsPayload> {
-  return api('/api/goals');
+  return api(`/api/goals?date=${todayISO()}`);
 }
 
 export type GoalPlanInput = GoalPlan & {

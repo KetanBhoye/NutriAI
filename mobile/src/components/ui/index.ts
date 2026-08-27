@@ -1,4 +1,5 @@
 export * from './Screen';
+export * from './Accordion';
 export * from './Card';
 export * from './Button';
 export * from './TextField';
