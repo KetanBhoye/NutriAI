@@ -37,8 +37,7 @@ import { treadmillSummary } from '@/treadmill';
 import {
   paceForTargetDate,
   paceWarning,
-  planStart,
-  targetDateForPace,
+  planShape,
 } from '@/features/goals/planStart';
 import { CelebrationCard } from '@/features/celebrate/CelebrationCard';
 import { pickMoment, type Moment } from '@/features/celebrate/moments';
@@ -69,32 +68,6 @@ const DATE_PRESETS = [
   { days: 273, label: '9 months' },
   { days: 365, label: '1 year' },
 ];
-
-/**
- * The goal weight a save should use.
- *
- * The editor leaves "Goal weight" blank on purpose — its placeholder shows
- * what the plan is currently aiming at, so filling the field in would be a
- * choice the user did not make. But blank then fell back to *today's weight*,
- * which quietly turned every edited plan into "maintain at current weight":
- * pick a goal and a pace, leave the weight alone, save, and the target you had
- * been working towards is gone, replaced by "NO TARGET".
- *
- * Blank now means "keep what the plan already aims at".
- */
-function goalWeightFor(
-  goal: Goal | null,
-  typed: number | null,
-  currentWeight: number,
-  plan: GoalPlan | null | undefined
-): number {
-  if (goal === 'maintain') return currentWeight;
-  if (typed != null) return typed;
-  // A saved goal that is the same as its start weight is not a target at all,
-  // so there is nothing worth preserving.
-  if (plan && plan.goal_weight_kg !== plan.start_weight_kg) return plan.goal_weight_kg;
-  return currentWeight;
-}
 
 /** "2026-11-21" → "21 Nov". */
 function shortDate(iso: string): string {
@@ -219,13 +192,16 @@ export default function Plan() {
   /** The pace a chosen target date implies — the mirror of picking a pace. */
   const editDerivedPace = useMemo(() => {
     if (editBy !== 'date' || !editTargetDate) return null;
-    const start = planStart(
-      editWeight,
-      data?.plan
-        ? { start_weight_kg: data.plan.start_weight_kg, start_date: data.plan.start_date }
-        : null
-    );
-    return paceForTargetDate(start, goalWeightFor(editGoal, editTargetWeight, editWeight, data?.plan), editTargetDate);
+    const shape = planShape({
+      currentWeightKg: editWeight,
+      goal: editGoal,
+      typedGoalWeightKg: editTargetWeight,
+      typedTargetDate: editTargetDate,
+      ratePerWeek: editRate,
+      existing: data?.plan ?? null,
+    });
+    // The same rule the save uses, so the pace previewed is the pace saved.
+    return paceForTargetDate(shape, shape.goal_weight_kg, editTargetDate);
   }, [editBy, editTargetDate, editWeight, editGoal, editTargetWeight, data?.plan]);
 
   /** Said, not enforced: it is the user's body, but a crash pace should say so. */
@@ -240,9 +216,49 @@ export default function Plan() {
   // Push the computed plan into the form. `editMacros` is null until the user
   // has actually chosen an activity level, a goal and a pace, so this cannot
   // fire off pre-selected values the way it used to.
+  /**
+   * The plan's shape — where it starts, what it aims at, when it ends.
+   *
+   * Separate from the macro effect below, and deliberately so. Everything here
+   * is something the user typed or tapped directly; the macros are *computed*
+   * and rightly wait until enough has been chosen to compute them. Both used
+   * to live in one effect gated on the macros being computable, which meant
+   * changing a goal weight or a target date without also re-picking an
+   * activity level and a pace never reached `form` at all — and since `form`
+   * still held the saved plan it stayed valid, so Save wrote the old plan
+   * straight back. The editor looked like it was ignoring you.
+   *
+   * Guarded on the user having expressed some intent, so merely opening the
+   * editor and closing it does not re-baseline anything.
+   */
+  useEffect(() => {
+    const touched = editGoal !== null || editTargetWeight !== null || editTargetDate !== null;
+    if (!touched) return;
+
+    const shape = planShape({
+      currentWeightKg: editWeight,
+      goal: editGoal,
+      typedGoalWeightKg: editTargetWeight,
+      typedTargetDate: editBy === 'date' ? editTargetDate : null,
+      ratePerWeek: editRate,
+      existing: data?.plan ?? null,
+    });
+
+    setForm((f) => ({ ...f, ...shape }));
+  }, [
+    editGoal,
+    editRate,
+    editWeight,
+    editTargetWeight,
+    editTargetDate,
+    editBy,
+    data?.plan,
+  ]);
+
+  // The computed half: daily targets, which stay as they are until the user
+  // has chosen enough for the maths to mean anything.
   useEffect(() => {
     if (!canCompute || !editMacros || !editGoal) return;
-    const goalW = goalWeightFor(editGoal, editTargetWeight, editWeight, data?.plan);
 
     /**
      * The start is one fact — a weight on a date — and it moves as a pair.
@@ -254,28 +270,8 @@ export default function Plan() {
      * behind plan", and it compounded on every further save. See
      * features/goals/planStart.ts.
      */
-    const start = planStart(
-      editWeight,
-      data?.plan
-        ? { start_weight_kg: data.plan.start_weight_kg, start_date: data.plan.start_date }
-        : null
-    );
-
-    // Dated from the plan's start, not from today — dating from today stretches
-    // an existing plan's finish line every time it is saved.
-    const targetDate =
-      editBy === 'date' && editTargetDate
-        ? editTargetDate
-        : editGoal !== 'maintain' && editTargetWeight && editRate
-          ? targetDateForPace(start, goalW, editRate)
-          : addDays(start.start_date, 56);
-
     setForm((f) => ({
       ...f,
-      start_weight_kg: start.start_weight_kg,
-      start_date: start.start_date,
-      goal_weight_kg: goalW,
-      target_date: targetDate,
       daily_calorie_goal: editMacros.calories,
       daily_protein_goal_g: editMacros.protein_g,
       daily_carbs_goal_g: editMacros.carbs_g,

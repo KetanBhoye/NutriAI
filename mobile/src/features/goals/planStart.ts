@@ -125,3 +125,70 @@ export function paceWarning(kgPerWeek: number | null, bodyWeightKg: number): str
   }
   return null;
 }
+
+/**
+ * The plan shape an editor's choices imply.
+ *
+ * Extracted for the reason `editorTargets` was: it is a rule the screen kept
+ * getting wrong. The editor computed the plan's *shape* — start, goal, target
+ * date — inside the same effect that computed the *macros*, gated on having
+ * enough choices for the macro maths. So editing a goal weight or a target
+ * date without also re-picking an activity level and a pace never reached the
+ * form, and since the form still held the saved plan it stayed valid: Save
+ * wrote the old plan straight back and the screen redrew it unchanged.
+ *
+ * The distinction that fixes it: a goal weight and a target date are things
+ * the user *typed*, and belong in the form the moment they are typed. Macros
+ * are *computed*, and rightly wait.
+ */
+export interface PlanShapeInput {
+  /** The weight the plan is being made from — today's, normally. */
+  currentWeightKg: number;
+  /** null until a goal is picked; 'maintain' means the goal weight is current. */
+  goal: 'cut' | 'maintain' | 'lean_bulk' | 'bulk' | null;
+  /** A goal weight the user typed, or null to keep the plan's own. */
+  typedGoalWeightKg: number | null;
+  /** A target date the user chose, or null to derive one from the pace. */
+  typedTargetDate: string | null;
+  ratePerWeek: number | null;
+  existing:
+    | (PlanStart & { goal_weight_kg: number; target_date: string })
+    | null;
+}
+
+export interface PlanShape extends PlanStart {
+  goal_weight_kg: number;
+  target_date: string;
+}
+
+export function planShape(input: PlanShapeInput, today?: string): PlanShape {
+  const { currentWeightKg, goal, typedGoalWeightKg, typedTargetDate, ratePerWeek, existing } = input;
+
+  const start = planStart(
+    currentWeightKg,
+    existing ? { start_weight_kg: existing.start_weight_kg, start_date: existing.start_date } : null,
+    today
+  );
+
+  /**
+   * Blank means "keep what the plan already aims at", not "aim at today's
+   * weight". The latter quietly turned every edited plan into a maintain plan
+   * — the goal you had been working towards replaced by NO TARGET.
+   */
+  const goalWeight =
+    goal === 'maintain'
+      ? currentWeightKg
+      : typedGoalWeightKg != null
+        ? typedGoalWeightKg
+        : existing && existing.goal_weight_kg !== existing.start_weight_kg
+          ? existing.goal_weight_kg
+          : currentWeightKg;
+
+  const targetDate = typedTargetDate
+    ? typedTargetDate
+    : goal !== null && goal !== 'maintain' && ratePerWeek
+      ? targetDateForPace(start, goalWeight, ratePerWeek)
+      : (existing?.target_date ?? addDays(start.start_date, 56));
+
+  return { ...start, goal_weight_kg: goalWeight, target_date: targetDate };
+}

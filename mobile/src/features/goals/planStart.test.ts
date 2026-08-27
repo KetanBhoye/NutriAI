@@ -3,6 +3,7 @@ import {
   daysBetweenIso,
   paceForTargetDate,
   paceWarning,
+  planShape,
   planStart,
   targetDateForPace,
 } from './planStart';
@@ -152,5 +153,89 @@ describe('daysBetweenIso', () => {
 
   it('crosses a month boundary correctly', () => {
     expect(daysBetweenIso('2026-08-30', '2026-09-02')).toBe(3);
+  });
+});
+
+describe('planShape', () => {
+  const existing = {
+    start_weight_kg: 75,
+    start_date: '2026-08-01',
+    goal_weight_kg: 70,
+    target_date: '2026-10-10',
+  };
+
+  const shape = (over: Partial<Parameters<typeof planShape>[0]> = {}) =>
+    planShape(
+      {
+        currentWeightKg: 75,
+        goal: null,
+        typedGoalWeightKg: null,
+        typedTargetDate: null,
+        ratePerWeek: null,
+        existing,
+        ...over,
+      },
+      TODAY
+    );
+
+  it('carries a typed goal weight through — the "it saved the old plan" bug', () => {
+    // The editor computed this inside the macro effect, so typing a goal
+    // weight without also re-picking an activity level and a pace never
+    // reached the form. Save then wrote the untouched plan back and the screen
+    // redrew it, looking hardcoded.
+    expect(shape({ typedGoalWeightKg: 68 }).goal_weight_kg).toBe(68);
+  });
+
+  it('carries a typed target date through on its own', () => {
+    expect(shape({ typedTargetDate: '2026-12-01' }).target_date).toBe('2026-12-01');
+  });
+
+  it('keeps the saved goal when the field was left blank', () => {
+    expect(shape({ goal: 'cut', ratePerWeek: 0.5 }).goal_weight_kg).toBe(70);
+  });
+
+  it('keeps the saved target date when nothing implies a new one', () => {
+    expect(shape().target_date).toBe('2026-10-10');
+  });
+
+  it('derives the target date from a pace when one is chosen', () => {
+    // 5 kg at 0.5 kg/week from the 1 August start.
+    expect(shape({ goal: 'cut', ratePerWeek: 0.5 }).target_date).toBe('2026-10-10');
+  });
+
+  it('lets a typed date win over the pace', () => {
+    expect(
+      shape({ goal: 'cut', ratePerWeek: 0.5, typedTargetDate: '2026-11-30' }).target_date
+    ).toBe('2026-11-30');
+  });
+
+  it('makes maintain aim at the current weight', () => {
+    expect(shape({ goal: 'maintain', currentWeightKg: 73 }).goal_weight_kg).toBe(73);
+  });
+
+  it('moves the start as a pair when the weight has changed', () => {
+    const result = shape({ currentWeightKg: 73, typedGoalWeightKg: 68 });
+
+    expect(result.start_weight_kg).toBe(73);
+    expect(result.start_date).toBe(TODAY);
+  });
+
+  it('starts a first plan from today', () => {
+    const result = planShape(
+      {
+        currentWeightKg: 80,
+        goal: 'cut',
+        typedGoalWeightKg: 74,
+        typedTargetDate: null,
+        ratePerWeek: 0.5,
+        existing: null,
+      },
+      TODAY
+    );
+
+    expect(result.start_date).toBe(TODAY);
+    expect(result.goal_weight_kg).toBe(74);
+    // 6 kg at 0.5/week is 12 weeks from today.
+    expect(result.target_date).toBe('2026-11-19');
   });
 });
