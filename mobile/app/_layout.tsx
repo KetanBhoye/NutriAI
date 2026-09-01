@@ -6,20 +6,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DarkTheme, ThemeProvider, type Theme } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
-/**
- * Imported one weight per path, not from the package root.
- *
- * `@expo-google-fonts/inter`'s index re-exports all 18 weights, and Metro
- * follows that graph and copies every one into the build — so the PWA shipped
- * 6.3MB of fonts to serve the five it actually renders, including nine italics
- * nothing references. The deep paths pull only what is named here, taking the
- * web export from 8.0MB to 3.7MB (and the native bundle down with it).
- */
-import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
-import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
-import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
-import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
-import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { AuthProvider, useAuth } from '@/auth';
 import { applyDefaultFont } from '@/components/applyDefaultFont';
 import { NutriLoader } from '@/components/ui/NutriLoader';
@@ -133,12 +119,32 @@ function Gates() {
 }
 
 export default function RootLayout() {
+  /**
+   * The five weights, loaded from `assets/fonts/` — vendored copies of the
+   * files `@expo-google-fonts/inter` ships (OFL, licence alongside them).
+   *
+   * Importing from the package instead is the obvious thing, and it breaks the
+   * PWA in a way that only shows in production. Metro names every emitted
+   * asset after its source path, so a font from the package lands at
+   * `assets/node_modules/@expo-google-fonts/…`, and `node_modules/` is
+   * excluded by both .gitignore and .railwayignore — matching at any depth.
+   * The fonts were therefore never committed and never uploaded: the build was
+   * fine locally, and production silently rendered in the system font. Neither
+   * ignore file can carve out the exception, because a path inside an excluded
+   * directory cannot be re-included.
+   *
+   * Importing from the package root is separately wasteful: its index
+   * re-exports all 18 weights and Metro follows the whole graph, which put
+   * 6.3MB of fonts — nine of them italics nothing references — into a build
+   * that renders five. `scripts/build-web.sh` fails the build if a
+   * `node_modules` path ever reappears in the output.
+   */
   const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-    Inter_800ExtraBold,
+    Inter_400Regular: require('../assets/fonts/Inter_400Regular.ttf'),
+    Inter_500Medium: require('../assets/fonts/Inter_500Medium.ttf'),
+    Inter_600SemiBold: require('../assets/fonts/Inter_600SemiBold.ttf'),
+    Inter_700Bold: require('../assets/fonts/Inter_700Bold.ttf'),
+    Inter_800ExtraBold: require('../assets/fonts/Inter_800ExtraBold.ttf'),
   });
 
   // Font loading can hang rather than fail — on a device build the assets

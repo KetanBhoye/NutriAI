@@ -60,6 +60,46 @@ fi
 # error there doesn't fail the build or show up in the page, it just silently
 # means no offline launch and no installable app. (That is exactly how a `*/`
 # inside a comment shipped once.) One parse is enough to make it loud.
+# Metro names each emitted asset after its source path, so anything imported
+# from a package lands under `assets/node_modules/<pkg>/…` — and that path is
+# a minefield of generic ignore patterns. `node_modules/`, `build/` and `dist/`
+# are all excluded by .gitignore and .railwayignore, and all three match at ANY
+# depth, so they hit the *middle* of these paths:
+#
+#   assets/node_modules/@expo/vector-icons/build/vendor/…/Feather.ttf
+#                       ^^^^^^^^^^^^                ^^^^^
+#
+# A file caught by them builds fine, runs fine locally, and is then absent from
+# both the commit and the deploy — production 404s it and nothing reports it.
+# That is how the app's fonts and the tab bar's icon font were left out of the
+# first /m deploy. The ignore files cannot carve out exceptions, because a path
+# inside an excluded directory cannot be re-included.
+#
+# So the directory structure is flattened away entirely: every package asset
+# moves to assets/vendor/<filename> and each reference in the build is
+# rewritten. The filenames already carry a content hash, so they are unique
+# without the directories, and no intermediate path component survives to
+# collide with an ignore rule. This fixes the whole class — expo-router,
+# @react-navigation and @expo/vector-icons all ship assets this way — rather
+# than one package at a time.
+if [ -d dist/assets/node_modules ]; then
+  echo "==> Flattening package assets out of ignore-prone paths"
+  mkdir -p dist/assets/vendor
+
+  find dist/assets/node_modules -type f | while IFS= read -r file; do
+    base="$(basename "$file")"
+    # Rewrite the reference wherever it appears, then move the file. Text files
+    # only: a blanket sed over a .ttf or .png would corrupt it. The pattern
+    # stops at a quote or bracket so it can't run past the end of one URL.
+    find dist -type f \( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.webmanifest' \) \
+      -exec sed -i.bak "s|assets/node_modules/[^\"')]*/$base|assets/vendor/$base|g" {} +
+    find dist -name '*.bak' -delete
+    mv "$file" "dist/assets/vendor/$base"
+  done
+
+  rm -rf dist/assets/node_modules
+fi
+
 echo "==> Checking the service worker parses"
 node --check dist/sw.js
 
@@ -70,6 +110,20 @@ echo "==> Publishing to $OUT_DIR"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 cp -R dist/. "$OUT_DIR/"
+
+# The invariant that actually matters: every published file must survive both
+# the commit and the upload to Railway. Asking git directly beats keeping a
+# list of patterns to dodge — it is the same rule set that silently dropped the
+# fonts, so let it be the one to answer. (.railwayignore repeats these
+# patterns; keep the two in step.)
+echo "==> Checking every published file is committable"
+IGNORED="$(cd "$REPO_ROOT" && find public/m -type f | git check-ignore --stdin || true)"
+if [ -n "$IGNORED" ]; then
+  echo "error: these published files are gitignored, so they would be missing" >&2
+  echo "       from the commit AND the deploy — production would 404 them:" >&2
+  echo "$IGNORED" | sed 's/^/  /' >&2
+  exit 1
+fi
 
 echo
 echo "Done. Serving locally:"
