@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { aiApi, entriesApi } from '@/api';
 import { writeCache } from '@/cache';

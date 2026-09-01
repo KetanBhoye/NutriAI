@@ -832,6 +832,94 @@ Before adding a third bus, check whether one of these two already means what you
 need. Two patterns for "something changed under you" is one; three is a store
 nobody designed.
 
+## The PWA: one codebase, five platform splits
+
+The app now also ships as a PWA at `/m`, built from this same source through
+react-native-web (`npm run web:build`). The reason to do it this way rather
+than porting the screens into the Vue app is drift: a second implementation of
+the Today tab is a second place for the calorie maths to be subtly wrong.
+
+Everything shared stayed shared. Only five things needed a `.web` sibling —
+the session cookie, Google Sign-In, reminders, health sync and updates — plus a
+seam for capturing/sharing a card. Each one is a case where the *platform*
+differs, not the product.
+
+What was surprising is how little needed changing, and how badly the little
+that did could fail. Four of the five bugs below were silent.
+
+### `loadStoredCookie() === null` does not mean "signed out"
+
+The native build carries `ct_sid` by hand, so "do we hold a cookie" and "might
+there be a session" have the same answer and were the same function. In a
+browser they are opposites: `ct_sid` is HttpOnly, so script can *never* see it,
+while the browser sends it on every request regardless.
+
+The launch check read `if (!cookie) return;` — always true on web — so it
+skipped verification entirely and left the user at `/login`. On **every page
+refresh**, with a perfectly valid session. No error, no failed request,
+nothing in the console; the app simply decided a signed-in user was signed out.
+
+They are now two functions with two meanings: `loadStoredCookie()` is "the
+`Cookie` header to send" (null on web, and that's fine), `hasPossibleSession()`
+is "is there something for `/api/me` to rule on" (always true on web).
+`src/api/cookies.web.test.ts` asserts the meanings, because nothing else can.
+
+### A `*/` inside a comment cost the entire offline mode
+
+`public/sw.js` had a block comment containing `**/api`, which closed the
+comment early and made the file a syntax error. The result: no offline launch,
+no install prompt, and `navigator.serviceWorker.register()` rejecting with
+`ServiceWorker script evaluation failed` — into a `.catch()` that deliberately
+ignores failures, in a worker context whose console nobody watches.
+
+Nothing compiles or lints that file. `scripts/build-web.sh` now runs
+`node --check` on it, which is the only thing standing between a typo there and
+a silently non-functional PWA.
+
+### `try/catch` does not catch a rejected promise from a missing native method
+
+`expo-speech`'s `stop()` is declared `async`. On web the implementation
+underneath it doesn't exist, so the call does not *throw* — it returns a
+rejected promise, sails straight out of the `try` block wrapped around it, and
+lands as an unhandled rejection. It looked guarded and was not.
+
+The general shape: a native module's web shim fails asynchronously. `?.` on the
+module, `?.` on the method, **and** `.catch()` on the result — all three, or
+it isn't handled.
+
+`expo-haptics` is the same family of problem at scale: ten fire-and-forget call
+sites, one of which had a `.catch()`. Rather than add nine more (and lose the
+tenth to the next person who adds a button), `src/haptics.ts` wraps the module
+once and the call sites import that instead.
+
+### An inline box clips at the font size, not the line height
+
+Tab labels rendered as "Todav" on web. react-native-web draws a `Text` as
+`display: inline`, React Navigation puts `overflow: hidden` on the label to
+truncate long titles, and an inline box's height is the font size — which is
+exactly where the baseline sits, so the clip landed on the descenders.
+Raising `lineHeight` makes it *worse*: the box doesn't grow with it.
+
+`overflow: 'visible'` is the fix, and it is a no-op on native.
+
+### Web reminders are a different feature wearing the same name
+
+The phone schedules four per-meal local notifications; that is why they work
+with no signal and with the app closed. A browser can do none of it — nothing
+of ours runs while the tab is shut — so a local reminder there would be armed
+for nobody.
+
+`RemindersCard.web.tsx` subscribes to the backend's existing Web Push nudge
+(`src/services/reminders.ts`, already used by `/app`) and the card says plainly
+that it is one evening nudge rather than per-meal. The alternative — the same
+switch, quietly doing nothing — is the failure this repo keeps re-learning.
+
+Local notification setup is also skipped entirely on web in
+`app/(tabs)/_layout.tsx`, for a second reason: reminders default to on, so it
+would have fired a browser notification-permission prompt at first launch,
+before the user had seen anything. That prompt is refused by default and the
+refusal is sticky.
+
 ## Open risks / decisions needing a human step
 
 - **Release-keystore SHA-1 for Android.** The Android OAuth client is registered

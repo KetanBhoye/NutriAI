@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
-import { api, clearSession, loadStoredCookie, setUnauthorizedHandler } from './api';
+import { api, clearSession, hasPossibleSession, setUnauthorizedHandler } from './api';
 import { clearCache } from './cache';
 import { clearStoredUser, isSessionRejected, readStoredUser, writeStoredUser } from './session';
 
@@ -64,8 +64,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        const cookie = await loadStoredCookie();
-        if (!cookie) return;
+        // "Is there a session worth checking?", not "do we hold the cookie".
+        // The browser holds an HttpOnly cookie we can never read, so on web
+        // this is always true and the server gives the real answer below.
+        if (!(await hasPossibleSession())) return;
 
         // Show the last known profile first. Offline, this is the whole of what
         // we'll get; online it's replaced a moment later by the real answer.

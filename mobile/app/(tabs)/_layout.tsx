@@ -3,7 +3,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { colors } from '@/theme';
 import { useHealthAutoSync } from '@/health/useHealthAutoSync';
 import { useCallback, useEffect, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { initialiseReminders, scheduleDailyReminder } from '@/notifications/reminders';
 import { notifyIfUpdateAvailable } from '@/notifications/updateNotice';
@@ -57,7 +57,17 @@ export default function TabsLayout() {
   // The OS fixes the notification text when it's scheduled, so refresh it on
   // each launch to reflect the current day's log. On a first run this also
   // asks for notification permission, because reminders default to on.
+  //
+  // Native only, for two separate reasons. A browser cannot run a scheduled
+  // local notification at all — nothing of ours executes while the tab is
+  // closed — so everything armed here would be armed for nobody; the PWA gets
+  // its reminder from the server instead (notifications/push.web.ts). And
+  // because reminders default to on, this would fire a notification
+  // permission prompt at first launch, unprompted, before the user has seen
+  // the app — the single most-refused prompt on the web, and refusing it here
+  // is sticky enough to break the reminder they might have wanted later.
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     void initialiseReminders();
     // Armed generically here; Trends re-arms the imminent one with the week's
     // real figures once it has them. See notifications/weeklyCopy.ts for why
@@ -72,6 +82,7 @@ export default function TabsLayout() {
   // where the day's totals are freshest — re-scheduling here is what keeps the
   // notification's numbers matching the app's.
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'background' || next === 'active') void scheduleDailyReminder();
     });
@@ -83,7 +94,7 @@ export default function TabsLayout() {
   useEffect(
     () =>
       subscribeGoalsChanged(() => {
-        void scheduleDailyReminder();
+        if (Platform.OS !== 'web') void scheduleDailyReminder();
         void refreshUser().catch(() => {});
       }),
     [refreshUser]
@@ -105,6 +116,22 @@ export default function TabsLayout() {
         // actually on screen mid-transition, so it says so explicitly.
         sceneStyle: { backgroundColor: colors.bg },
         tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
+        /**
+         * The web build clipped every tab label with a descender — "Today"
+         * rendered as "Todav".
+         *
+         * React Navigation's label carries `overflow: hidden` so a long title
+         * truncates with an ellipsis, and react-native-web gives the box a
+         * height equal to the 10px font size — which is where the baseline
+         * sits, so the clip lands exactly on the descenders. Raising the line
+         * height alone does not help: the box height doesn't follow it.
+         *
+         * Letting the descenders overflow is the fix. There is already room
+         * for them (the tab item has 5px of padding below the label), nothing
+         * here is ever long enough to need truncating, and on native this is
+         * a no-op — so one value is right on all three platforms.
+         */
+        tabBarLabelStyle: { overflow: 'visible', lineHeight: 13 },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textDim,
       }}

@@ -1,0 +1,22 @@
+{
+  "name": "NutriAI",
+  "short_name": "NutriAI",
+  "description": "Log what you eat, watch the plan adapt, and ask your coach.",
+  "id": "/m/",
+  "start_url": "/m/",
+  "scope": "/m/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "categories": ["health", "fitness", "lifestyle"],
+  "icons": [
+    { "src": "/m/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/m/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/m/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Log a meal", "url": "/m/", "icons": [{ "src": "/m/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Ask the coach", "url": "/m/coach", "icons": [{ "src": "/m/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

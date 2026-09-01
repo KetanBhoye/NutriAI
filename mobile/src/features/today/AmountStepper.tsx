@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/haptics';
 import { colors, fonts, type } from '@/theme';
 import { gramStep } from '@/portion';
 

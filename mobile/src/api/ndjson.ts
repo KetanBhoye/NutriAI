@@ -82,6 +82,10 @@ export function readNdjson<T>(opts: NdjsonOptions<T>): Promise<void> {
     };
 
     xhr.open('POST', opts.url);
+    // On web the browser attaches the session cookie itself and `cookie` is
+    // null (see api/cookies.web.ts) — `withCredentials` is what keeps it doing
+    // so if the bundle is ever served from another origin. RN ignores it.
+    xhr.withCredentials = true;
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Accept', 'application/x-ndjson');
     if (opts.cookie) xhr.setRequestHeader('Cookie', opts.cookie);

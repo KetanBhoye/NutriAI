@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react';
 import { Dimensions, Platform, StyleSheet, Text, View } from 'react-native';
-import { captureRef } from 'react-native-view-shot';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
+import {
+  captureCard,
+  contentUriFor,
+  deliverCard,
+  DIRECT_TARGETS_SUPPORTED,
+} from '@/features/share/delivery';
 import { Button, Sheet } from '@/components/ui';
 import { colors, space } from '@/theme';
 import { DOWNLOAD_URL, SNAP_CLIENT_ID } from '@/config';
@@ -91,29 +94,20 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
          * empty box the user cannot resize. Captured at its natural size, the
          * PNG is the sticker and nothing else.
          */
-        captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile' })
-      : captureRef(shotRef, {
-          format: 'png',
-          quality: 1,
-          result: 'tmpfile',
-          width: STORY_W,
-          height: STORY_H,
-        });
+        captureCard(shotRef, {})
+      : captureCard(shotRef, { width: STORY_W, height: STORY_H });
 
   const share = async () => {
     setSharing(true);
     setError(null);
     try {
       const uri = await capture();
-      if (!(await Sharing.isAvailableAsync())) {
+      const result = await deliverCard(uri);
+      if (result === 'unavailable') {
         setError('Sharing is not available on this device.');
-        return;
+      } else if (result === 'failed') {
+        setError("Couldn't share that card.");
       }
-      await Sharing.shareAsync(uri, {
-        mimeType: 'image/png',
-        UTI: 'public.png',
-        dialogTitle: 'Share your week',
-      });
     } catch {
       setError("Couldn't share that card.");
     } finally {
@@ -144,8 +138,7 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
       const uri = await capture();
       // getContentUriAsync is Android-only — it throws on iOS, where Creative
       // Kit reads the file:// URL directly.
-      const snapUri =
-        Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
+      const snapUri = await contentUriFor(uri);
 
       const snapped =
         mode === 'sticker'
@@ -178,7 +171,7 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
     setError(null);
     try {
       const uri = await capture();
-      const contentUri = await FileSystem.getContentUriAsync(uri);
+      const contentUri = await contentUriFor(uri);
       await IntentLauncher.startActivityAsync('com.instagram.share.ADD_TO_STORY', {
         data: contentUri,
         type: 'image/png',
@@ -218,16 +211,20 @@ export function ShareWeekModal({ visible, data, stats, onClose }: Props) {
             style={styles.action}
           />
         ) : null}
+        {/* Creative Kit is a native SDK with no web equivalent — absent
+            rather than broken. See delivery.web.ts. */}
+        {DIRECT_TARGETS_SUPPORTED ? (
+          <Button
+            title="Snapchat"
+            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+            onPress={shareToSnapchat}
+            disabled={sharing}
+            style={styles.action}
+          />
+        ) : null}
         <Button
-          title="Snapchat"
-          variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
-          onPress={shareToSnapchat}
-          disabled={sharing}
-          style={styles.action}
-        />
-        <Button
-          title={sharing ? 'Preparing…' : 'More…'}
-          variant="ghost"
+          title={sharing ? 'Preparing…' : DIRECT_TARGETS_SUPPORTED ? 'More…' : 'Share'}
+          variant={DIRECT_TARGETS_SUPPORTED ? 'ghost' : 'primary'}
           onPress={share}
           disabled={sharing}
           style={styles.action}

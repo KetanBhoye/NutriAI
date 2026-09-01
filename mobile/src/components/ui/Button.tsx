@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, ViewStyle } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/haptics';
 import { colors, radius, tap, type } from '@/theme';
 import { NutriLoader } from './NutriLoader';
 
@@ -57,7 +57,7 @@ export function Button({ title, onPress, variant = 'primary', disabled, busy, st
           to(0.965);
           // Selection rather than impact: several of these a minute while
           // logging a meal, so it has to be a tick, not a thud.
-          void Haptics.selectionAsync().catch(() => {});
+          void Haptics.selectionAsync();
         }}
         onPressOut={() => to(1)}
         onPress={onPress}

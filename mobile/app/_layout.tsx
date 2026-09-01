@@ -5,14 +5,21 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DarkTheme, ThemeProvider, type Theme } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
-import {
-  useFonts,
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  Inter_800ExtraBold,
-} from '@expo-google-fonts/inter';
+import { useFonts } from 'expo-font';
+/**
+ * Imported one weight per path, not from the package root.
+ *
+ * `@expo-google-fonts/inter`'s index re-exports all 18 weights, and Metro
+ * follows that graph and copies every one into the build — so the PWA shipped
+ * 6.3MB of fonts to serve the five it actually renders, including nine italics
+ * nothing references. The deep paths pull only what is named here, taking the
+ * web export from 8.0MB to 3.7MB (and the native bundle down with it).
+ */
+import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
+import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
+import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
+import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
+import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { AuthProvider, useAuth } from '@/auth';
 import { applyDefaultFont } from '@/components/applyDefaultFont';
 import { NutriLoader } from '@/components/ui/NutriLoader';

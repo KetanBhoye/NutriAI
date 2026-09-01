@@ -351,6 +351,74 @@ npx expo prebuild --platform android --clean --no-install
 
 ---
 
+## The PWA (`/m`)
+
+The same app, in a browser. `app/` and `src/` are compiled through
+react-native-web instead of to a native binary, so the PWA is not a second
+implementation of these screens — it *is* these screens, and a change to the
+Today tab lands in all three clients at once.
+
+```bash
+npm run web           # dev server with fast refresh, at localhost:8081
+npm run web:build     # export + publish into ../public/m, served by the backend
+```
+
+`npm run web:build` writes to `public/m/` in the repo root (committed, like
+`public/app/`), and the backend serves it at `/m` — separate from `/app`, which
+is the Vue admin console. That path is baked into every asset URL at build
+time (`WEB_BASE_PATH` in `app.config.ts`), so moving the mount point means
+rebuilding, not just re-routing.
+
+### Why it is served from the backend's own origin
+
+The session is the `ct_sid` cookie, which the backend sets `SameSite=Lax`. A
+PWA on another origin would not get it — cross-site cookies need
+`SameSite=None`, which this cookie rightly is not. So `API_URL` is empty on web
+(`src/config.ts`) and every request is a same-origin path.
+
+### What differs from native, and why
+
+Everything else is shared; these are the only platform splits, each as a
+`.web.ts` sibling of the native file.
+
+| Feature | Native | Web |
+|---|---|---|
+| Session cookie | read from the OS jar into SecureStore | the browser's; HttpOnly, invisible to us (`src/api/cookies.web.ts`) |
+| Google Sign-In | native SDK, app-styled button | Google Identity Services' own button (their branding terms; the ID flow only hands a credential to *their* button) |
+| Reminders | per-meal local notifications, scheduled by the OS | one server-sent Web Push nudge — a browser cannot run anything while its tab is closed |
+| Health sync | Apple Health / Health Connect | not possible; the section explains where the phone's data comes from |
+| Updates | downloads and installs an APK | the service worker fetches the new build; the card offers a restart |
+| Share to Instagram/Snapchat | Android intent / Creative Kit | absent — no web equivalent. "Share" uses the Web Share API, falling back to a PNG download |
+
+Two things that are *not* on that list, because they work unchanged: barcode
+scanning (expo-camera drives `getUserMedia`) and the Coach's streaming replies
+(the NDJSON reader is `XMLHttpRequest` + `onprogress`, which browsers support
+natively — see `src/api/ndjson.ts`).
+
+### The session cookie is invisible on web
+
+`loadStoredCookie()` returns null in a browser and that does **not** mean
+"signed out" — `ct_sid` is HttpOnly, so script cannot read it, while the
+browser sends it anyway. Whether a session might exist is a separate question,
+`hasPossibleSession()`, which is always true on web and lets `/api/me` give the
+real answer. Conflating the two is not a hypothetical: it logged every web user
+out on every page refresh, silently, with a perfectly good cookie in the jar.
+`src/api/cookies.web.test.ts` exists to keep them apart.
+
+### The service worker
+
+`public/sw.js`, published to `/m/sw.js`. It caches the app shell and the hashed
+build assets so a home-screen launch works offline — which matters because the
+app is *already* built to cope offline (cached reads, a durable write queue),
+and without a worker none of that is even reachable. It deliberately never
+caches `/api` responses: the app's own cache knows what each resource means and
+a dumber one underneath it would answer requests the app believed reached the
+server.
+
+It is plain JS that nothing else compiles, and a syntax error there is silent —
+no build failure, no console, just no offline launch and no install prompt.
+`scripts/build-web.sh` runs `node --check` on it for exactly that reason.
+
 ## How this fits in the repository
 
 The app lives in the same repository as the backend it talks to
@@ -368,6 +436,10 @@ It is still its own project inside that repo:
   here can affect the server build or the Railway image.
 - **Its own release cycle.** The APK is published as a GitHub release; the
   backend's `/download` route redirects to the latest one.
+- **It also builds the consumer PWA.** `npm run web:build` emits into the
+  backend's `public/m/`, so this project produces one of the things the server
+  serves. Rebuild it when a screen changes, or the web app silently keeps the
+  previous build.
 
 ## Troubleshooting
 

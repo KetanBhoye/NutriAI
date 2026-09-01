@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dimensions, Platform, StyleSheet, Text, View } from 'react-native';
-import ViewShot, { captureRef } from 'react-native-view-shot';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import ViewShot from 'react-native-view-shot';
 import * as IntentLauncher from 'expo-intent-launcher';
+import {
+  captureCard,
+  contentUriFor,
+  deliverCard,
+  DIRECT_TARGETS_SUPPORTED,
+} from '@/features/share/delivery';
 import { dashboardApi } from '@/api';
 import { ShareStats } from '@/api/dashboard';
 import { Button, Loading, Sheet } from '@/components/ui';
@@ -115,10 +119,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
      * width, with type to match. It looked like a design that had been shrunk,
      * because it had been.
      */
-    captureRef(shotRef, {
-      format: 'png',
-      quality: 1,
-      result: 'tmpfile',
+    captureCard(shotRef, {
       width: STORY_W,
       // The sticker is exported at the frame's shape; the card stays 9:16.
       height: mode === 'sticker' ? Math.round(STORY_W * FRAME_ASPECT) : STORY_H,
@@ -130,19 +131,15 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     try {
       const uri = await capture();
 
-      // NOT React Native's Share: on Android it ignores `url` entirely and
-      // supports only `message`, so the intent went out carrying nothing and
-      // WhatsApp reported "can't share empty file". expo-sharing attaches the
-      // actual file, through a FileProvider, on both platforms.
-      if (!(await Sharing.isAvailableAsync())) {
+      // Where the card actually goes differs per platform — the system share
+      // sheet on a phone, the Web Share API or a download in a browser. See
+      // features/share/delivery.ts.
+      const result = await deliverCard(uri);
+      if (result === 'unavailable') {
         setError('Sharing is not available on this device.');
-        return;
+      } else if (result === 'failed') {
+        setError("Couldn't share that card.");
       }
-      await Sharing.shareAsync(uri, {
-        mimeType: 'image/png',
-        UTI: 'public.png',
-        dialogTitle: 'Share your day',
-      });
     } catch {
       setError("Couldn't share that card.");
     } finally {
@@ -163,7 +160,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     setError(null);
     try {
       const uri = await capture();
-      const contentUri = await FileSystem.getContentUriAsync(uri);
+      const contentUri = await contentUriFor(uri);
       await IntentLauncher.startActivityAsync('com.instagram.share.ADD_TO_STORY', {
         data: contentUri,
         type: 'image/png',
@@ -199,10 +196,7 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
     setError(null);
     try {
       const uri = await capture();
-      // getContentUriAsync is Android-only — it throws on iOS, where Creative
-      // Kit reads the file:// URL directly.
-      const snapUri =
-        Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
+      const snapUri = await contentUriFor(uri);
 
       const snapped =
         mode === 'sticker'
@@ -319,19 +313,26 @@ export function ShareStoryModal({ visible, date, onClose }: ShareStoryModalProps
           ) : null}
 
 
-          <Button
-            title="Snapchat"
-            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
-            onPress={shareToSnapchat}
-            disabled={sharing}
-            style={styles.shareBtn}
-          />
+          {/* Snapchat goes through Creative Kit, a native SDK. On web there
+              is nothing behind this button, and the comment on
+              shareToSnapchat explains at length why a fallback that quietly
+              sends the card somewhere worse is the wrong answer — so it is
+              absent rather than broken. */}
+          {DIRECT_TARGETS_SUPPORTED ? (
+            <Button
+              title="Snapchat"
+              variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+              onPress={shareToSnapchat}
+              disabled={sharing}
+              style={styles.shareBtn}
+            />
+          ) : null}
 
           <Button
-            title={sharing ? 'Preparing…' : 'More…'}
+            title={sharing ? 'Preparing…' : DIRECT_TARGETS_SUPPORTED ? 'More…' : 'Share'}
             onPress={share}
             disabled={sharing}
-            variant={Platform.OS === 'android' ? 'ghost' : 'primary'}
+            variant={DIRECT_TARGETS_SUPPORTED && Platform.OS === 'android' ? 'ghost' : 'primary'}
             style={styles.secondaryBtn}
           />
 

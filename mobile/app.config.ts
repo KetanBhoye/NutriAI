@@ -10,6 +10,13 @@ import { ExpoConfig } from 'expo/config';
  */
 const API_URL = process.env.API_URL ?? 'https://nutriai-app.up.railway.app';
 
+/**
+ * Where the backend serves the PWA build from (see src/index.ts). Kept out of
+ * the `/app` namespace on purpose: the Vue PWA still lives there, and these
+ * two are separate apps that happen to share a backend.
+ */
+const WEB_BASE_PATH = process.env.WEB_BASE_PATH ?? '/m';
+
 // iOS OAuth client registered in the same Google Cloud project as the
 // backend's web client (Google Auth Platform → Clients → iOS, bundle ID
 // app.nutriai.mobile). The web client ID itself (which `POST /api/auth/google`
@@ -241,6 +248,28 @@ const config: ExpoConfig = {
     // prebuild). Same reasoning as withReleaseSigning on Android.
     './plugins/withIosSigningTeam',
   ],
+  /**
+   * The PWA build (`npm run web:build`), served by the backend at /m.
+   *
+   * `output: 'single'` keeps this a client-routed SPA — the same expo-router
+   * tree the native app runs, resolved in the browser — rather than the static
+   * per-route HTML `output: 'static'` would emit. Static export would try to
+   * render every screen at build time in Node, and these screens read a
+   * session before they render anything: they'd all pre-render as the signed
+   * out state and then hydrate into something different.
+   *
+   * `baseUrl` must match the path the backend mounts the bundle at. It is
+   * baked into every asset URL at build time, so changing the mount point
+   * means rebuilding, not just re-routing.
+   */
+  web: {
+    bundler: 'metro',
+    output: 'single',
+    favicon: './assets/icon.png',
+  },
+  experiments: {
+    baseUrl: WEB_BASE_PATH,
+  },
   extra: {
     apiUrl: API_URL,
     googleIosClientId: GOOGLE_IOS_CLIENT_ID,

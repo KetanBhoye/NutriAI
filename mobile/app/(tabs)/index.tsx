@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, AppState, InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/haptics';
 import Feather from '@expo/vector-icons/Feather';
 import { dashboardApi, entriesApi, goalsApi } from '@/api';
 import {

@@ -71,7 +71,12 @@ export function speak(text: string, onDone?: () => void): void {
     onDone?.();
     return;
   }
-  mod.stop();
+  // `stop` before `speak` so a new answer interrupts the previous one rather
+  // than queueing behind it — but through the guard, because expo-speech's
+  // web build doesn't implement every method the native one does and a
+  // missing `stop` threw "o.default.stop is not a function", losing the
+  // speech AND the onDone callback that re-enables the mic button.
+  stopSpeaking();
   mod.speak(clean, {
     // Slightly under the default: the coach quotes figures, and the stock rate
     // runs "one hundred and sixty grams of protein" together.
@@ -83,5 +88,22 @@ export function speak(text: string, onDone?: () => void): void {
 }
 
 export function stopSpeaking(): void {
-  speechModule()?.stop();
+  /**
+   * Three guards for one call, because it can fail three ways.
+   *
+   * `?.` on the module: the native module may not be in this build at all.
+   * `?.` on the method: expo-speech's web build doesn't implement everything
+   * its native one does. And `.catch`, which is the one that actually
+   * mattered here — `Speech.stop()` is declared `async`, so a missing
+   * implementation underneath comes back as a *rejected promise*, not a
+   * thrown error. A try/catch around it looks like it handles that and does
+   * not: the rejection sails past into an unhandled promise rejection, which
+   * is how "o.default.stop is not a function" kept reaching the browser
+   * console from inside a try block.
+   */
+  try {
+    void speechModule()?.stop?.()?.catch(() => {});
+  } catch {
+    // Nothing to recover: the audio either stopped or was never speaking.
+  }
 }

@@ -220,7 +220,11 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
           res.setHeader('Cache-Control', 'no-cache');
         } else if (filePath.endsWith('index.html')) {
           res.setHeader('Cache-Control', 'no-cache');
-        } else if (/[\\/]assets[\\/]/.test(filePath)) {
+        } else if (/[\\/]assets[\\/]/.test(filePath) || /[\\/]_expo[\\/]/.test(filePath)) {
+          // `_expo/` is the same bargain as `assets/` for the /m PWA: Expo's
+          // web export puts a content hash in every filename it emits there,
+          // so a changed file is a changed URL and this can never serve a
+          // stale one.
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         }
       },
@@ -285,6 +289,40 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
     // The SPA shell must always revalidate so a new deploy is picked up.
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(resolve(publicDir, 'app', 'index.html'));
+  });
+
+  /**
+   * /m — the consumer PWA: the mobile app's own screens, running in a browser.
+   *
+   * Built from mobile/ by `npm run web:build` (Expo's web export through
+   * react-native-web) into public/m, so it is literally the same expo-router
+   * tree, components and API layer the iOS and Android builds run rather than
+   * a second implementation that has to be kept in step by hand.
+   *
+   * Served from this origin deliberately. The session is the `ct_sid` cookie,
+   * and same-origin is what lets the browser send it without SameSite=None —
+   * see mobile/src/config.ts, where API_URL is empty on web for this reason.
+   *
+   * Separate from /app rather than replacing it: /app is the admin console
+   * now, and these are two different products.
+   *
+   * Same SPA-fallback rule as /app, and for the same reason: expo-router
+   * resolves routes in the browser, so /m/goals is not a file on disk. The
+   * extension test lets a genuinely missing asset 404 instead of being handed
+   * an HTML shell — a JS request answered with HTML fails as a syntax error
+   * three layers from the cause.
+   */
+  app.get('/m', (_req, res) => {
+    res.redirect('/m/');
+  });
+
+  app.get(/^\/m\/.*/, (req, res, next) => {
+    if (/\.[a-z0-9]+$/i.test(req.path)) {
+      next();
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(resolve(publicDir, 'm', 'index.html'));
   });
 
   app.get('/dashboard', (_req, res) => {

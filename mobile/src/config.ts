@@ -1,13 +1,24 @@
+import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 /**
  * Backend base URL. Set at build time via the API_URL env var (see
  * app.config.ts); defaults to production. No trailing slash.
+ *
+ * Empty on web, and that is the point: the PWA is served *by* this backend
+ * (from /m), so every request is same-origin and `''` makes `${API_URL}/api/x`
+ * a same-origin path. Naming the absolute production host instead would turn
+ * every call cross-origin — which costs a CORS preflight on each one, and
+ * silently drops the `ct_sid` session cookie, because a cross-site cookie
+ * needs SameSite=None and the backend rightly doesn't set that. It also means
+ * a PWA served from a staging deploy talks to *that* deploy, not production.
  */
-export const API_URL: string = (
-  (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
-  'https://nutriai-app.up.railway.app'
-).replace(/\/$/, '');
+export const API_URL: string = Platform.OS === 'web'
+  ? ''
+  : (
+      (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
+      'https://nutriai-app.up.railway.app'
+    ).replace(/\/$/, '');
 
 /**
  * The `source` value POST /api/activity accepts. The backend enum is currently

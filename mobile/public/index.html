@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <!--
+      viewport-fit=cover is what makes the safe-area insets real in a
+      standalone launch: without it iOS letterboxes the page inside the safe
+      area, env(safe-area-inset-*) reports 0, and every layout that
+      react-native-safe-area-context derives from those is uniformly wrong —
+      the tab bar sits above the home indicator instead of accounting for it.
+      maximum-scale=1 stops iOS zooming the page when a text input takes
+      focus, which in a fixed full-height app scrolls the UI half off screen
+      with no way back.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, shrink-to-fit=no, viewport-fit=cover"
+    />
+
+    <title>NutriAI</title>
+    <meta name="description" content="Log what you eat, watch the plan adapt, and ask your coach." />
+
+    <link rel="manifest" href="/m/manifest.webmanifest" />
+    <!--
+      Read by the browser chrome before the bundle parses. Without it the
+      address bar and the Android task-switcher card render white behind a
+      near-black app — the loudest "this is a website" tell in an otherwise
+      native-feeling launch.
+    -->
+    <meta name="theme-color" content="#0f1115" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NutriAI" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="apple-touch-icon" href="/m/icons/apple-touch-icon.png" />
+    <link rel="icon" href="/m/icons/icon-192.png" type="image/png" />
+
+    <!-- The react-native-web style reset: https://necolas.github.io/react-native-web/docs/setup/ -->
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+      }
+      /* Disables document scrolling so a ScrollView scrolls its own contents
+         rather than the page. Required by react-native-web. */
+      body {
+        overflow: hidden;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+
+    <style>
+      /*
+        Paint the app's background on the document itself.
+
+        React renders into #root, so there is a gap — first paint until the
+        bundle mounts — where the only thing on screen is the body. Left at
+        the browser default, that gap is a white flash on every cold launch,
+        which on a dark app is the entire screen. The same colour then shows
+        through iOS's rubber-band overscroll.
+      */
+      html,
+      body,
+      #root {
+        background-color: #0f1115;
+      }
+      body {
+        color: #e8eaed;
+        overscroll-behavior-y: none;
+      }
+      /* A tap on a control should look like the app's own press state, not
+         the browser's grey flash painted on top of it. */
+      * {
+        -webkit-tap-highlight-color: transparent;
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+
+    <script>
+      /*
+        Registers the worker that makes the app launch offline and installable
+        (see sw.js).
+
+        Deferred to `load` on purpose: registration competes with the bundle
+        for the network, and delaying it costs nothing — the worker only ever
+        matters from the *next* launch onwards, never this one.
+      */
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/m/sw.js', { scope: '/m/' }).catch(function () {
+            // A failed registration must never break the app: it costs the
+            // offline launch, and the app still works exactly as a page.
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

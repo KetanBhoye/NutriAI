@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/haptics';
 import {
   idleSession,
   reduceSession,

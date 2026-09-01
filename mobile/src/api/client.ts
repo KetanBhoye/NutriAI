@@ -1,61 +1,17 @@
-import * as SecureStore from 'expo-secure-store';
-import CookieManager from '@react-native-cookies/cookies';
 import { API_URL } from '../config';
+import { captureSessionCookie, clearStoredCookie, hasPossibleSession, loadStoredCookie } from './cookies';
 
 /**
  * Tiny fetch wrapper for the NutriAI backend.
  *
- * Auth is the same `ct_sid` session cookie the web app uses, but getting hold
- * of it on React Native takes two workarounds:
- *
- * 1. Reading it. Both RN's `fetch` and `XMLHttpRequest` hide the `Set-Cookie`
- *    response header from JS (a "forbidden response-header name" that browsers
- *    hide too, and which RN's networking layer enforces even for XHR). The
- *    OS-level cookie jar sees it fine though — NSURLSession stores it
- *    automatically and `@react-native-cookies/cookies` reads it back out
- *    (HttpOnly included, since that restriction is JS-only). So after a
- *    login/signup/Google response we pull the fresh cookie from that jar and
- *    stash it in SecureStore, which is what keeps the user signed in across
- *    launches (the native jar isn't reliably persisted).
- *
- * 2. Sending it. RN configures NSURLSession with the shared cookie jar, so it
- *    silently appends that jar's cookies to whatever `Cookie` header we set.
- *    When a request 401s the server replies `Set-Cookie: ct_sid=` (empty, to
- *    clear it), that empty cookie lands in the jar, and every later request
- *    goes out as `ct_sid=<good>; ct_sid=`. The backend's cookie parser is
- *    last-one-wins, so it reads the empty value and 401s again — a failure
- *    that permanently sticks once it happens. Wiping the jar after each
- *    capture leaves our explicit header as the only source of cookies.
+ * Auth is the `ct_sid` session cookie. How that cookie is carried is the one
+ * thing that differs between a phone and a browser, so it lives behind
+ * ./cookies (native) and ./cookies.web (web) and nothing below has to know
+ * which platform it is on: `loadStoredCookie()` returns the `Cookie` header to
+ * send, or null when the platform sends it for us.
  */
 
-const COOKIE_KEY = 'nutriai.session.cookie';
-const SESSION_COOKIE_NAME = 'ct_sid';
-
-let memoryCookie: string | null = null;
-
-export async function loadStoredCookie(): Promise<string | null> {
-  if (memoryCookie) return memoryCookie;
-  memoryCookie = await SecureStore.getItemAsync(COOKIE_KEY);
-  return memoryCookie;
-}
-
-async function setStoredCookie(cookie: string | null): Promise<void> {
-  memoryCookie = cookie;
-  if (cookie) await SecureStore.setItemAsync(COOKIE_KEY, cookie);
-  else await SecureStore.deleteItemAsync(COOKIE_KEY);
-}
-
-/**
- * Moves the session cookie the OS just stored into SecureStore, then empties
- * the native jar so NSURLSession can't append stale copies to our own
- * `Cookie` header (see note 2 above).
- */
-async function captureCookieFromNativeJar(): Promise<void> {
-  const cookies = await CookieManager.get(API_URL);
-  const value = cookies[SESSION_COOKIE_NAME]?.value;
-  if (value) await setStoredCookie(`${SESSION_COOKIE_NAME}=${value}`);
-  await CookieManager.clearAll().catch(() => {});
-}
+export { hasPossibleSession, loadStoredCookie };
 
 export class ApiError extends Error {
   status: number;
@@ -68,7 +24,7 @@ export class ApiError extends Error {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   body?: unknown;
-  /** Capture the session cookie from the native cookie jar (used by login/signup/Google). */
+  /** Capture the freshly-set session cookie (used by login/signup/Google). */
   captureCookie?: boolean;
   /** Override the default request timeout (ms). LLM endpoints run long. */
   timeoutMs?: number;
@@ -102,6 +58,10 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: controller.signal,
+      // Ignored by RN (which uses its own jar); on web it is what lets the
+      // session cookie ride along, and keeps doing so if a dev build is ever
+      // pointed at a different origin than the one serving the bundle.
+      credentials: 'include',
     });
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
@@ -113,7 +73,7 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
   }
 
   if (opts.captureCookie) {
-    await captureCookieFromNativeJar();
+    await captureSessionCookie();
   }
 
   const text = await res.text();
@@ -139,9 +99,5 @@ function safeJson(text: string): unknown {
 }
 
 export async function clearSession(): Promise<void> {
-  await setStoredCookie(null);
-  // clearAll rather than clearByName: the jar can also hold the empty
-  // `ct_sid=` the server sets when rejecting a session, which would otherwise
-  // be replayed onto the next sign-in attempt.
-  await CookieManager.clearAll().catch(() => {});
+  await clearStoredCookie();
 }
