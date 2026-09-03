@@ -29,10 +29,14 @@ const TRUSTED_PUBLIC_REGISTRATION_HOSTS = new Set([
 ]);
 
 const registerSchema = z.object({
-  client_name: z.string().min(1),
+  // client_name is optional per RFC 7591; fall back so the consent screen has a label.
+  client_name: z.string().min(1).default('MCP Client'),
   redirect_uris: z.array(z.string().url()).min(1),
   user_id: z.string().min(1).default('admin'),
   scope: z.string().optional(),
+  grant_types: z.array(z.string()).optional(),
+  response_types: z.array(z.string()).optional(),
+  token_endpoint_auth_method: z.string().optional(),
 });
 
 const authorizeSchema = z.object({
@@ -256,7 +260,9 @@ export function createOAuthRouter(options: OAuthRouterOptions): Router {
       registration_endpoint: `${baseUrl}/oauth/register`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
-      token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
+      // 'none' is deliberately absent: verifyClient() rejects a token request with no
+      // secret, so advertising public-client auth would send clients down a dead end.
+      token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
       code_challenge_methods_supported: ['S256'],
       scopes_supported: ['mcp:tools'],
     });
@@ -329,10 +335,19 @@ export function createOAuthRouter(options: OAuthRouterOptions): Router {
         )
         .run();
 
+      // RFC 7591 3.2.1: echo the registered metadata, and client_secret_expires_at is
+      // REQUIRED whenever a secret is issued. Strict clients (Claude) reject the
+      // registration outright if either is missing.
       res.status(201).json({
         client_id: clientId,
         client_secret: clientSecret,
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+        client_secret_expires_at: 0, // never expires
         client_name: body.client_name,
+        redirect_uris: body.redirect_uris,
+        grant_types: body.grant_types ?? ['authorization_code', 'refresh_token'],
+        response_types: body.response_types ?? ['code'],
+        token_endpoint_auth_method: body.token_endpoint_auth_method ?? 'client_secret_post',
         scope: body.scope || 'mcp:tools',
       });
     } catch (error) {
