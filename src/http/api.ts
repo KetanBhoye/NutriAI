@@ -10,6 +10,7 @@ import { getAiAdminStats } from '../services/admin/ai-stats.js';
 import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
 import { headlineFor } from '../services/consistency.js';
 import { compareToPopulation, getUserConsistency } from '../services/consistency-data.js';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { humanValidationError } from './validation.js';
 import { COMPLETE_DAY_KCAL, loggingStreak } from '../services/streak.js';
 import type { AppEnv } from '../db/types.js';
@@ -333,6 +334,16 @@ function parseToolResult(result: {
   }
 }
 
+/**
+ * Apple's public signing keys, fetched once and cached.
+ *
+ * `createRemoteJWKSet` handles the part that is easy to get wrong by hand: it
+ * picks the key matching the token's `kid`, caches the set, and re-fetches
+ * when an unknown kid appears — which is what happens when Apple rotates.
+ * Built at module load so the fetch is shared, not per-request.
+ */
+const APPLE_KEYS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
+
 export function registerApiRoutes(app: Express, options: ApiOptions): void {
   const { env } = options;
 
@@ -424,6 +435,121 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Google auth error:', error);
       res.status(500).json({ error: 'Google sign-in failed. Try again.' });
+    }
+  });
+
+  /**
+   * Sign in with Apple.
+   *
+   * Not optional: Apple guideline 4.8 requires an equivalent
+   * privacy-preserving login wherever an app offers a third-party social
+   * login, and this app offers Google. A build without it is rejected.
+   *
+   * Verification differs from Google's in a way that matters. Google exposes
+   * a tokeninfo endpoint that validates the token for you; Apple does not —
+   * you verify the JWT yourself against their published keys. So this checks,
+   * via `jose`:
+   *
+   *   signature  against Apple's JWKS (RS256, key chosen by the token's kid)
+   *   issuer     exactly https://appleid.apple.com
+   *   audience   our bundle ID — without this, a token minted for *any other*
+   *              Apple app would be accepted here, which is the whole attack
+   *   expiry     enforced by jwtVerify
+   *
+   * The email is the other Apple-specific trap. It arrives only on the very
+   * first authorization for a given Apple ID, and never again — so the client
+   * sends the name and email it was given once, and after that the `sub`
+   * (Apple's stable per-app user id) is the only identifier. A returning user
+   * is therefore matched on `sub` first and email second.
+   *
+   * Private Relay addresses (@privaterelay.appleid.com) are real, deliverable
+   * addresses and are stored as given. Rejecting them would defeat the point
+   * of the feature Apple is requiring.
+   */
+  app.post('/api/auth/apple', async (req, res) => {
+    try {
+      const audience = process.env.APPLE_BUNDLE_ID || 'app.nutriai.mobile';
+
+      const identityToken = typeof req.body?.identityToken === 'string' ? req.body.identityToken : '';
+      if (!identityToken) {
+        res.status(400).json({ error: 'Missing Apple credential.' });
+        return;
+      }
+
+      let claims: { sub?: string; email?: string; email_verified?: string | boolean };
+      try {
+        const { payload } = await jwtVerify(identityToken, APPLE_KEYS, {
+          issuer: 'https://appleid.apple.com',
+          audience,
+        });
+        claims = payload as typeof claims;
+      } catch {
+        res.status(401).json({ error: 'Invalid Apple credential.' });
+        return;
+      }
+
+      const appleUserId = (claims.sub || '').trim();
+      if (!appleUserId) {
+        res.status(401).json({ error: 'Apple did not return a user id.' });
+        return;
+      }
+
+      // Only present on the first authorization, so it is a hint, not a key.
+      const claimEmail = (claims.email || '').trim().toLowerCase();
+      const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      const email = claimEmail || bodyEmail;
+      const givenName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+      // `sub` first: it is the only identifier a returning user always brings.
+      let user = await env.DB
+        .prepare('SELECT id, name, email FROM users WHERE apple_user_id = ?')
+        .bind(appleUserId)
+        .first<{ id: string; name: string; email: string }>();
+
+      if (!user && email) {
+        // Same person, previously signed up with the same address by password
+        // or Google. Link rather than create a second account.
+        user = await env.DB
+          .prepare('SELECT id, name, email FROM users WHERE lower(email) = lower(?)')
+          .bind(email)
+          .first<{ id: string; name: string; email: string }>();
+        if (user) {
+          await env.DB
+            .prepare('UPDATE users SET apple_user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .bind(appleUserId, user.id)
+            .run();
+        }
+      }
+
+      if (!user) {
+        if (!email) {
+          // First authorization always carries an email. Reaching here means
+          // this Apple ID authorized us before against an account we no
+          // longer have — Apple will not re-send the address until the user
+          // removes the app under Settings → Apple ID → Sign in with Apple.
+          res.status(409).json({
+            error:
+              'Apple did not share an email for this account. In Settings → your name → Sign in with Apple, remove NutriAI, then try again.',
+          });
+          return;
+        }
+        const userId = randomUUID();
+        const name = givenName || email.split('@')[0] || 'You';
+        await env.DB
+          .prepare(
+            'INSERT INTO users (id, name, email, role, plan, apple_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          )
+          .bind(userId, name, email, 'user', DEFAULT_PLAN, appleUserId)
+          .run();
+        user = { id: userId, name, email };
+      }
+
+      const session = await createSession(env.DB, user.id, options.sessionTtlHours);
+      setSessionCookie(res, session.sessionId, session.expiresAt, options.secureCookies);
+      res.json({ user: { id: user.id, name: user.name, email: user.email } });
+    } catch (error) {
+      console.error('Apple auth error:', error);
+      res.status(500).json({ error: 'Apple sign-in failed. Try again.' });
     }
   });
 

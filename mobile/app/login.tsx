@@ -8,6 +8,7 @@ import { Button, FadeIn, TextField } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { colors, fonts, radius, space } from '@/theme';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
+import { AppleSignInButton } from '@/components/AppleSignInButton';
 
 /**
  * The first screen anyone sees.
@@ -143,6 +144,7 @@ export default function Login() {
 
             {/* Draws its own "or" rule and its own top margin. */}
             <GoogleSignInButton mode="signin" />
+            <AppleSignInButton mode="signin" />
           </FadeIn>
 
           <FadeIn index={3} distance={14}>

@@ -164,6 +164,35 @@ export async function createApp(config: AppConfig = getConfig()): Promise<Runnin
   });
 
   /**
+   * The two files that make a link open the app instead of the browser.
+   *
+   * Both must be served explicitly rather than left to `express.static`,
+   * which defaults to `dotfiles: 'ignore'` and would 404 anything under
+   * `.well-known` — silently, and in a way that looks identical to a working
+   * setup until you test on a real phone.
+   *
+   * Rules the platforms enforce, both easy to get wrong:
+   *  - `apple-app-site-association` has no `.json` extension but must be
+   *    served as `application/json`. Apple fetches it over HTTPS with no
+   *    redirects; a 301 to a CDN is a failure.
+   *  - Android's `assetlinks.json` carries the SHA-256 of the *release*
+   *    signing certificate. A debug build will not verify against it, which
+   *    is the usual reason "it works on my machine" and nowhere else.
+   *
+   * Until these verify, `nutriai://` is an unverified custom scheme — any
+   * other app can claim it and receive links meant for this one.
+   */
+  const wellKnown = (file: string) => (_req: express.Request, res: express.Response) => {
+    res.type('application/json');
+    // Short, not immutable: rotating a signing key or adding a path means
+    // changing these, and a year-long cache would outlive the change.
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(resolve(publicDir, '.well-known', file));
+  };
+  app.get('/.well-known/apple-app-site-association', wellKnown('apple-app-site-association'));
+  app.get('/.well-known/assetlinks.json', wellKnown('assetlinks.json'));
+
+  /**
    * A short, memorable link for the Android build: nutriai.example/download.
    *
    * It redirects rather than serving the file. The APK is ~86 MB and changes

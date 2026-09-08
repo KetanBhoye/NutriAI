@@ -97,6 +97,19 @@ export default function Profile() {
         <Text style={styles.chev}>›</Text>
       </Pressable>
 
+      {/*
+        The same disclaimer shown at onboarding, kept somewhere permanent.
+
+        Google's 2026 health policy requires an app without regulatory
+        clearance to say it is not a medical device; a line seen once during
+        setup and never again is not really a place a user can go and check.
+      */}
+      <Text style={styles.disclaimer}>
+        NutriAI is a nutrition tracker, not a medical device. Its targets are estimates from
+        standard formulas and are not medical advice, diagnosis or treatment. Talk to a doctor or a
+        dietitian before making significant changes.
+      </Text>
+
       <Text style={styles.h2}>Account</Text>
       <Button title={signingOut ? 'Signing out…' : 'Sign out'} variant="ghost" onPress={onSignOut} disabled={signingOut} />
 
@@ -137,6 +150,7 @@ const styles = StyleSheet.create({
   who: { flex: 1, minWidth: 0 },
   name: { color: colors.text, fontSize: 18, fontFamily: fonts.bold },
   email: { color: colors.textDim, fontSize: 13, marginTop: 2 },
+  disclaimer: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: 14 },
   h2: { color: colors.text, fontSize: 16, fontFamily: fonts.bold, marginTop: 22, marginBottom: 10 },
   linkCard: {
     flexDirection: 'row',

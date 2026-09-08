@@ -8,6 +8,7 @@ import { Button, TextField } from '@/components/ui';
 import { colors, fonts, space } from '@/theme';
 import { API_URL } from '@/config';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
+import { AppleSignInButton } from '@/components/AppleSignInButton';
 
 export default function SignUp() {
   const { signUp } = useAuth();
@@ -108,6 +109,7 @@ export default function SignUp() {
         />
 
         <GoogleSignInButton mode="signup" />
+        <AppleSignInButton mode="signup" />
 
         <Link href="/login" style={styles.link}>
           <Text style={styles.linkText}>Already have an account? Sign in</Text>

@@ -59,6 +59,31 @@ const GOOGLE_IOS_URL_SCHEME = 'com.googleusercontent.apps.1015788885193-55jsd3u6
  */
 const SNAP_CLIENT_ID = process.env.SNAP_CLIENT_ID ?? '634f6a09-f811-4e8f-a028-70c013137dce';
 
+/**
+ * Whether this build is signed by a *paid* Apple Developer team.
+ *
+ * Two of the capabilities below — Sign in with Apple (required by guideline
+ * 4.8) and Associated Domains (Universal Links) — can only be put in a
+ * provisioning profile by a paid account. A personal team cannot create one,
+ * and Xcode does not warn: it fails the signing step outright, so a device
+ * build stops working the moment either is declared.
+ *
+ * Default ON, deliberately. The two failure modes are not symmetrical: with
+ * these declared, a free-team build fails loudly at signing and you know
+ * immediately why. Without them, everything builds fine and the App Store
+ * rejects the submission days later for a missing 4.8 login. A loud local
+ * failure beats a quiet remote one.
+ *
+ * So for a local device build on a personal team:
+ *
+ *   APPLE_PAID_TEAM=0 npx expo run:ios --device
+ *
+ * That build cannot use Sign in with Apple or Universal Links — the button
+ * hides itself when `isAvailableAsync` says no — but everything else runs.
+ * Never ship a store build with this unset to 0.
+ */
+const APPLE_PAID_TEAM = process.env.APPLE_PAID_TEAM !== '0';
+
 // Health Connect record permissions the Android app requests (read-only).
 const HEALTH_CONNECT_PERMISSIONS = [
   'android.permission.health.READ_STEPS',
@@ -68,6 +93,23 @@ const HEALTH_CONNECT_PERMISSIONS = [
   'android.permission.health.READ_WEIGHT',
   'android.permission.health.READ_EXERCISE',
 ];
+
+/**
+ * One collected-data-type entry.
+ *
+ * Every type this app collects has the same shape — linked to the user,
+ * never used for tracking, and collected to run the product rather than to
+ * profile anyone — so the shape is written once and the differences (there
+ * are none, today) would be an argument override.
+ */
+function collected(type: string) {
+  return {
+    NSPrivacyCollectedDataType: type,
+    NSPrivacyCollectedDataTypeLinked: true,
+    NSPrivacyCollectedDataTypeTracking: false,
+    NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+  };
+}
 
 const config: ExpoConfig = {
   name: 'NutriAI',
@@ -89,7 +131,80 @@ const config: ExpoConfig = {
     infoPlist: {
       // HealthKit background delivery is not used; foreground reads only.
       UIBackgroundModes: [],
+      /**
+       * The export-compliance answer, given once here instead of on every
+       * upload.
+       *
+       * Without it App Store Connect parks the build in "Missing Compliance"
+       * and never sends it to review — a state that looks exactly like a
+       * successful upload until you notice review never started. `false`
+       * ("uses no non-exempt encryption") is the correct answer: NutriAI's
+       * only cryptography is HTTPS to its own backend, plus the OS keychain
+       * via expo-secure-store, and both are exempt under the standard
+       * Category 5 Part 2 note.
+       */
+      ITSAppUsesNonExemptEncryption: false,
     },
+    /**
+     * The privacy manifest (PrivacyInfo.xcprivacy), written at prebuild.
+     *
+     * Apple requires it, and it must agree with the Privacy Nutrition Labels
+     * in App Store Connect *and* with what the app actually does at runtime.
+     * A mismatch between those three is the single most common rejection
+     * cause on both stores, so this list is derived from the code rather than
+     * from intent:
+     *
+     *   Health / Fitness  Apple Health and Health Connect readings, POSTed to
+     *                     /api/activity (src/health/sync.ts).
+     *   Email, Name       the account itself (src/api/account.ts).
+     *   User ID           the session and every row keyed to it.
+     *   Other content     food entries, weigh-ins and Coach messages.
+     *   Photos            meal photos, sent for analysis and not retained
+     *                     (app/(tabs)/index.tsx snaps them via ImagePicker).
+     *
+     * Every type is linked to the account and none is used for tracking:
+     * there is no analytics or advertising SDK in this app, and the health
+     * data is never used for advertising, which Apple 5.1.3 forbids outright.
+     *
+     * `NSPrivacyAccessedAPITypes` is empty on purpose — the required-reason
+     * APIs this app touches (UserDefaults via AsyncStorage, file timestamps
+     * via expo-file-system) are reached through dependencies that ship their
+     * own manifests, and Apple merges those. Our one custom native module,
+     * share-to-app, only fires an intent.
+     *
+     * Keep this in step with the code. Adding a field to the payload without
+     * adding it here is how an app ends up rejected for a mismatch it could
+     * have avoided.
+     */
+    privacyManifests: {
+      NSPrivacyTracking: false,
+      NSPrivacyTrackingDomains: [],
+      NSPrivacyAccessedAPITypes: [],
+      NSPrivacyCollectedDataTypes: [
+        collected('NSPrivacyCollectedDataTypeHealth'),
+        collected('NSPrivacyCollectedDataTypeFitness'),
+        collected('NSPrivacyCollectedDataTypeEmailAddress'),
+        collected('NSPrivacyCollectedDataTypeName'),
+        collected('NSPrivacyCollectedDataTypeUserID'),
+        collected('NSPrivacyCollectedDataTypeOtherUserContent'),
+        collected('NSPrivacyCollectedDataTypePhotosorVideos'),
+      ],
+    },
+    /**
+     * Universal Links. Pairs with the apple-app-site-association served at
+     * nutriai-app.up.railway.app/.well-known/ (see src/index.ts).
+     *
+     * Requires the Associated Domains capability, which a *paid* Apple
+     * Developer account has and a personal team does not — a free-team build
+     * fails to sign with this present. If a device build starts failing on
+     * provisioning, this is the line to look at first.
+     */
+    ...(APPLE_PAID_TEAM
+      ? {
+          associatedDomains: ['applinks:nutriai-app.up.railway.app'],
+          usesAppleSignIn: true,
+        }
+      : {}),
     entitlements: {
       'com.apple.developer.healthkit': true,
       'com.apple.developer.healthkit.access': [],
@@ -146,6 +261,25 @@ const config: ExpoConfig = {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#0b0e13',
     },
+    /**
+     * App Links. `autoVerify` is what makes Android check
+     * /.well-known/assetlinks.json at install time and hand these URLs to the
+     * app without the "open with" chooser.
+     *
+     * Verification is against the *release* signing certificate, so this only
+     * takes effect for a build signed with credentials/nutriai-release.keystore
+     * — a debug build still shows the chooser, which is expected and not a
+     * misconfiguration. Check with:
+     *   adb shell pm get-app-links app.nutriai.mobile
+     */
+    intentFilters: [
+      {
+        action: 'VIEW',
+        autoVerify: true,
+        data: [{ scheme: 'https', host: 'nutriai-app.up.railway.app', pathPrefix: '/m' }],
+        category: ['BROWSABLE', 'DEFAULT'],
+      },
+    ],
   },
   plugins: [
     'expo-router',
@@ -200,6 +334,21 @@ const config: ExpoConfig = {
         android: {
           // Health Connect's connect-client requires Android 8.0+ (API 26).
           minSdkVersion: 26,
+          /**
+           * R8 on release builds. Off by default in the Expo template — the
+           * generated build.gradle reads
+           * `android.enableProguardInReleaseBuilds`, which defaults to false,
+           * so releases shipped unminified and unshrunk.
+           *
+           * Google expects R8 from February 2027, and it is worth having
+           * sooner: it strips the unused half of a dependency tree that
+           * includes Health Connect, HealthKit's Android twin and Google
+           * Sign-In. React Native ships its own keep rules, so this needs a
+           * release build actually exercised before shipping — a rule that is
+           * missing shows up as a crash in a release binary and nowhere else.
+           */
+          enableProguardInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
           // react-native-health-connect pulls in Jetpack Compose, whose compiler
           // 1.5.15 needs Kotlin 1.9.25 — Expo 52 defaults to 1.9.24.
           kotlinVersion: '1.9.25',
@@ -240,6 +389,10 @@ const config: ExpoConfig = {
     // Signs release APKs with credentials/keystore.properties when it exists,
     // instead of the template's shared debug key. See SETUP.md.
     './plugins/withReleaseSigning',
+    // Removes the screen-overlay permission React Native's debug manifest
+    // merges in. See the plugin — on a health app it is a malware signal for
+    // a capability we never use.
+    './plugins/withoutOverlayPermission',
     // Must come last: strips the aps-environment entitlement that
     // expo-notifications adds. See the plugin for why.
     './plugins/withoutPushEntitlement',

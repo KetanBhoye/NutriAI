@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["G996LG99M6.app.nutriai.mobile"],
+        "components": [
+          { "/": "/m/*", "comment": "The PWA's own routes open in the native app when it is installed." },
+          { "/": "/download", "exclude": true, "comment": "Must stay a web page: it is how someone without the app gets it." },
+          { "/": "/privacy", "exclude": true },
+          { "/": "/terms", "exclude": true },
+          { "/": "/attributions", "exclude": true }
+        ]
+      }
+    ]
+  }
+}

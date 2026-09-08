@@ -4,7 +4,7 @@ import { api } from '@/api';
 import { useAuth } from '@/auth';
 import { Button } from '@/components/ui';
 import { API_URL } from '@/config';
-import { colors, space } from '@/theme';
+import { colors, fonts, space } from '@/theme';
 
 /**
  * Asks for agreement from accounts that predate the signup checkbox, or whose
@@ -58,6 +58,28 @@ export function ConsentGate() {
           <Text style={styles.body}>
             NutriAI now sets out clearly how your data — including health data from Apple Health or
             Health Connect — is stored and used. Please read and accept to carry on.
+          </Text>
+          {/*
+            Naming the AI provider, and what reaches it, at the point of
+            consent.
+
+            Apple 5.1.2 has required this since late 2025: a consent screen
+            that names the third-party AI service and the data types sent to
+            it, before any personal data goes. The privacy policy already
+            says all of this, and that is not where Apple looks — the
+            requirement is about the moment a person agrees, not about a
+            document they could go and find.
+
+            Keep this list matching what the Coach actually sends. It is a
+            promise, and the sync is not automatic: if a new field joins the
+            payload in api/ai.ts, it belongs in this sentence too.
+          */}
+          <Text style={styles.body}>
+            Your coach runs on <Text style={styles.emphasis}>Google Vertex AI (Gemini)</Text>. When
+            you use it, the messages you send along with your food log, weight, goals and profile
+            for the day in question are sent to Google to generate a reply. Google processes them
+            on NutriAI&apos;s behalf and does not use them to train its models. Everything else in
+            the app works without it.
           </Text>
 
           <Pressable
@@ -121,6 +143,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   title: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  emphasis: { color: colors.text, fontFamily: fonts.semibold },
   body: { color: colors.textDim, fontSize: 14, lineHeight: 20 },
   consent: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   box: {

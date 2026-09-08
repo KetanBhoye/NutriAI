@@ -4,7 +4,7 @@ import { health, DailyHealth } from '@/health';
 import { syncToday } from '@/health/sync';
 import { clearHealthConnected, markHealthConnected, wasHealthConnected } from '@/health/permission';
 import { Button, Card, StatTile } from '@/components/ui';
-import { colors, fonts, type } from '@/theme';
+import { colors, fonts, radius, type } from '@/theme';
 import { NutriLoader } from '@/components/ui/NutriLoader';
 
 type Status = 'checking' | 'unavailable' | 'needs-update' | 'needs-permission' | 'ready';
@@ -46,6 +46,21 @@ export function HealthSyncSection() {
   /** Record types Health Connect has not granted, when it can tell us. */
   const [missing, setMissing] = useState<string[]>([]);
   const [showHelp, setShowHelp] = useState(false);
+  /**
+   * Whether the disclosure below has been shown and accepted this time round.
+   *
+   * Google's User Data policy requires a *prominent in-app disclosure* before
+   * sensitive data is collected — and the OS permission sheet does not count
+   * as one. It names the permission, not what we do with the reading, and the
+   * thing that actually triggers the duty is invisible to it: these numbers
+   * leave the phone. They are POSTed to /api/activity so the coach and the
+   * daily totals can use them, and a user who assumed the data stayed on the
+   * device would be wrong in exactly the way the policy exists to prevent.
+   *
+   * So the OS sheet is never the first thing anyone sees. `connect` opens
+   * this, and only an explicit accept calls requestPermissions().
+   */
+  const [disclosing, setDisclosing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -91,7 +106,15 @@ export function HealthSyncSection() {
     })();
   }, []);
 
-  const connect = async () => {
+  /** Opens the disclosure. The permission request itself is `grantAccess`. */
+  const connect = () => {
+    setMessage(null);
+    setFailed(false);
+    setDenied(false);
+    setDisclosing(true);
+  };
+
+  const grantAccess = async () => {
     setBusy(true);
     setMessage(null);
     setFailed(false);
@@ -118,6 +141,10 @@ export function HealthSyncSection() {
       setMessage(humanError(e));
     } finally {
       setBusy(false);
+      // Closed either way: granted moves the card to `ready`, refused shows
+      // the message and the settings shortcut, and leaving the disclosure up
+      // over either would read as though nothing had happened.
+      setDisclosing(false);
     }
   };
 
@@ -191,7 +218,56 @@ export function HealthSyncSection() {
 
       {status === 'needs-permission' && (
         <>
-          <Button title={`Connect ${health.name}`} onPress={connect} busy={busy} />
+          {disclosing ? (
+            /**
+             * The prominent disclosure. Deliberately specific, because the
+             * policy is about informed consent rather than a notice: it names
+             * every record type we read, what each one is for, and — the part
+             * the OS sheet can never say — that the readings are sent to
+             * NutriAI's servers rather than staying on the phone.
+             */
+            <View style={styles.disclosure}>
+              <Text style={styles.disclosureTitle}>Before you connect {health.name}</Text>
+              <Text style={styles.disclosureBody}>
+                NutriAI reads these from {health.name}:
+              </Text>
+              <View style={styles.disclosureList}>
+                <Text style={styles.disclosureItem}>
+                  <Text style={styles.disclosureItemName}>Steps, distance and exercise</Text> — so
+                  the day's movement counts towards your calorie target.
+                </Text>
+                <Text style={styles.disclosureItem}>
+                  <Text style={styles.disclosureItemName}>Active energy</Text> — so what you burned
+                  is added to what you can eat.
+                </Text>
+                <Text style={styles.disclosureItem}>
+                  <Text style={styles.disclosureItemName}>Weight</Text> — so the plan can adapt to
+                  the trend instead of a single weigh-in.
+                </Text>
+              </View>
+              <Text style={styles.disclosureBody}>
+                These readings are sent to NutriAI's servers and stored with your account, so your
+                totals and your coach stay in step across your devices. They are never used for
+                advertising and never sold. You can disconnect at any time in {health.name}, and
+                deleting your account deletes them.
+              </Text>
+              <Button
+                title={`Agree and connect ${health.name}`}
+                onPress={grantAccess}
+                busy={busy}
+                style={{ marginTop: 4 }}
+              />
+              <Button
+                title="Not now"
+                variant="ghost"
+                onPress={() => setDisclosing(false)}
+                disabled={busy}
+                style={{ marginTop: 8 }}
+              />
+            </View>
+          ) : (
+            <Button title={`Connect ${health.name}`} onPress={connect} busy={busy} />
+          )}
           {denied && health.openSettings ? (
             <Button
               title={`Open ${health.name} settings`}
@@ -346,6 +422,19 @@ const styles = StyleSheet.create({
   helpToggle: { marginTop: 14, alignSelf: 'flex-start' },
   helpToggleText: { ...type.caption, fontFamily: fonts.semibold, color: colors.accent },
   help: { marginTop: 10, gap: 14 },
+  disclosure: {
+    backgroundColor: colors.surface2,
+    borderRadius: radius,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 10,
+  },
+  disclosureTitle: { color: colors.text, fontSize: 16, fontFamily: fonts.semibold },
+  disclosureBody: { color: colors.textDim, fontSize: 13.5, lineHeight: 20 },
+  disclosureList: { gap: 8, paddingLeft: 2 },
+  disclosureItem: { color: colors.textDim, fontSize: 13.5, lineHeight: 20 },
+  disclosureItemName: { color: colors.text, fontFamily: fonts.medium },
   helpIntro: { ...type.caption, color: colors.textDim, lineHeight: 19 },
   helpAlert: {
     borderWidth: 1,

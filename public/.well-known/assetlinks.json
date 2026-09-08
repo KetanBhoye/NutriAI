@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.nutriai.mobile",
+      "sha256_cert_fingerprints": [
+        "5B:9D:60:BD:AE:45:2F:8F:D9:B1:39:59:1F:20:A3:66:9B:11:AF:BF:90:49:83:5A:90:D9:6A:7F:89:4A:97:B6"
+      ]
+    }
+  }
+]

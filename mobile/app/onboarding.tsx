@@ -5,7 +5,7 @@ import { ApiError, onboardingApi } from '@/api';
 import { emitGoalsChanged } from '@/goalsBus';
 import { addDays, todayISO } from '@/dates';
 import { Button, OptionRow, PillGroup, Screen, TextField } from '@/components/ui';
-import { colors, fonts, type } from '@/theme';
+import { colors, fonts, space, type } from '@/theme';
 import {
   ACTIVITY,
   ActivityLevel,
@@ -338,6 +338,26 @@ export default function Onboarding() {
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
+        {/*
+          Shown on the step that hands over the calorie and macro targets,
+          because that is the first moment the app says a number about
+          somebody's body — and the moment it could be mistaken for clinical
+          advice.
+
+          Required rather than defensive: Google's January 2026 health-policy
+          tightening obliges an app with no regulatory clearance to say plainly
+          that it is not a medical device. It is repeated in You → About, so it
+          is findable later by someone who skipped past it here.
+        */}
+        {step === 3 ? (
+          <Text style={styles.disclaimer}>
+            NutriAI is a nutrition tracker, not a medical device. Its targets are estimates from
+            standard formulas and are not medical advice, diagnosis or treatment. Talk to a doctor
+            or a dietitian before making significant changes, particularly if you are pregnant,
+            managing a condition such as diabetes, or recovering from an eating disorder.
+          </Text>
+        ) : null}
+
         <View style={styles.nav}>
           {step > 0 ? <Button title="Back" variant="ghost" onPress={back} disabled={busy} style={{ flex: 0 }} /> : null}
           {step < 3 ? (
@@ -410,6 +430,13 @@ const styles = StyleSheet.create({
   coachNoteHead: { color: colors.accent, fontSize: 12, fontFamily: fonts.bold, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 },
   coachNoteText: { color: colors.text, fontSize: 14, lineHeight: 21 },
   error: { color: colors.danger, fontSize: 13, marginTop: 16 },
+  disclaimer: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: space.lg,
+    fontFamily: fonts.regular,
+  },
   nav: { flexDirection: 'row', gap: 10, marginTop: 26 },
   flex1: { flex: 1 },
 });
