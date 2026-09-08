@@ -185,6 +185,14 @@ export interface CoachTurn {
   reply: string;
   actions: string[];
   history: CoachHistoryTurn[];
+  /**
+   * The sites the grounded nutrition lookup read for this turn.
+   *
+   * Optional because a client can meet an older server, and empty whenever no
+   * lookup ran — the food was already known, or the turn only answered a
+   * question. Absent and empty mean the same thing to the UI: show nothing.
+   */
+  sources?: string[];
 }
 
 export interface DashboardPayload {

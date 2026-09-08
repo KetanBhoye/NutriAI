@@ -56,6 +56,16 @@ interface Bubble {
   failed?: boolean;
   /** The user message this reply answered, so "Ask again" can re-run it. */
   prompt?: string;
+  /**
+   * Where the turn's nutrition figures came from, when it looked any up.
+   *
+   * Shown because these numbers become the user's diary and drive the day's
+   * targets. "Because the coach said so" is a poor answer for an app that
+   * tells people what to eat; naming openfoodfacts.org lets someone judge the
+   * figure, and spot when a source was a shopping site rather than a
+   * nutrition database.
+   */
+  sources?: string[];
 }
 
 let idCounter = 0;
@@ -204,6 +214,7 @@ export default function Coach() {
         logDate: changed ? sentDate : undefined,
         diff,
         prompt: message,
+        sources: result.sources?.length ? result.sources : undefined,
       };
       setBubbles((prev) => [...prev, reply]);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -485,6 +496,19 @@ export default function Coach() {
                         </Pressable>
                       ) : null}
 
+                      {item.sources?.length ? (
+                        /*
+                          Sources under the answer, not inside the logged card:
+                          they explain where the numbers came from whether or
+                          not anything was written to the diary — a question
+                          about a food is looked up the same way.
+                        */
+                        <View style={styles.sources}>
+                          <Text style={styles.sourcesLabel}>Nutrition data from</Text>
+                          <Text style={styles.sourcesList}>{item.sources.join(' · ')}</Text>
+                        </View>
+                      ) : null}
+
                       {item.failed && item.prompt ? (
                         <Pressable onPress={() => void send(item.prompt)} style={styles.retry}>
                           <Feather name="refresh-cw" size={12} color={colors.danger} />
@@ -696,6 +720,22 @@ const styles = StyleSheet.create({
   bubbleText: { color: colors.text, fontSize: 15, lineHeight: 21 },
   bubbleTextUser: { color: colors.onAccent },
   changed: { color: colors.accent, fontSize: 13, fontFamily: fonts.bold, marginTop: 8 },
+  sources: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  sourcesLabel: {
+    color: colors.textDim,
+    fontSize: 10.5,
+    fontFamily: fonts.medium,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  // Wraps rather than truncates: a source the user cannot read is not a
+  // citation, and there are rarely more than six.
+  sourcesList: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: 3 },
   retry: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 },
   retryText: { ...type.caption, fontSize: 12.5, fontFamily: fonts.semibold, color: colors.danger },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingHorizontal: 4 },

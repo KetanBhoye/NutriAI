@@ -352,6 +352,20 @@ export interface CoachTurn {
   reply: string;
   actions: string[];
   history: GeminiContent[];
+  /**
+   * Where this turn's nutrition figures came from — the sites the grounded
+   * lookup actually read, in the order it read them.
+   *
+   * Collected for the user, not the model. Until now these reached the model
+   * as part of the tool result and went no further, so a number appeared in
+   * someone's diary with no way to ask where it came from. For an app that
+   * tells people what to eat, "because the model said so" is a worse answer
+   * than naming openfoodfacts.org.
+   *
+   * Empty is normal and means no web lookup ran this turn — the food was
+   * already in the shared repo, or the coach only answered a question.
+   */
+  sources: string[];
 }
 
 const MAX_STEPS = 6;
@@ -399,6 +413,29 @@ Be brief and direct. After acting, confirm what you did in one or two sentences.
 }
 
 /** Pulls the text payload out of a tool result, for grounding the prompt. */
+/**
+ * Pulls the source list out of a lookup_nutrition result.
+ *
+ * The tool hands the model a JSON string; this reads the same string rather
+ * than threading a second channel through a tool map that has no per-turn
+ * state. Failure is silent on purpose — a malformed result already shows up
+ * as a bad answer, and losing the citation list on top of that helps nobody.
+ */
+function collectSources(text: string, into: string[]): void {
+  try {
+    const parsed = JSON.parse(text) as { sources?: unknown };
+    if (!Array.isArray(parsed.sources)) return;
+    for (const s of parsed.sources) {
+      const name = String(s).trim();
+      // Deduped across the turn: three foods looked up together routinely
+      // share a site, and listing it three times reads as three sources.
+      if (name && !into.includes(name)) into.push(name);
+    }
+  } catch {
+    // Not JSON — a quota message or a failure string. Nothing to collect.
+  }
+}
+
 function toolText(result: CallToolResult | null): string {
   const first = result?.content?.[0];
   return first && first.type === 'text' ? (first as { text: string }).text.slice(0, 1500) : '(unavailable)';
@@ -488,6 +525,7 @@ export async function runCoachTurn(opts: {
     { role: 'user', parts: [{ text: opts.message }] },
   ];
   const actions: string[] = [];
+  const sources: string[] = [];
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     console.log(`[coach] step ${step}: calling vertex (${contents.length} turns)`);
@@ -523,7 +561,7 @@ export async function runCoachTurn(opts: {
         .map((p) => p.text ?? '')
         .join('')
         .trim();
-      return { reply: reply || 'Done.', actions, history: contents };
+      return { reply: reply || 'Done.', actions, history: contents, sources };
     }
 
     // Report before executing, not after: the point is to say what is being
@@ -545,6 +583,7 @@ export async function runCoachTurn(opts: {
           const result = await tool.run(args, opts.userId, opts.env);
           text = result.content?.[0]?.type === 'text' ? (result.content[0] as { text: string }).text : 'ok';
           actions.push(name);
+          if (name === 'lookup_nutrition') collectSources(text, sources);
           console.log(`[coach] ${name} done`);
         } catch (error) {
           text = `Tool ${name} failed: ${error instanceof Error ? error.message : 'error'}`;
@@ -561,5 +600,6 @@ export async function runCoachTurn(opts: {
     reply: "I did part of that but got stuck mid-way. Check your Today tab and tell me what's still needed.",
     actions,
     history: contents,
+    sources,
   };
 }

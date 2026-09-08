@@ -4,11 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * The web-grounded nutrition lookup — the tool the coach calls before logging
  * anything, so its numbers become the user's diary.
  *
- * Two things make it worth its own test. Grounding can't be combined with a
- * JSON response schema, so the reply is prose that has to be mined for JSON —
- * a parser, and parsers rot. And web sources mix per-100 g with per-serving
- * figures constantly, which is the single most common way an item arrives
- * carrying more macro energy than the calories it claims.
+ * It runs as two calls: a grounded one that reads the web in prose, then an
+ * ungrounded one that turns that prose into numbers. The split exists because
+ * ordering a grounded call to emit only JSON silently strips its citations —
+ * see the comment on lookupMacrosGrounded, and the regression test below.
+ *
+ * Note what these tests could not catch on their own. "keeps the sources"
+ * passed throughout the period when production returned an empty source list
+ * on every single call, because the mock supplied grounding chunks that the
+ * real API had stopped providing. A test that hands the code its input can
+ * only prove the code reads it — never that the input arrives. That is why
+ * the prompt shape is asserted here too: it is the part that decided whether
+ * the real API sent anything back.
  */
 
 const vertexFetch = vi.hoisted(() => vi.fn());
@@ -31,8 +38,11 @@ const reply = (text: string, chunks: Array<{ web?: { title?: string } }> = []) =
     }),
   });
 
-/** The prompt sent on the most recent call. */
-const sentPrompt = (): string => vertexFetch.mock.calls.at(-1)![2].contents[0].parts[0].text;
+/** The grounded research call — the first of the two. */
+const researchBody = () => vertexFetch.mock.calls[0]![2];
+/** The ungrounded extraction call that follows it. */
+const extractBody = () => vertexFetch.mock.calls[1]![2];
+const sentPrompt = (): string => researchBody().contents[0].parts[0].text;
 
 beforeEach(() => {
   vertexFetch.mockReset();
@@ -58,7 +68,38 @@ describe('the request', () => {
     reply('{"items":[]}');
     await lookupMacrosGrounded('2 roti');
 
-    expect(vertexFetch.mock.calls.at(-1)![2].tools).toEqual([{ googleSearch: {} }]);
+    expect(researchBody().tools).toEqual([{ googleSearch: {} }]);
+  });
+
+  /**
+   * The regression that cost the feature its entire reason for existing.
+   *
+   * Telling a grounded call to return only JSON makes the model search and
+   * then answer with a bare object — and a bare object gives the grounding
+   * system nothing to attach citations to, so `groundingChunks` comes back
+   * empty every time. Measured against the shipped prompt: 0 chunks with the
+   * JSON instruction, 4 without it. The numbers then come from the model's
+   * memory while still being billed as a grounded query.
+   *
+   * So the research call must never ask for JSON. If a future change moves
+   * the schema onto this call to save a round trip, this fails.
+   */
+  it('never asks the grounded call for JSON, which would strip its citations', async () => {
+    reply('{"items":[]}');
+    await lookupMacrosGrounded('2 roti');
+
+    expect(sentPrompt()).not.toMatch(/\bJSON\b/i);
+    expect(researchBody().generationConfig?.responseSchema).toBeUndefined();
+    expect(researchBody().generationConfig?.responseMimeType).toBeUndefined();
+  });
+
+  it('extracts with a schema, and without searching again', async () => {
+    reply('{"items":[]}');
+    await lookupMacrosGrounded('2 roti');
+
+    // Cheap, deterministic, and unable to wander off and look anything up.
+    expect(extractBody().tools).toBeUndefined();
+    expect(extractBody().generationConfig.responseMimeType).toBe('application/json');
   });
 
   it('refuses to run without Vertex configured, rather than returning zeros', async () => {

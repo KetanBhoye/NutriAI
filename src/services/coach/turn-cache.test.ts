@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cachedTurnCount, clearTurnCache, runOnce } from './turn-cache.js';
 import type { CoachTurn } from './agent.js';
 
-const turn = (reply: string): CoachTurn => ({ reply, actions: ['add_entry'], history: [] });
+const turn = (reply: string): CoachTurn => ({ reply, actions: ['add_entry'], history: [], sources: [] });
 
 beforeEach(() => clearTurnCache());
 
