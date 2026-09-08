@@ -348,7 +348,36 @@ const config: ExpoConfig = {
            * missing shows up as a crash in a release binary and nowhere else.
            */
           enableProguardInReleaseBuilds: true,
-          enableShrinkResourcesInReleaseBuilds: true,
+          /**
+           * Resource shrinking stays OFF, and must stay off.
+           *
+           * Turning it on shipped v1.0.30 with no fonts at all. React Native
+           * packages every bundled font as a `res/raw` entry — Inter's five
+           * weights and @expo/vector-icons' Feather among them — and loads
+           * them *by name at runtime*. Nothing references them statically, so
+           * the resource shrinker correctly concluded they were unused and
+           * removed all twelve.
+           *
+           * The failure is quiet, which is what makes it dangerous. Text has
+           * a fallback: `useFonts` never resolves, the 3s timeout in
+           * app/_layout.tsx fires, and the app renders in the system font —
+           * slightly off, entirely legible, easy to miss. An icon font has no
+           * fallback, so every tab bar and button glyph renders as nothing.
+           * A release smoke test on the login screen (no icons on it) passes
+           * happily.
+           *
+           * R8 itself — `enableProguardInReleaseBuilds` above — is unaffected
+           * and stays on: that is the code shrinking Google asks for by
+           * February 2027. Resource shrinking is a separate, optional pass
+           * that buys a few MB and costs the fonts.
+           *
+           * If it is ever wanted, it needs a keep rule
+           * (`res/raw/keep.xml` with `tools:keep="@raw/*"`) and a release
+           * build verified past the login screen — check `unzip -l` on the
+           * APK for .ttf entries, which is the check that would have caught
+           * this.
+           */
+          enableShrinkResourcesInReleaseBuilds: false,
           // react-native-health-connect pulls in Jetpack Compose, whose compiler
           // 1.5.15 needs Kotlin 1.9.25 — Expo 52 defaults to 1.9.24.
           kotlinVersion: '1.9.25',
