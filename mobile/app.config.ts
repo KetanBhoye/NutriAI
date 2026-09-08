@@ -422,6 +422,10 @@ const config: ExpoConfig = {
     // merges in. See the plugin — on a health app it is a malware signal for
     // a capability we never use.
     './plugins/withoutOverlayPermission',
+    // Removes the Sign in with Apple entitlement on a free team, which
+    // expo-apple-authentication's own plugin adds regardless of config. Only
+    // acts when APPLE_PAID_TEAM=0. See the plugin.
+    './plugins/withoutAppleSignInEntitlement',
     // Must come last: strips the aps-environment entitlement that
     // expo-notifications adds. See the plugin for why.
     './plugins/withoutPushEntitlement',
