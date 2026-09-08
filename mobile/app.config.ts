@@ -114,7 +114,7 @@ function collected(type: string) {
 const config: ExpoConfig = {
   name: 'NutriAI',
   slug: 'nutriai-mobile',
-  version: '1.0.30',
+  version: '1.0.31',
   orientation: 'portrait',
   scheme: 'nutriai',
   userInterfaceStyle: 'dark',
@@ -218,7 +218,7 @@ const config: ExpoConfig = {
      * from another, and some installers refuse to update at all. `npm run
      * release` bumps both this and `version` for you.
      */
-    versionCode: 31,
+    versionCode: 32,
     permissions: [
       ...HEALTH_CONNECT_PERMISSIONS,
       /**
