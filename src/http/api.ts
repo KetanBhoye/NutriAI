@@ -512,8 +512,9 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
    * (Apple's stable per-app user id) is the only identifier. A returning user
    * is therefore matched on `sub` first and email second.
    *
-   * Private Relay addresses (@privaterelay.appleid.com) are real, deliverable
-   * addresses and are stored as given. Rejecting them would defeat the point
+   * Private Relay addresses (@privaterelay.appleid.com, and @private.icloud.com
+   * since 2026) are real, deliverable addresses and are stored as given — no
+   * domain is allowlisted or rejected here, so both work. Rejecting them would defeat the point
    * of the feature Apple is requiring.
    */
   app.post('/api/auth/apple', async (req, res) => {
