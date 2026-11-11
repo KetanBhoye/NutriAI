@@ -7,7 +7,13 @@ import { DEFAULT_PLAN, checkQuota, planFor, spendCapsFor } from '../services/ai/
 import { recordAiUsage, usageSince, type AiFeature } from '../services/ai/metering.js';
 import { currentRates, refreshRatesFromGoogle, saveRates } from '../services/ai/rates.js';
 import { getAiAdminStats } from '../services/admin/ai-stats.js';
-import { allSettings, getSetting, setSetting, SETTINGS } from '../services/settings.js';
+import {
+  allSettings,
+  getAnnouncement,
+  getSetting,
+  setSetting,
+  SETTINGS,
+} from '../services/settings.js';
 import {
   claimJob,
   completeJob,
@@ -2453,6 +2459,48 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     } catch (error) {
       console.error('Admin settings error:', error);
       res.status(500).json({ error: 'Failed to save settings' });
+    }
+  });
+
+  /**
+   * The in-app announcement: one short message the app shows as a banner at
+   * next open, until the user dismisses it.
+   *
+   * This is the channel that reaches everyone. Push only reaches web users who
+   * turned notifications on, which at the time of writing was nobody.
+   */
+  app.get('/api/announcement', requireSession, async (_req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ announcement: await getAnnouncement(env.DB) });
+    } catch {
+      // News about the app must never be the reason a screen fails to load.
+      res.json({ announcement: null });
+    }
+  });
+
+  app.put('/api/admin/announcement', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+      // An empty body clears it.
+      const clearing = req.body?.clear === true;
+      const parsed = clearing ? null : adminBroadcastSchema.safeParse(req.body);
+      if (parsed && !parsed.success) {
+        res.status(400).json({ error: humanValidationError(parsed.error) });
+        return;
+      }
+      const value = parsed
+        ? // A fresh id each time, so people who dismissed the last message
+          // still see this one.
+          JSON.stringify({ id: `a${Date.now().toString(36)}`, ...parsed.data })
+        : '';
+      await setSetting(env.DB, SETTINGS.ANNOUNCEMENT, value, req.sessionUser!.userId);
+      res.json({ ok: true, announcement: await getAnnouncement(env.DB) });
+    } catch (error) {
+      console.error('Admin announcement error:', error);
+      res.status(500).json({ error: 'Failed to save the announcement' });
     }
   });
 

@@ -27,7 +27,7 @@
  * so a new deploy is a new cache name and the old one is deleted on activate.
  */
 
-const BUILD_ID = '8459000ad92545a2d1ad1bb2a8c55b0d';
+const BUILD_ID = 'e34507dac415cadb3d631572c0602ca7';
 const CACHE = `nutriai-m-${BUILD_ID}`;
 const SHELL = '/m/';
 

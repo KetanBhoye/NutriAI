@@ -80,6 +80,40 @@ const announceTitle = ref('');
 const announceBody = ref('');
 const announceBusy = ref(false);
 const announceNote = ref('');
+const banner = ref<{ id: string; title: string; body: string } | null>(null);
+
+async function loadBanner(): Promise<void> {
+  try {
+    const res = await fetch('/api/announcement', { credentials: 'same-origin', cache: 'no-store' });
+    if (res.ok) banner.value = (await res.json()).announcement ?? null;
+  } catch {
+    // Additive, like the rest of this card.
+  }
+}
+
+/** Sets the in-app banner to the typed message, or clears it. */
+async function setBanner(clear: boolean): Promise<void> {
+  announceBusy.value = true;
+  announceNote.value = '';
+  try {
+    const res = await fetch('/api/admin/announcement', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        clear ? { clear: true } : { title: announceTitle.value, body: announceBody.value }
+      ),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'failed');
+    banner.value = data.announcement ?? null;
+    announceNote.value = clear ? 'Banner cleared.' : 'Banner is live in the app.';
+  } catch (e) {
+    announceNote.value = e instanceof Error ? e.message : 'Could not save that.';
+  } finally {
+    announceBusy.value = false;
+  }
+}
 
 async function sendAnnouncement(): Promise<void> {
   // Cannot be unsent, and it lands on real people's phones.
@@ -159,6 +193,7 @@ async function loadAi(): Promise<void> {
     const res = await fetch('/api/admin/ai', { credentials: 'same-origin', cache: 'no-store' });
     if (res.ok) ai.value = (await res.json()) as AiStats;
     await loadRates();
+    await loadBanner();
   } catch {
     // The AI panel is additive; its absence must not break the page.
   }
@@ -488,24 +523,39 @@ onMounted(load);
         <p v-if="settingError" class="err">{{ settingError }}</p>
       </section>
 
-      <!-- Announce: one push to everyone with notifications on. -->
+      <!-- Announce: an in-app banner for everyone, and optionally a push. -->
       <section class="card controls">
         <h2>Announce</h2>
         <div class="muted small">
-          Sends one push notification to every user who has notifications turned on.
-          Users without notifications are not reached.
+          The banner shows on the Today tab for every user at next open, until they dismiss it.
+          Push only reaches web users who turned notifications on.
+        </div>
+        <div v-if="banner" class="muted small">
+          Showing now: <strong>{{ banner.title }}</strong> — {{ banner.body }}
         </div>
         <input v-model="announceTitle" class="announce" maxlength="60" placeholder="Title" />
         <textarea v-model="announceBody" class="announce" maxlength="180" rows="2" placeholder="Message"></textarea>
         <div class="ctl">
           <div class="muted small">{{ announceNote }}</div>
-          <button
-            class="switch on"
-            :disabled="announceBusy || !announceTitle.trim() || !announceBody.trim()"
-            @click="sendAnnouncement()"
-          >
-            {{ announceBusy ? 'Sending…' : 'Send' }}
-          </button>
+          <div class="announce-btns">
+            <button v-if="banner" class="switch" :disabled="announceBusy" @click="setBanner(true)">
+              Clear banner
+            </button>
+            <button
+              class="switch"
+              :disabled="announceBusy || !announceTitle.trim() || !announceBody.trim()"
+              @click="sendAnnouncement()"
+            >
+              Send push
+            </button>
+            <button
+              class="switch on"
+              :disabled="announceBusy || !announceTitle.trim() || !announceBody.trim()"
+              @click="setBanner(false)"
+            >
+              Show in app
+            </button>
+          </div>
         </div>
       </section>
 
@@ -815,6 +865,7 @@ h1 {
 }
 .switch.on { background: #4ade80; color: #06210f; border-color: #4ade80; }
 .switch:disabled { opacity: 0.6; cursor: default; }
+.announce-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .announce {
   width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--border, #2a2f3a); background: transparent; color: inherit;

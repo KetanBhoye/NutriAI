@@ -35,6 +35,12 @@ export const SETTINGS = {
    * provider. See services/llm/mac-compute.ts.
    */
   MAC_COMPUTE_ENABLED: 'mac_compute_enabled',
+  /**
+   * The one in-app announcement, as JSON `{ id, title, body }`, or '' for none.
+   * The app shows it as a banner until dismissed, and remembers the dismissal
+   * by `id` — so a new message needs a new id to be seen again.
+   */
+  ANNOUNCEMENT: 'announcement',
 } as const;
 
 /** Invalidate after a write, so the admin sees their own change immediately. */
@@ -117,5 +123,24 @@ export async function allSettings(db: D1DatabaseCompat): Promise<SettingRow[]> {
     return rows.results ?? [];
   } catch {
     return [];
+  }
+}
+
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+}
+
+/** The current announcement, or null when there is none or it is malformed. */
+export async function getAnnouncement(db: D1DatabaseCompat): Promise<Announcement | null> {
+  const raw = await getSetting(db, SETTINGS.ANNOUNCEMENT, '');
+  if (!raw) return null;
+  try {
+    const a = JSON.parse(raw) as Partial<Announcement>;
+    if (!a.id || !a.title || !a.body) return null;
+    return { id: String(a.id), title: String(a.title), body: String(a.body) };
+  } catch {
+    return null;
   }
 }

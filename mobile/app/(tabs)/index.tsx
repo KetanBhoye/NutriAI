@@ -37,6 +37,7 @@ import { PortionSheet } from '@/features/today/PortionSheet';
 import { BarcodeModal } from '@/features/today/BarcodeModal';
 import { ShareStoryModal } from '@/features/today/ShareStoryModal';
 import { UpdateBanner } from '@/features/updates/UpdateBanner';
+import { AnnouncementBanner } from '@/features/announce/AnnouncementBanner';
 import { CelebrationCard } from '@/features/celebrate/CelebrationCard';
 import { pickMoment, type Moment } from '@/features/celebrate/moments';
 import { rememberMoment, seenMoments } from '@/features/celebrate/seen';
@@ -503,6 +504,7 @@ export default function Today() {
       {/* Below the sync notice on purpose: an unsynced change is about the
           user's own data and outranks news about the app. */}
       <UpdateBanner />
+      <AnnouncementBanner />
 
       {moment ? <CelebrationCard moment={moment} onDismiss={() => setMoment(null)} /> : null}
 
