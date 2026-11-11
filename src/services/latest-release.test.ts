@@ -153,6 +153,25 @@ describe('getLatestRelease', () => {
     expect(sentHeaders()['If-None-Match']).toBeUndefined();
   });
 
+  it('falls back to an anonymous request when the token is rejected', async () => {
+    // The bug: an expired GITHUB_TOKEN made GitHub answer 401, which read as
+    // "no release", so every phone was told it was up to date indefinitely.
+    process.env.GITHUB_TOKEN = 'expired';
+    const fetchMock = vi.fn(async (_url: string, init: { headers: Record<string, string> }) =>
+      init.headers.Authorization
+        ? ({ ok: false, status: 401, json: async () => ({}), headers: { get: () => null } } as unknown as Response)
+        : ({ ok: true, status: 200, json: async () => release(), headers: { get: () => null } } as unknown as Response)
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      expect((await getLatestRelease())?.version).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sentHeaders().Authorization).toBeUndefined();
+    } finally {
+      delete process.env.GITHUB_TOKEN;
+    }
+  });
+
   it('returns null rather than throwing when GitHub is unreachable', async () => {
     vi.stubGlobal(
       'fetch',

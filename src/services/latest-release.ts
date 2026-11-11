@@ -128,16 +128,32 @@ export async function getLatestRelease(): Promise<LatestRelease | null> {
   if (cached && Date.now() - cached.at < ttl) return cached.value;
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo()}/releases/latest`, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'nutriai-server',
-        // Free when nothing has changed — see the note on `etag`.
-        ...(etag && cached?.ok ? { 'If-None-Match': etag } : {}),
-        ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
-      },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
+    const request = (token: string | undefined) =>
+      fetch(`https://api.github.com/repos/${repo()}/releases/latest`, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'nutriai-server',
+          // Free when nothing has changed — see the note on `etag`.
+          ...(etag && cached?.ok ? { 'If-None-Match': etag } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+
+    let res = await request(process.env.GITHUB_TOKEN);
+    /**
+     * A rejected token must not be worse than no token.
+     *
+     * The token is only there for a higher rate limit; the repo is public. But
+     * an expired one makes GitHub answer 401, which read here as "no release"
+     * — so every phone was told it was up to date, indefinitely, with nothing
+     * but a warning in the server log. Asking again without it costs one
+     * request against the anonymous limit and keeps the updater alive.
+     */
+    if (res.status === 401 && process.env.GITHUB_TOKEN) {
+      console.warn('[app-version] GITHUB_TOKEN was rejected (expired?); retrying without it');
+      res = await request(undefined);
+    }
 
     // Unchanged: keep the answer we already have and reset its clock.
     if (res.status === 304 && cached) {
