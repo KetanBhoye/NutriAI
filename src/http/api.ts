@@ -7,7 +7,17 @@ import { DEFAULT_PLAN, checkQuota, planFor, spendCapsFor } from '../services/ai/
 import { recordAiUsage, usageSince, type AiFeature } from '../services/ai/metering.js';
 import { currentRates, refreshRatesFromGoogle, saveRates } from '../services/ai/rates.js';
 import { getAiAdminStats } from '../services/admin/ai-stats.js';
-import { allSettings, setSetting, SETTINGS } from '../services/settings.js';
+import { allSettings, getSetting, setSetting, SETTINGS } from '../services/settings.js';
+import {
+  claimJob,
+  completeJob,
+  macComputeOnline,
+  macComputeStatus,
+  noteWorkerSeen,
+  requeueJob,
+  setMacComputeEnabled,
+  verifyMacToken,
+} from '../services/llm/mac-compute.js';
 import { headlineFor } from '../services/consistency.js';
 import { compareToPopulation, getUserConsistency } from '../services/consistency-data.js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -52,6 +62,7 @@ import {
   saveSubscription,
   removeSubscription,
   sendPushToUser,
+  subscribedUserIds,
 } from '../services/push.js';
 import { sendReminderNow } from '../services/reminders.js';
 import { UserTrackingPreferencesRepository } from '../repositories/user-tracking-preferences.repository.js';
@@ -135,9 +146,42 @@ const adminSettingsSchema = z.object({
   // Bounded: a typo'd 0 would silently disable every AI feature, and a typo'd
   // 100000 would remove the protection the ceiling exists to give.
   ai_daily_budget_usd: z.number().min(0).max(1000).optional(),
+  /** Route AI requests to the worker on the owner's Mac when it is online. */
+  mac_compute_enabled: z.boolean().optional(),
+});
+
+const computeClaimSchema = z.object({
+  wait_ms: z.number().int().min(0).max(25_000).default(20_000),
+  worker: z
+    .object({
+      host: z.string().max(100).optional(),
+      version: z.string().max(40).optional(),
+      models: z.record(z.string().max(60)).optional(),
+    })
+    .optional(),
+});
+
+const computeResultSchema = z.object({
+  id: z.string().uuid(),
+  ok: z.boolean(),
+  error: z.string().max(500).optional(),
+  structured: z.unknown().optional(),
+  text: z.string().max(200_000).optional(),
+  tool_calls: z
+    .array(z.object({ name: z.string().max(80), args: z.record(z.unknown()).optional() }))
+    .max(20)
+    .optional(),
+  model: z.string().max(80).optional(),
+  ms: z.number().min(0).max(3_600_000).optional(),
 });
 
 const adminPlanSchema = z.object({ plan: z.enum(['free', 'pro']) });
+
+/** Bounded to what a notification shade actually shows. */
+const adminBroadcastSchema = z.object({
+  title: z.string().trim().min(1).max(60),
+  body: z.string().trim().min(1).max(180),
+});
 
 /**
  * Model rates. Every field optional so an admin can correct one number without
@@ -1256,7 +1300,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
 
       const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
       const project = process.env.GCP_PROJECT;
-      if (!credentialJson || !project) {
+      if ((!credentialJson || !project) && !macComputeOnline()) {
         res.status(503).json({ error: 'AI planning is not configured on this server.' });
         return;
       }
@@ -1264,8 +1308,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       const plan = await generateOnboardingPlan({
         ...parsed.data,
         target_weight_kg: parsed.data.target_weight_kg ?? null,
-        credentialJson,
-        project,
+        credentialJson: credentialJson ?? '',
+        project: project ?? '',
         location: process.env.GCP_LOCATION || 'us-central1',
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
       });
@@ -1406,10 +1450,77 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     }
   });
 
+  /**
+   * Mac compute: the worker on the owner's Mac long-polls here for AI jobs and
+   * posts each answer back. See services/llm/mac-compute.ts.
+   *
+   * Authenticated by a dedicated bearer token rather than a session — the
+   * worker is a machine, and this token can do nothing except take AI jobs.
+   * Without MAC_COMPUTE_TOKEN set on the server these routes do not exist.
+   */
+  const requireWorker = (req: Request, res: Response): boolean => {
+    const header = req.headers.authorization ?? '';
+    if (!verifyMacToken(header.startsWith('Bearer ') ? header.slice(7) : undefined)) {
+      res.status(404).json({ error: 'Not found' });
+      return false;
+    }
+    return true;
+  };
+
+  app.post('/api/compute/claim', async (req: Request, res: Response) => {
+    if (!requireWorker(req, res)) return;
+    const parsed = computeClaimSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Bad claim' });
+      return;
+    }
+    try {
+      // Each poll doubles as the heartbeat and as the moment the admin switch
+      // is re-read, which is what keeps `macComputeOnline()` synchronous.
+      const enabled = (await getSetting(env.DB, SETTINGS.MAC_COMPUTE_ENABLED, 'on')) !== 'off';
+      setMacComputeEnabled(enabled);
+      noteWorkerSeen(parsed.data.worker);
+      // A worker that disconnects mid-poll must not be handed a job.
+      const gone = new AbortController();
+      res.on('close', () => {
+        if (!res.writableEnded) gone.abort();
+      });
+      const job = await claimJob(parsed.data.wait_ms, gone.signal);
+      if (gone.signal.aborted) {
+        if (job) requeueJob(job.id);
+        return;
+      }
+      noteWorkerSeen();
+      res.json({ enabled, job });
+    } catch (error) {
+      console.error('Compute claim error:', error);
+      res.status(500).json({ error: 'Claim failed' });
+    }
+  });
+
+  app.post('/api/compute/result', (req: Request, res: Response) => {
+    if (!requireWorker(req, res)) return;
+    const parsed = computeResultSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Bad result' });
+      return;
+    }
+    const { id, ok, error, structured, text, tool_calls, model, ms } = parsed.data;
+    noteWorkerSeen();
+    const accepted = completeJob(
+      id,
+      ok
+        ? { ok: true, result: { structured, text, toolCalls: tool_calls, model, ms } }
+        : { ok: false, error: error ?? 'unknown error' }
+    );
+    // Not an error for the worker: the request simply gave up waiting.
+    res.json({ accepted });
+  });
+
   app.get('/api/ai/status', requireSession, (_req: AuthenticatedRequest, res) => {
     // Whether the AI logger is usable is purely a deployment-config question
     // (is an API key set), so the client can hide the feature when it isn't.
-    res.json({ configured: createProviderFromEnv() !== null });
+    res.json({ configured: createProviderFromEnv() !== null || macComputeOnline() });
   });
 
   app.post('/api/ai/parse', requireSession, async (req: AuthenticatedRequest, res) => {
@@ -1475,7 +1586,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
       const project = process.env.GCP_PROJECT;
-      if (!credentialJson || !project) {
+      if ((!credentialJson || !project) && !macComputeOnline()) {
         res.status(503).json({ error: 'Photo logging needs Vertex AI configured on the server.' });
         return;
       }
@@ -1523,8 +1634,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         imageBase64,
         mimeType,
         knownFoods,
-        credentialJson,
-        project,
+        credentialJson: credentialJson ?? '',
+        project: project ?? '',
         location: process.env.GCP_LOCATION || 'us-central1',
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
       });
@@ -1570,7 +1681,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
       // Vertex credentials — not just any LLM provider.
       const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
       const project = process.env.GCP_PROJECT;
-      if (!credentialJson || !project) {
+      if ((!credentialJson || !project) && !macComputeOnline()) {
         res.status(503).json({ error: 'The Coach assistant needs Vertex AI configured on the server.' });
         return;
       }
@@ -1627,8 +1738,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         env,
         knownFoods,
         activeDate: parsed.data.active_date,
-        credentialJson,
-        project,
+        credentialJson: credentialJson ?? '',
+        project: project ?? '',
         location: process.env.GCP_LOCATION || 'us-central1',
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
         onStep: streaming
@@ -1678,7 +1789,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
     try {
       const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
       const project = process.env.GCP_PROJECT;
-      if (!credentialJson || !project) {
+      if ((!credentialJson || !project) && !macComputeOnline()) {
         res.status(503).json({ error: 'Meal suggestions need Vertex AI configured on the server.' });
         return;
       }
@@ -1750,8 +1861,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         mealType,
         avoid,
         dietNotes: prefs?.behavior_instructions ? prefs.behavior_instructions.slice(0, 400) : null,
-        credentialJson,
-        project,
+        credentialJson: credentialJson ?? '',
+        project: project ?? '',
         location: process.env.GCP_LOCATION || 'us-central1',
         model: process.env.LLM_MODEL || 'gemini-2.5-flash',
       });
@@ -2204,7 +2315,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         };
       };
 
-      if (!credentialJson || !project) {
+      if ((!credentialJson || !project) && !macComputeOnline()) {
         res.json(fallback());
         return;
       }
@@ -2235,8 +2346,8 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
             }),
           displayName: req.sessionUser!.name,
           stats,
-          credentialJson,
-          project,
+          credentialJson: credentialJson ?? '',
+          project: project ?? '',
           location: process.env.GCP_LOCATION || 'us-central1',
           model: process.env.LLM_MODEL || 'gemini-2.5-flash',
         });
@@ -2283,7 +2394,7 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         getAiAdminStats(env.DB, days),
         allSettings(env.DB),
       ]);
-      res.json({ ...stats, settings });
+      res.json({ ...stats, settings, mac_compute: macComputeStatus() });
     } catch (error) {
       console.error('Admin AI stats error:', error);
       res.status(500).json({ error: 'Failed to load AI stats' });
@@ -2322,10 +2433,71 @@ export function registerApiRoutes(app: Express, options: ApiOptions): void {
         );
       }
 
-      res.json({ ok: true, settings: await allSettings(env.DB) });
+      if (parsed.data.mac_compute_enabled !== undefined) {
+        await setSetting(
+          env.DB,
+          SETTINGS.MAC_COMPUTE_ENABLED,
+          parsed.data.mac_compute_enabled ? 'on' : 'off',
+          by
+        );
+        // Mirrored into memory at once, so "off" stops the very next request
+        // instead of waiting for the worker's next poll to notice.
+        setMacComputeEnabled(parsed.data.mac_compute_enabled);
+      }
+
+      res.json({
+        ok: true,
+        settings: await allSettings(env.DB),
+        mac_compute: macComputeStatus(),
+      });
     } catch (error) {
       console.error('Admin settings error:', error);
       res.status(500).json({ error: 'Failed to save settings' });
+    }
+  });
+
+  /**
+   * One announcement, pushed to everyone who has notifications on.
+   *
+   * That is the whole reach: there is no email sender and no native push, so
+   * users who never enabled notifications are not told anything. The response
+   * says how many people and devices it reached rather than implying "all".
+   */
+  app.post('/api/admin/broadcast', requireSession, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.sessionUser!.isAdmin) {
+        res.status(403).json({ error: 'Admins only.' });
+        return;
+      }
+      const parsed = adminBroadcastSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: humanValidationError(parsed.error) });
+        return;
+      }
+      if (!isPushConfigured()) {
+        res.status(503).json({ error: 'Push notifications are not configured on this server.' });
+        return;
+      }
+
+      const userIds = await subscribedUserIds(env.DB);
+      let users = 0;
+      let devices = 0;
+      for (const userId of userIds) {
+        const delivered = await sendPushToUser(env.DB, userId, {
+          ...parsed.data,
+          url: '/m/',
+          // One tag, so a second announcement replaces the first on a device
+          // rather than stacking beside it.
+          tag: 'nutriai-announcement',
+        });
+        if (delivered > 0) users += 1;
+        devices += delivered;
+      }
+      console.log(`[broadcast] by ${req.sessionUser!.userId}: ${users} users, ${devices} devices`);
+      res.json({ ok: true, subscribed_users: userIds.length, users, devices });
+    } catch (error) {
+      console.error('Admin broadcast error:', error);
+      res.status(500).json({ error: 'Failed to send the announcement' });
     }
   });
 

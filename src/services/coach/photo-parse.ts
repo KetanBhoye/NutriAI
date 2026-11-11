@@ -1,5 +1,5 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
 import { CONSERVATIVE_ESTIMATION_RULES, reconcileMacros } from './macro-sanity.js';
 import { tokensFromVertex } from '../ai/metering.js';
 
@@ -69,14 +69,17 @@ export async function parseMealPhoto(opts: {
   location: string;
   model: string;
 }): Promise<PhotoResult> {
-  const token = await getGoogleAccessToken(opts.credentialJson);
+  const token = await vertexAccessToken(opts.credentialJson);
   const url = vertexUrl(opts.project, opts.location, opts.model);
 
   const system = `You are a nutrition expert reading a photo of a meal to log it in a food tracker.
 
-- Identify each DISTINCT food/drink you can see. One item per food.
-- Estimate a realistic portion for each: use natural units the user would recognise ("bowl", "piece", "roti", "glass", "g", "cup"). quantity is a number, unit is the word.
-- Give realistic calories and macros for that portion. This user eats mostly Indian home-cooked food; use that context for dishes like dal, sabzi, roti, rice, paneer, curd.
+- Identify each DISTINCT food/drink you can see. One item per food; list the parts of a thali separately rather than as one "thali".
+- Size each portion from the scale cues in the frame before naming a number: a dinner plate is about 25 cm across, a katori holds about 150 ml, a roti is about 15 cm, a tablespoon is 15 ml. Count pieces you can count (rotis, idlis, eggs) instead of estimating them.
+- Use natural units the user would recognise ("katori", "piece", "roti", "glass", "g", "cup"). quantity is a number, unit is the word.
+- Give calories and macros for that whole portion. This user eats mostly Indian home-cooked food; use that context for dishes like dal, sabzi, roti, rice, paneer, curd.
+- Only log what is visible. Do not add a food because it usually accompanies the dish, and if part of the plate is hidden or unclear, say so in "note" rather than guessing what is there.
+- If a package or label is readable in the photo, use the values and pack size printed on it.
 - Prefer the user's known foods and their values when a dish clearly matches one:
 ${opts.knownFoods || '(none yet)'}
 

@@ -1,5 +1,6 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
+import { MAC_COMPUTE_HEADER, macComputeOnline } from '../llm/mac-compute.js';
 import { CONSERVATIVE_ESTIMATION_RULES, reconcileMacros } from './macro-sanity.js';
 
 /**
@@ -39,14 +40,25 @@ export interface GroundedMacroItem {
 
 export async function lookupMacrosGrounded(
   query: string
-): Promise<{ items: GroundedMacroItem[]; sources: string[] }> {
+): Promise<{
+  items: GroundedMacroItem[];
+  sources: string[];
+  /**
+   * False when the Mac worker ran the search. A Vertex grounded query is
+   * billed per query; the Mac's is not, and metering it as one would charge
+   * the daily budget for money that was never spent.
+   */
+  billable: boolean;
+}> {
   const credentialJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  const project = process.env.GCP_PROJECT;
-  if (!credentialJson || !project) throw new Error('Vertex AI not configured');
+  const project = process.env.GCP_PROJECT ?? '';
+  if ((!credentialJson || !project) && !macComputeOnline()) {
+    throw new Error('Vertex AI not configured');
+  }
 
   const location = process.env.GCP_LOCATION || 'us-central1';
   const model = process.env.LLM_MODEL || 'gemini-2.5-flash';
-  const token = await getGoogleAccessToken(credentialJson);
+  const token = await vertexAccessToken(credentialJson);
   const url = vertexUrl(project, location, model);
 
   /**
@@ -61,9 +73,14 @@ export async function lookupMacrosGrounded(
     `The user eats mostly Indian home-cooked food, so use realistic values for Indian preparations. ` +
     `Give values for the portion stated, not per 100 g — converting when the source is per 100 g. ` +
     `\n\n${CONSERVATIVE_ESTIMATION_RULES}\n\n` +
-    `For each food give calories, protein, carbohydrate and fat for the stated portion, ` +
+    `Prefer the manufacturer's own label for a packaged or branded product, and a food-composition ` +
+    `database (IFCT / NIN for Indian foods, USDA FoodData Central) for everything else, over recipe ` +
+    `sites. Check whether a source's figure is for the raw or the cooked food and use the one that ` +
+    `matches what was eaten. ` +
+    `For each food give calories, protein, carbohydrate and fat for the stated portion, show the ` +
+    `per-100 g (or per-piece) figure and the portion weight you multiplied it by, ` +
     `and say which source each figure came from. If the web gives nothing usable for an item, ` +
-    `say so plainly for that item rather than inventing a source.`;
+    `say so plainly for that item and give a clearly labelled estimate rather than inventing a source.`;
 
   const research = await vertexFetch(
     url,
@@ -91,6 +108,8 @@ export async function lookupMacrosGrounded(
       content?: { parts?: Array<{ text?: string }> };
       groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string; title?: string } }> };
     }>;
+    /** Present only when the Mac worker answered. */
+    items?: GroundedMacroItem[];
   };
   const researchCand = researchData.candidates?.[0];
   const findings = (researchCand?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim();
@@ -103,13 +122,53 @@ export async function lookupMacrosGrounded(
   ).slice(0, 6);
 
   /**
-   * Call two: turn that prose into numbers.
-   *
-   * Ungrounded and search-free, so it is cheap and cannot wander off to look
-   * something up on its own — it may only transcribe what call one found.
-   * With no grounding in play, a `responseSchema` is allowed, which removes
-   * the fenced-JSON parsing that used to be needed.
+   * The Mac's search returns its figures already structured — Claude has no
+   * conflict between searching and a schema — so the second call, and its
+   * seconds, are skipped there. Vertex still needs it.
    */
+  const parsed = {
+    items: Array.isArray(researchData.items)
+      ? researchData.items
+      : await extractItems(url, token, findings),
+  };
+
+  const num = (v: unknown) => Math.max(0, Math.round(Number(v) || 0));
+  return {
+    items: (parsed.items ?? []).slice(0, 12).map((i) => {
+      // Web sources mix per-100 g and per-serving figures freely, which is the
+      // usual way an item comes back carrying more macro energy than calories.
+      const macros = reconcileMacros({
+        calories: num(i.calories),
+        protein_g: num(i.protein_g),
+        carbs_g: num(i.carbs_g),
+        fat_g: num(i.fat_g),
+      });
+      return {
+        name: String(i.name ?? 'Food').slice(0, 120),
+        calories: Math.round(macros.calories),
+        protein_g: Math.round(macros.protein_g),
+        carbs_g: Math.round(macros.carbs_g),
+        fat_g: Math.round(macros.fat_g),
+      };
+    }),
+    sources,
+    billable: research.headers?.get(MAC_COMPUTE_HEADER) !== 'mac',
+  };
+}
+
+/**
+ * Call two: turn the research prose into numbers.
+ *
+ * Ungrounded and search-free, so it is cheap and cannot wander off to look
+ * something up on its own — it may only transcribe what call one found.
+ * With no grounding in play, a `responseSchema` is allowed, which removes
+ * the fenced-JSON parsing that used to be needed.
+ */
+async function extractItems(
+  url: string,
+  token: string,
+  findings: string
+): Promise<GroundedMacroItem[]> {
   const extract = await vertexFetch(
     url,
     token,
@@ -122,7 +181,9 @@ export async function lookupMacrosGrounded(
               text:
                 `Convert these nutrition findings into structured data. Use ONLY the figures ` +
                 `stated below — do not adjust them, and do not add any food that is not ` +
-                `mentioned. Give integer values for the portion described.\n\n${findings}`,
+                `mentioned. Where both a per-100 g figure and a figure for the eaten portion ` +
+                `are given, take the one for the eaten portion. One item per food, named with ` +
+                `its portion. Give integer values.\n\n${findings}`,
             },
           ],
         },
@@ -165,29 +226,7 @@ export async function lookupMacrosGrounded(
   const text = (extractData.candidates?.[0]?.content?.parts ?? [])
     .map((p) => p.text ?? '')
     .join('');
-  const parsed = JSON.parse(extractJson(text)) as { items?: GroundedMacroItem[] };
-
-  const num = (v: unknown) => Math.max(0, Math.round(Number(v) || 0));
-  return {
-    items: (parsed.items ?? []).slice(0, 12).map((i) => {
-      // Web sources mix per-100 g and per-serving figures freely, which is the
-      // usual way an item comes back carrying more macro energy than calories.
-      const macros = reconcileMacros({
-        calories: num(i.calories),
-        protein_g: num(i.protein_g),
-        carbs_g: num(i.carbs_g),
-        fat_g: num(i.fat_g),
-      });
-      return {
-        name: String(i.name ?? 'Food').slice(0, 120),
-        calories: Math.round(macros.calories),
-        protein_g: Math.round(macros.protein_g),
-        carbs_g: Math.round(macros.carbs_g),
-        fat_g: Math.round(macros.fat_g),
-      };
-    }),
-    sources,
-  };
+  return (JSON.parse(extractJson(text)) as { items?: GroundedMacroItem[] }).items ?? [];
 }
 
 /** The same source can back several figures; show each site once. */

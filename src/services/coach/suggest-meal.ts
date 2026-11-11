@@ -1,5 +1,5 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
 import { describeBand, mealCalorieBand, pickSuggestions, type MealType } from './meal-budget.js';
 import { tokensFromVertex } from '../ai/metering.js';
 
@@ -65,6 +65,23 @@ const ANGLES = [
   'one-pot or single-pan dishes',
 ];
 
+/**
+ * Per-ingredient figures for working a suggestion's macros out.
+ *
+ * Deliberately ingredients, not the shared reference table of dishes: this
+ * prompt once listed example dishes and the model handed exactly those back.
+ * A staple and its numbers gives it something to add up without giving it
+ * anything to copy.
+ */
+const INGREDIENT_ARITHMETIC = `MACRO ARITHMETIC — add each option up from its ingredients with these figures. They are for the sums only, not ideas for what to suggest:
+- Roti, 1 medium: 100 kcal, 3 g protein. Cooked rice, 100 g: 130 kcal, 2.7 g protein.
+- Cooked dal or other pulses, 100 g: 80-120 kcal, 4-6 g protein.
+- Paneer, 100 g: 290 kcal, 18 g protein. Egg, 1: 78 kcal, 6 g protein.
+- Cooked chicken breast, 100 g: 165 kcal, 31 g protein. Curd, 100 g: 60 kcal, 3.5 g protein.
+- Cooked vegetables without oil, 100 g: 30-60 kcal. Oil or ghee, 1 tsp: 45 kcal, 5 g fat — count what the cooking uses.
+- protein×4 + carbs×4 + fat×9 must land within about 10% of the calories and never above them.
+- Do not flatter the protein: a vegetarian plate without paneer, soya, pulses in quantity or a supplement is under 15 g.`;
+
 /** How many to ask for, before `pickSuggestions` chooses the best 3. */
 const CANDIDATES = 6;
 
@@ -85,7 +102,7 @@ export async function generateMealSuggestions(opts: {
   location: string;
   model: string;
 }): Promise<MealSuggestion[]> {
-  const token = await getGoogleAccessToken(opts.credentialJson);
+  const token = await vertexAccessToken(opts.credentialJson);
   const url = vertexUrl(opts.project, opts.location, opts.model);
 
   const mealType = (
@@ -104,7 +121,7 @@ export async function generateMealSuggestions(opts: {
 
 - Suggest exactly ${CANDIDATES} DIFFERENT options. Each must be SIMPLE, common, everyday Indian home food or a quick easy recipe. NO fancy, restaurant-style, or complex multi-step recipes.
 - ${describeBand(band, mealType)}
-- Give realistic calories and macros for the portion you describe, and make the calories MATCH the portion — if the budget is small, suggest a smaller portion or a lighter dish rather than misreporting a large one.
+- State the portion in the description (how many rotis, how much dal, how many eggs) and work the calories and macros out from those parts using the figures below — never from a remembered total for the dish. Make the calories MATCH the portion: if the budget is small, suggest a smaller portion or a lighter dish rather than misreporting a large one.
 - This time, lean towards: ${angle}. Vary the options — do not return ${CANDIDATES} versions of the same dish.
 - "description": one short line — the key ingredients or a 1-line how-to. Keep it plain.
 - Strictly honour the user's diet notes (e.g. vegetarian, no eggs, allergies):
@@ -113,7 +130,9 @@ ${opts.dietNotes ? opts.dietNotes : '(none)'}
     avoid.length
       ? `\n- Do NOT suggest any of these, the user has already had or seen them today: ${avoid.join(', ')}.`
       : ''
-  }`;
+  }
+
+${INGREDIENT_ARITHMETIC}`;
 
   const res = await vertexFetch(url, token, {
     system_instruction: { parts: [{ text: system }] },

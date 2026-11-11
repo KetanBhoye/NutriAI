@@ -103,6 +103,13 @@ The application is configured using environment variables. The most important on
     disable themselves — which is correct behaviour, and easy to mistake for a
     broken client.
 
+*   `MAC_COMPUTE_TOKEN`: enables **Mac compute** — AI requests answered by
+    headless Claude Code on the owner's Mac, which long-polls the server for
+    jobs (`src/services/llm/mac-compute.ts`, `deploy/mac-compute/`). It plugs in
+    at `vertexFetch`, so every feature above uses it while the Mac is online and
+    the admin switch is on, and falls through to the cloud provider otherwise.
+    A Coach that works with Vertex billing unlinked is this, not a mystery.
+
 Refer to the `README.md` for a complete list of environment variables.
 
 ## Deployment

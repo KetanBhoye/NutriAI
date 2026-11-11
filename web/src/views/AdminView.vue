@@ -38,6 +38,23 @@ interface AiStats {
   top_users: TopUser[];
   repo: { foods: number; hits: number; saved_usd: number; by_source: Array<{ source: string; count: number }> };
   settings: Array<{ key: string; value: string; updated_at: string; updated_by: string | null }>;
+  mac_compute?: MacCompute;
+}
+
+/** The worker on the owner's Mac that answers AI requests with Claude Code. */
+interface MacCompute {
+  token_configured: boolean;
+  enabled: boolean;
+  online: boolean;
+  last_seen_at: string | null;
+  worker: { host?: string; version?: string; models?: Record<string, string> } | null;
+  queued: number;
+  in_flight: number;
+  completed: number;
+  failed: number;
+  avg_ms: number | null;
+  last_error: string | null;
+  last_error_at: string | null;
 }
 
 interface AiRates {
@@ -58,6 +75,37 @@ interface UserLimits {
 const data = ref<Overview | null>(null);
 const ai = ref<AiStats | null>(null);
 const savingSetting = ref(false);
+
+const announceTitle = ref('');
+const announceBody = ref('');
+const announceBusy = ref(false);
+const announceNote = ref('');
+
+async function sendAnnouncement(): Promise<void> {
+  // Cannot be unsent, and it lands on real people's phones.
+  if (!window.confirm(`Send this to every user with notifications on?\n\n${announceTitle.value}\n${announceBody.value}`)) {
+    return;
+  }
+  announceBusy.value = true;
+  announceNote.value = '';
+  try {
+    const res = await fetch('/api/admin/broadcast', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: announceTitle.value, body: announceBody.value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'failed');
+    announceNote.value = `Sent to ${data.users} of ${data.subscribed_users} subscribed users (${data.devices} devices).`;
+    announceTitle.value = '';
+    announceBody.value = '';
+  } catch (e) {
+    announceNote.value = e instanceof Error ? e.message : 'Could not send that.';
+  } finally {
+    announceBusy.value = false;
+  }
+}
 const settingError = ref<string | null>(null);
 
 const rates = ref<AiRates | null>(null);
@@ -81,6 +129,25 @@ const capError = ref<string | null>(null);
 /** Live values of the two operator knobs, read back from app_settings. */
 const aiEnabled = computed(() => ai.value?.settings.find((s) => s.key === 'ai_enabled')?.value !== 'off');
 const budgetUsd = computed(() => Number(ai.value?.settings.find((s) => s.key === 'ai_daily_budget_usd')?.value ?? 25));
+const mac = computed(() => ai.value?.mac_compute ?? null);
+/** One line saying where AI requests are going right now, and why. */
+const macLine = computed(() => {
+  const m = mac.value;
+  if (!m) return '';
+  if (!m.token_configured) return 'Not set up: the server has no MAC_COMPUTE_TOKEN.';
+  if (!m.enabled) return 'Off. Requests go to the cloud provider.';
+  if (!m.online) {
+    return m.last_seen_at
+      ? `Mac offline since ${new Date(m.last_seen_at).toLocaleString()}. Requests go to the cloud provider.`
+      : 'Waiting for the Mac to connect. Requests go to the cloud provider.';
+  }
+  const models = m.worker?.models ? Object.values(m.worker.models).join(' / ') : '';
+  const stats = m.completed
+    ? ` · ${m.completed} answered, ${m.failed} failed, avg ${((m.avg_ms ?? 0) / 1000).toFixed(1)}s`
+    : '';
+  return `Online: ${m.worker?.host ?? 'Mac'}${models ? ` (${models})` : ''}${stats}`;
+});
+
 /** How close today's spend is to the ceiling — the number worth watching. */
 const budgetPct = computed(() => {
   const cap = budgetUsd.value;
@@ -108,7 +175,10 @@ async function saveSettings(patch: Record<string, unknown>): Promise<void> {
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'failed');
-    ai.value = ai.value ? { ...ai.value, settings: (await res.json()).settings } : ai.value;
+    const saved = await res.json();
+    ai.value = ai.value
+      ? { ...ai.value, settings: saved.settings, mac_compute: saved.mac_compute ?? ai.value.mac_compute }
+      : ai.value;
   } catch (e) {
     settingError.value = e instanceof Error ? e.message : 'Could not save that.';
   } finally {
@@ -365,6 +435,30 @@ onMounted(load);
           </button>
         </div>
 
+        <div v-if="mac" class="ctl">
+          <div>
+            <div class="ctl-title">
+              Mac compute
+              <span class="dot" :class="{ live: mac.online }"></span>
+            </div>
+            <div class="muted small">
+              Answer AI requests with Claude Code on your Mac instead of the cloud provider.
+              {{ macLine }}
+            </div>
+            <div v-if="mac.enabled && mac.last_error" class="muted small">
+              Last failure: {{ mac.last_error }}
+            </div>
+          </div>
+          <button
+            class="switch"
+            :class="{ on: mac.enabled }"
+            :disabled="savingSetting || !mac.token_configured"
+            @click="saveSettings({ mac_compute_enabled: !mac.enabled })"
+          >
+            {{ mac.enabled ? 'On' : 'Off' }}
+          </button>
+        </div>
+
         <div class="ctl">
           <div>
             <div class="ctl-title">Daily budget</div>
@@ -392,6 +486,27 @@ onMounted(load);
         </div>
 
         <p v-if="settingError" class="err">{{ settingError }}</p>
+      </section>
+
+      <!-- Announce: one push to everyone with notifications on. -->
+      <section class="card controls">
+        <h2>Announce</h2>
+        <div class="muted small">
+          Sends one push notification to every user who has notifications turned on.
+          Users without notifications are not reached.
+        </div>
+        <input v-model="announceTitle" class="announce" maxlength="60" placeholder="Title" />
+        <textarea v-model="announceBody" class="announce" maxlength="180" rows="2" placeholder="Message"></textarea>
+        <div class="ctl">
+          <div class="muted small">{{ announceNote }}</div>
+          <button
+            class="switch on"
+            :disabled="announceBusy || !announceTitle.trim() || !announceBody.trim()"
+            @click="sendAnnouncement()"
+          >
+            {{ announceBusy ? 'Sending…' : 'Send' }}
+          </button>
+        </div>
       </section>
 
       <!-- Rates. Every cost figure on this page and every spend cap below is
@@ -689,12 +804,22 @@ h1 {
 .controls { display: flex; flex-direction: column; gap: 14px; }
 .ctl { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ctl-title { font-weight: 600; }
+.dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-left: 6px; background: #6b7280; vertical-align: middle;
+}
+.dot.live { background: #4ade80; }
 .switch {
   min-width: 72px; padding: 8px 14px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--border, #272c37); background: #2a2f3a; color: #e8eaed; font-weight: 700;
 }
 .switch.on { background: #4ade80; color: #06210f; border-color: #4ade80; }
 .switch:disabled { opacity: 0.6; cursor: default; }
+.announce {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border, #2a2f3a); background: transparent; color: inherit;
+  font: inherit; resize: vertical;
+}
 .budget { display: flex; align-items: center; gap: 12px; }
 .budget input { width: 180px; }
 .meter-track { height: 6px; border-radius: 4px; background: #2a2f3a; overflow: hidden; margin-bottom: 6px; }

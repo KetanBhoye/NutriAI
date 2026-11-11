@@ -1,4 +1,5 @@
 import { getGoogleAccessToken } from './google-auth.js';
+import { macComputeOnline, macGenerate, type MacOptions } from './mac-compute.js';
 
 /**
  * POSTs to a Vertex generateContent endpoint with a timeout and automatic
@@ -6,13 +7,27 @@ import { getGoogleAccessToken } from './google-auth.js';
  * stall (cold connection state) even though the network is fine — retrying on
  * an abort transparently recovers instead of surfacing a 30s error to the user.
  * Callers own the response parsing.
+ *
+ * This is also the seam where Mac compute plugs in — see `mac-compute.ts`.
  */
 export async function vertexFetch(
   url: string,
   token: string,
   body: unknown,
-  opts?: { timeoutMs?: number; retries?: number }
+  opts?: { timeoutMs?: number; retries?: number } & MacOptions
 ): Promise<Response> {
+  // The Mac worker goes first when it is online. Any failure there — offline
+  // between the check and the claim, a timeout, a malformed answer — falls
+  // through to Vertex, so turning the Mac on can only add a way to succeed.
+  if (macComputeOnline()) {
+    try {
+      return await macGenerate(body, opts);
+    } catch (error) {
+      console.log('[mac-compute] falling back to Vertex:', error instanceof Error ? error.message : error);
+    }
+  }
+  if (!token) throw new Error('No AI backend available: Mac compute failed and Vertex is not configured');
+
   const timeoutMs = opts?.timeoutMs ?? 24_000;
   const retries = opts?.retries ?? 2;
   const payload = JSON.stringify(body);

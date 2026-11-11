@@ -9,6 +9,8 @@ import {
   type ParseResult,
 } from './types.js';
 import { reconcileMacros } from '../coach/macro-sanity.js';
+import { macComputeOnline, macGenerate } from './mac-compute.js';
+import { buildSystemPrompt, PARSE_JSON_SCHEMA } from './types.js';
 
 export type { LlmProvider, ParseContext, ParseResult } from './types.js';
 
@@ -22,6 +24,40 @@ export type { LlmProvider, ParseContext, ParseResult } from './types.js';
  * feature as unconfigured rather than throwing.
  */
 export function createProviderFromEnv(): LlmProvider | null {
+  const cloud = createCloudProviderFromEnv();
+  // The Mac worker goes first while it is online, keeping the configured
+  // cloud provider (if any) as the fallback for a job it fails.
+  return macComputeOnline() ? new MacComputeProvider(cloud) : cloud;
+}
+
+/** Food-log parsing on the owner's Mac, via the shared job queue. */
+class MacComputeProvider implements LlmProvider {
+  readonly name = 'mac';
+  constructor(private fallback: LlmProvider | null) {}
+
+  async parseFoodLog(userMessage: string, context: ParseContext): Promise<unknown> {
+    try {
+      const res = await macGenerate(
+        {
+          system_instruction: { parts: [{ text: buildSystemPrompt(context) }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: { responseSchema: PARSE_JSON_SCHEMA },
+        },
+        // These numbers go into the diary, so this is not the place to save.
+        { tier: 'accurate' }
+      );
+      const data = (await res.json()) as {
+        candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
+      };
+      return JSON.parse(data.candidates[0]!.content.parts[0]!.text);
+    } catch (error) {
+      if (!this.fallback) throw error;
+      return this.fallback.parseFoodLog(userMessage, context);
+    }
+  }
+}
+
+function createCloudProviderFromEnv(): LlmProvider | null {
   const provider = (process.env.LLM_PROVIDER || 'anthropic').toLowerCase();
   const model = process.env.LLM_MODEL;
 

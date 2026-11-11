@@ -29,6 +29,12 @@ export const SETTINGS = {
    * every cost figure and spend cap correct again.
    */
   AI_RATES: 'ai_rates',
+  /**
+   * 'on' | 'off'. On sends AI requests to the worker on the owner's Mac while
+   * it is online; off (or the Mac being asleep) leaves them on the cloud
+   * provider. See services/llm/mac-compute.ts.
+   */
+  MAC_COMPUTE_ENABLED: 'mac_compute_enabled',
 } as const;
 
 /** Invalidate after a write, so the admin sees their own change immediately. */

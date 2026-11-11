@@ -1,5 +1,5 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
 
 /**
  * Generates a personalised nutrition plan for a new user via Vertex AI, using
@@ -66,7 +66,7 @@ const GOAL_LABEL: Record<OnboardingPlanInput['goal'], string> = {
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(n)));
 
 export async function generateOnboardingPlan(input: OnboardingPlanInput): Promise<OnboardingPlan> {
-  const token = await getGoogleAccessToken(input.credentialJson);
+  const token = await vertexAccessToken(input.credentialJson);
   const url = vertexUrl(input.project, input.location, input.model);
 
   const system = `You are a certified nutrition and strength coach setting up a new client in a calorie-tracking app. Given their stats and goal, produce daily targets and a short, durable coaching note.

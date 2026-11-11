@@ -1,5 +1,5 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
 import {
   addEntryHandler,
   listEntriesHandler,
@@ -284,15 +284,17 @@ const TOOLS: Record<string, { declaration: unknown; run: ToolFn }> = {
       }
 
       try {
-        const { items, sources } = await lookupMacrosGrounded(foods);
+        const { items, sources, billable } = await lookupMacrosGrounded(foods);
 
         if (db) {
           // Meter first — a failure to save the food must not lose the cost.
+          // A lookup the Mac ran is still counted as a call, but not as a
+          // billed grounded query.
           await recordAiUsage(db, {
             userId,
             feature: 'grounded',
             model: process.env.LLM_MODEL || 'gemini-2.5-flash',
-            groundedQueries: 1,
+            groundedQueries: billable ? 1 : 0,
           });
 
           // Every item looked up is a food the next person does not have to pay
@@ -369,6 +371,8 @@ export interface CoachTurn {
 }
 
 const MAX_STEPS = 6;
+/** Plain writes whose success can be assumed while the confirmation is drafted. */
+const OPTIMISTIC_TOOLS = ['add_entry'];
 const MAX_HISTORY = 24;
 
 function buildSystemPrompt(opts: {
@@ -395,10 +399,11 @@ DAILY GOALS & PREFERENCES:
 ${opts.preferences}
 Use this context to make every reply specific to them — reference their goals and current stats instead of asking for things you already know.
 
-When the user describes food they ate:
-1. FIRST call lookup_nutrition ONCE with ALL the items and their portions in the "foods" string — it searches the web for real, accurate calories and macros so you don't rely on memory.
-2. THEN call add_entry for each item, using the calories and macros returned by lookup_nutrition (matched by name). Give add_entry a food_name that includes the quantity (e.g. "Chapati (2)").
-Two exceptions where you may skip lookup_nutrition and use your own values: (a) the item clearly matches one of the user's known foods below, or (b) lookup_nutrition already failed this turn. This user eats mostly Indian home-cooked food. Known foods and values:
+When the user describes food they ate, log it with add_entry — one call per item, all in the same step, each with a food_name that includes the quantity (e.g. "Chapati (2)"). Where the numbers come from depends on the food:
+- One of the user's known foods below: use its stored per-unit values times the quantity. No lookup.
+- An ordinary staple or home-cooked dish (roti, rice, dal, sabzi, eggs, milk, curd, fruit, paneer, chicken, oil, ghee and the like): work the values out with the method and reference values below and log straight away. No lookup — it would only make the user wait for a number you already have.
+- A branded or packaged product, a restaurant or fast-food item, or a food you do not reliably know: call lookup_nutrition ONCE first, with all such items and their portions in the "foods" string, then log using the figures it returns exactly as they are, for the portion it states. If the user ate a different amount, scale every figure by the same factor. If the lookup fails, work the values out yourself and tell the user they are estimates.
+This user eats mostly Indian home-cooked food. Known foods and values:
 ${opts.knownFoods}
 
 ${CONSERVATIVE_ESTIMATION_RULES}
@@ -409,7 +414,7 @@ A quick weight mention ("I'm 71.2 today") → update_profile with weight_kg (and
 
 When the user tells you a lasting preference — a diet (e.g. "I'm vegetarian", "no eggs"), an allergy, foods they like/dislike, or how they want to be coached — SAVE it by calling set_user_preferences with behavior_instructions. That field replaces the stored notes, so write the existing notes shown to you above PLUS the new preference, then confirm you'll remember it. From then on, honour it (e.g. suggest only vegetarian foods).
 
-Be brief and direct. After acting, confirm what you did in one or two sentences. When you logged or read a day that is NOT today, name that date in your reply (e.g. "logged for Jul 20") rather than saying "today". Never invent an id — always get it from list_entries before update/delete.`;
+Be brief and direct. After acting, confirm what you did in one or two short sentences of plain text — no lists, headings or markdown — giving the total calories and protein you logged so a wrong number is easy to spot. Mention an assumption you made (a portion or an amount of oil) only if it changes the total noticeably. Any figure you state must come from a tool result in this conversation or from the profile and goals above. When you logged or read a day that is NOT today, name that date in your reply (e.g. "logged for Jul 20") rather than saying "today". Never invent an id — always get it from list_entries before update/delete.`;
 }
 
 /** Pulls the text payload out of a tool result, for grounding the prompt. */
@@ -450,24 +455,34 @@ async function callVertex(config: {
   contents: GeminiContent[];
   /** Called with the token counts Vertex reports, so the turn can be priced. */
   onUsage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
-}): Promise<GeminiContent> {
+}): Promise<{ turn: GeminiContent; provisionalReply?: string }> {
   const url = vertexUrl(config.project, config.location, config.model);
 
-  const res = await vertexFetch(url, config.token, {
-    system_instruction: { parts: [{ text: config.systemPrompt }] },
-    contents: config.contents,
-    tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
-  });
+  const res = await vertexFetch(
+    url,
+    config.token,
+    {
+      system_instruction: { parts: [{ text: config.systemPrompt }] },
+      contents: config.contents,
+      tools: [{ functionDeclarations: Object.values(TOOLS).map((t) => t.declaration) }],
+    },
+    // Mac compute only; Vertex ignores it. Lets a logging turn end one model
+    // call sooner — see where provisionalReply is used below.
+    { optimisticTools: OPTIMISTIC_TOOLS }
+  );
   if (!res.ok) {
     throw new Error(`Vertex chat failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
-  const data = (await res.json()) as { candidates?: Array<{ content?: GeminiContent }> };
+  const data = (await res.json()) as {
+    candidates?: Array<{ content?: GeminiContent }>;
+    provisionalReply?: string;
+  };
   // Reported before the content check: a step that produced no usable content
   // still consumed tokens, and an unmetered call is money spent invisibly.
   config.onUsage?.(tokensFromVertex(data));
   const content = data.candidates?.[0]?.content;
   if (!content) throw new Error('Vertex returned no content');
-  return { role: 'model', parts: content.parts ?? [] };
+  return { turn: { role: 'model', parts: content.parts ?? [] }, provisionalReply: data.provisionalReply };
 }
 
 /**
@@ -517,7 +532,7 @@ export async function runCoachTurn(opts: {
   const db = (opts.env as { DB?: D1DatabaseCompat })?.DB;
 
   console.log('[coach] minting token…');
-  const token = await getGoogleAccessToken(opts.credentialJson);
+  const token = await vertexAccessToken(opts.credentialJson);
   console.log('[coach] token ok, starting loop');
 
   const contents: GeminiContent[] = [
@@ -529,7 +544,7 @@ export async function runCoachTurn(opts: {
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     console.log(`[coach] step ${step}: calling vertex (${contents.length} turns)`);
-    const modelTurn = await callVertex({
+    const { turn: modelTurn, provisionalReply } = await callVertex({
       token,
       project: opts.project,
       location: opts.location,
@@ -570,6 +585,7 @@ export async function runCoachTurn(opts: {
 
     // Execute every tool call in this turn, then feed all results back together.
     const responseParts: GeminiPart[] = [];
+    let allSucceeded = true;
     for (const call of calls) {
       const name = call.functionCall.name;
       const args = call.functionCall.args ?? {};
@@ -577,22 +593,39 @@ export async function runCoachTurn(opts: {
       let text: string;
       if (!tool) {
         text = `Unknown tool: ${name}`;
+        allSucceeded = false;
       } else {
         try {
           console.log(`[coach] executing ${name}…`);
           const result = await tool.run(args, opts.userId, opts.env);
           text = result.content?.[0]?.type === 'text' ? (result.content[0] as { text: string }).text : 'ok';
+          if (result.isError) allSucceeded = false;
           actions.push(name);
           if (name === 'lookup_nutrition') collectSources(text, sources);
           console.log(`[coach] ${name} done`);
         } catch (error) {
           text = `Tool ${name} failed: ${error instanceof Error ? error.message : 'error'}`;
           console.log(`[coach] ${name} failed: ${text}`);
+          allSucceeded = false;
         }
       }
       responseParts.push({ functionResponse: { name, response: { output: text } } });
     }
     contents.push({ role: 'user', parts: responseParts });
+
+    /**
+     * The usual ending of a logging turn is one more model call whose only job
+     * is to say "logged". On the Mac that call is several seconds the user
+     * spends watching a spinner, so Claude writes the confirmation alongside
+     * the save calls, assuming they will work. It is shown only if every one
+     * of them did; any failure discards it and the loop carries on as normal,
+     * so the model sees what actually happened before it speaks.
+     */
+    if (provisionalReply && allSucceeded) {
+      console.log(`[coach] step ${step}: all saved, using the reply written with the calls`);
+      contents.push({ role: 'model', parts: [{ text: provisionalReply }] });
+      return { reply: provisionalReply, actions, history: contents, sources };
+    }
   }
 
   // Hit the step cap — return a graceful message rather than looping forever.

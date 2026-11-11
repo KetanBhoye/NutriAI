@@ -1,5 +1,5 @@
-import { getGoogleAccessToken } from '../llm/google-auth.js';
 import { vertexFetch, vertexUrl } from '../llm/vertex.js';
+import { vertexAccessToken } from '../llm/vertex-token.js';
 import { tokensFromVertex } from '../ai/metering.js';
 
 /**
@@ -54,7 +54,7 @@ export async function generateWeeklyInsights(input: {
   location: string;
   model: string;
 }): Promise<WeeklyReport> {
-  const token = await getGoogleAccessToken(input.credentialJson);
+  const token = await vertexAccessToken(input.credentialJson);
   const url = vertexUrl(input.project, input.location, input.model);
 
   const system = `You are a supportive but honest nutrition and fitness coach writing a short weekly check-in for your client based on their logged data.

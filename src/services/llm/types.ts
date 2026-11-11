@@ -119,10 +119,10 @@ Today is ${context.today}. Resolve "today" to that date, "yesterday" to the day 
 
 MACROS:
 - Give calories, protein, carbs and fat for the TOTAL quantity eaten, not per 100g.
-- This user eats mostly Indian home-cooked food (dal, sabji, chapati, rice, paneer, eggs, whey). Use realistic values for those — a chapati is ~70-80 kcal, 100g cooked dal ~110 kcal, 100g cooked rice ~130 kcal, one boiled egg ~70 kcal.
-- Prefer the user's own known foods and their values when the message matches one:
+- This user eats mostly Indian home-cooked food (dal, sabji, chapati, rice, paneer, eggs, whey). Read ambiguous names that way: "roti" is a wheat chapati, "dal" is cooked dal, "rice" is cooked rice.
+- The user's own known foods come first. When the message matches one, use its stored per-unit values multiplied by the quantity, even if you would have estimated differently — those are figures they have already checked:
 ${known}
-- When you genuinely don't know a packaged product's macros, estimate conservatively and still return numbers — do not leave them at zero unless the food truly has none (black coffee, diet soda).
+- A food with real calories never gets zeros. Only genuinely empty items (water, black coffee, plain tea without milk or sugar, diet soda) are zero.
 
 ${CONSERVATIVE_ESTIMATION_RULES}
 
@@ -135,5 +135,9 @@ NAMING:
 WHEN TO ASK INSTEAD OF GUESS:
 - If the message is not about food, set understood=false, items=[], and put a short reply in clarification.
 - If a quantity is truly missing and changes the result a lot ("I had biryani" with no amount), set understood=false and ask for the portion in clarification.
-- Otherwise set understood=true and fill items.`;
+- A missing quantity on a countable everyday item is not a reason to ask: "a banana", "an egg", "chai" mean one ordinary serving.
+- Otherwise set understood=true and fill items.
+
+QUANTITY AND UNIT:
+- quantity and unit describe what was eaten ("2" + "piece", "150" + "g", "1" + "katori"). The calories and macros are already for that whole quantity — never per one unit.`;
 }
